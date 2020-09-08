@@ -1,0 +1,29 @@
+[package]
+name = "demo_game_rs"
+version = "0.1.0"
+authors = ["Chehui Chou <deadshot465@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aligned_alloc = "0.1.3"
+ash = "0.31.0"
+dotenv = "0.15.0"
+downcast-rs = "1.2.0"
+env_logger = "0.7.1"
+glam = "0.9.4"
+gltf = { version = "0.15.2", features = ["extras", "names", "import", "utils"] }
+image = "0.23.9"
+log = "0.4.11"
+rand = "0.7.3"
+tokio = { version = "0.2.22", features = ["full"] }
+winit = "0.22.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["basetsd", "d3d12", "d3d12sdklayers", "d3d12shader", "d3dcommon", "d3dcompiler", "dxgi1_2", "dxgi1_3", "dxgi1_4", "dxgi1_6", "dxgidebug", "dxgiformat", "dxgitype", "handleapi", "minwindef", "synchapi", "unknwnbase", "winbase", "windef","winerror", "winnt", "winuser"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.20.0"
+cocoa = "0.23.0"
+objc = "0.2.7"
