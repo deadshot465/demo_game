@@ -21,14 +21,16 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(width: f64, height: f64) -> Self {
-        Camera {
+        let mut camera = Camera {
             position: Vec3A::new(0.0, 10.0, -15.0),
             target: Vec3A::new(0.0, 0.0, 0.0),
             width,
             height,
             current_type: CameraType::Watch(Vec3A::new(0.0, 10.0, -15.0)),
             projection: Mat4::identity(),
-        }
+        };
+        camera.set_perspective(30.0_f32.to_radians(), (width / height) as f32, 0.1, 100.0);
+        camera
     }
 
     pub fn update(&mut self, camera_type: CameraType) {

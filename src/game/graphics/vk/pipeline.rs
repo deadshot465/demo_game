@@ -346,6 +346,10 @@ impl Pipeline {
         let pipelines = self.graphic_pipelines.get(&shader_type).unwrap();
         pipelines.get(index).unwrap().clone()
     }
+
+    pub fn get_pipeline_layout(&self, shader_type: ShaderType) -> ash::vk::PipelineLayout {
+        self.pipeline_layouts.get(&shader_type).unwrap().clone()
+    }
 }
 
 impl Drop for Pipeline {

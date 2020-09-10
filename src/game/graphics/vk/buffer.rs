@@ -18,7 +18,7 @@ use ash::{
     },
 };
 use std::ffi::c_void;
-use std::sync::Arc;
+use std::sync::Weak;
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use crate::game::shared::traits::mappable::Mappable;
 use crate::game::shared::traits::disposable::Disposable;
@@ -31,11 +31,11 @@ pub struct Buffer {
     pub mapped_memory: *mut c_void,
     pub is_disposed: bool,
     pub buffer_size: DeviceSize,
-    logical_device: Arc<Device>,
+    logical_device: Weak<Device>,
 }
 
 impl Buffer {
-    pub fn new(instance: &Instance, device: Arc<Device>,
+    pub fn new(instance: &Instance, device: Weak<Device>,
                physical_device: PhysicalDevice, buffer_size: DeviceSize,
                usage_flag: BufferUsageFlags,
                memory_properties: MemoryPropertyFlags) -> Self {
@@ -46,6 +46,8 @@ impl Buffer {
             .build();
         unsafe {
             let buffer = device
+                .upgrade()
+                .unwrap()
                 .create_buffer(&create_info, None)
                 .expect("Failed to create buffer.");
 
@@ -65,15 +67,18 @@ impl Buffer {
         }
     }
 
-    pub fn copy_buffer(&mut self, src_buffer: &Buffer, buffer_size: DeviceSize, command_pool: CommandPool, graphics_queue: Queue) {
+    pub fn copy_buffer(&self, src_buffer: &Buffer, buffer_size: DeviceSize, command_pool: CommandPool, graphics_queue: Queue) {
         unsafe {
-            let copy_info = BufferCopy::builder()
-                .src_offset(0)
-                .size(buffer_size)
-                .dst_offset(0);
-            let cmd_buffer = get_single_time_command_buffer(self.logical_device.as_ref(), command_pool);
-            self.logical_device.as_ref().cmd_copy_buffer(cmd_buffer, src_buffer.buffer, self.buffer, &[copy_info.build()]);
-            end_one_time_command_buffer(cmd_buffer, self.logical_device.as_ref(), command_pool, graphics_queue);
+            let device = self.logical_device.upgrade();
+            if let Some(d) = device {
+                let copy_info = BufferCopy::builder()
+                    .src_offset(0)
+                    .size(buffer_size)
+                    .dst_offset(0);
+                let cmd_buffer = get_single_time_command_buffer(d.as_ref(), command_pool);
+                d.cmd_copy_buffer(cmd_buffer, src_buffer.buffer, self.buffer, &[copy_info.build()]);
+                end_one_time_command_buffer(cmd_buffer, d.as_ref(), command_pool, graphics_queue);
+            }
         }
     }
 }
@@ -95,10 +100,12 @@ impl Disposable for Buffer {
             if !self.mapped_memory.is_null() {
                 self.unmap_memory();
             }
+            let device = self.logical_device.upgrade().unwrap();
             if self.device_memory != DeviceMemory::null() {
-                self.logical_device.free_memory(self.device_memory, None);
+                device
+                    .free_memory(self.device_memory, None);
             }
-            self.logical_device.destroy_buffer(self.buffer, None);
+            device.destroy_buffer(self.buffer, None);
             self.is_disposed = true;
         }
     }
@@ -111,7 +118,7 @@ impl Disposable for Buffer {
         unimplemented!()
     }
 
-    fn set_name(&mut self, name: String) -> &str {
+    fn set_name(&mut self, _name: String) -> &str {
         unimplemented!()
     }
 }
@@ -119,10 +126,13 @@ impl Disposable for Buffer {
 impl Mappable for Buffer {
     fn allocate_memory(&mut self, instance: &Instance, physical_device: PhysicalDevice, memory_properties: MemoryPropertyFlags) -> DeviceMemory {
         unsafe {
-            let requirements = self.logical_device.get_buffer_memory_requirements(self.buffer);
+            let device = self.logical_device.upgrade().unwrap();
+            let requirements = device
+                .get_buffer_memory_requirements(self.buffer);
             let device_memory = self.map_device_memory(instance,
                                                        &requirements, physical_device, memory_properties);
-            self.logical_device.bind_buffer_memory(self.buffer, device_memory, 0)
+            device
+                .bind_buffer_memory(self.buffer, device_memory, 0)
                 .expect("Failed to bind buffer memory.");
             self.device_memory = device_memory;
             self.device_memory
@@ -132,6 +142,8 @@ impl Mappable for Buffer {
     fn map_memory(&mut self, device_size: u64, offset: u64) -> *mut c_void {
         unsafe {
             self.mapped_memory = self.logical_device
+                .upgrade()
+                .unwrap()
                 .map_memory(self.device_memory, offset, device_size, MemoryMapFlags::empty())
                 .expect("Failed to map device memory.");
             self.mapped_memory
@@ -140,7 +152,10 @@ impl Mappable for Buffer {
 
     fn unmap_memory(&mut self) {
         unsafe {
-            self.logical_device.unmap_memory(self.device_memory);
+            self.logical_device
+                .upgrade()
+                .unwrap()
+                .unmap_memory(self.device_memory);
         }
     }
 
@@ -166,6 +181,8 @@ impl Mappable for Buffer {
             .build();
         unsafe {
             let device_memory = self.logical_device
+                .upgrade()
+                .unwrap()
                 .allocate_memory(&allocate_info, None)
                 .expect("Failed to allocate device memory.");
             device_memory

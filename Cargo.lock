@@ -107,9 +107,9 @@ checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
 
 [[package]]
 name = "bytemuck"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92046dbb6f9332943252123f53623e0a6d513651af14967e2991c371ec20201c"
+checksum = "41aa2ec95ca3b5c54cf73c91acf06d24f4495d5f1b1c12506ae3483d646177ac"
 
 [[package]]
 name = "byteorder"
@@ -361,6 +361,7 @@ version = "0.1.0"
 dependencies = [
  "aligned_alloc",
  "ash",
+ "bytemuck",
  "cocoa 0.23.0",
  "dotenv",
  "downcast-rs",

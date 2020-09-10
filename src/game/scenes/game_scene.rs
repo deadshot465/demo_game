@@ -1,18 +1,20 @@
-use crate::game::shared::traits::Scene;
+use crate::game::shared::traits::{Scene, GraphicsBase};
 use glam::{Vec3A, Vec4};
-use std::sync::{Arc, RwLock};
+use std::sync::{RwLock, Weak};
 use crate::game::ResourceManager;
 use crate::game::traits::Disposable;
 use crate::game::shared::structs::Model;
+use crate::game::graphics::vk::{Graphics, Buffer};
+use ash::vk::CommandBuffer;
 
-pub struct GameScene<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> {
-    graphics: Arc<RwLock<GraphicsType>>,
-    resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType>>>,
+pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> {
+    graphics: Weak<RwLock<GraphicsType>>,
+    resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType>>>,
     scene_name: String,
 }
 
-impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> GameScene<GraphicsType, BufferType> {
-    pub fn new(resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType>>>, graphics: Arc<RwLock<GraphicsType>>) -> Self {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> GameScene<GraphicsType, BufferType, CommandType> {
+    pub fn new(resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType>>>, graphics: Weak<RwLock<GraphicsType>>) -> Self {
         GameScene {
             graphics,
             resource_manager,
@@ -21,7 +23,7 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> GameScene<
     }
 }
 
-impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> Scene for GameScene<GraphicsType, BufferType> {
+impl Scene for GameScene<Graphics, Buffer, CommandBuffer> {
     fn initialize(&mut self) {
 
     }
@@ -31,12 +33,29 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> Scene for 
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
     }
 
-    fn update(&mut self, delta_time: u64) {
-
+    fn update(&mut self, _delta_time: u64) {
     }
 
-    fn render(&self, delta_time: u64) {
-
+    fn render(&self, _delta_time: u64) {
+        let arc = self.resource_manager.upgrade();
+        let arc_2 = self.graphics.upgrade();
+        if let Some(resource_manager) = arc {
+            if let Some(graphics) = arc_2 {
+                let resource_lock = resource_manager.read().unwrap();
+                let graphics_lock = graphics.read().unwrap();
+                let cmd_buffers = graphics_lock.get_commands();
+                let models = &resource_lock.models;
+                for buffer in cmd_buffers.iter() {
+                    for model in models.iter() {
+                        unsafe {
+                            model.as_ref().unwrap().render(*buffer);
+                        }
+                    }
+                }
+                drop(graphics_lock);
+                drop(resource_lock);
+            }
+        }
     }
 
     fn get_scene_name(&self) -> &str {
@@ -48,7 +67,13 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> Scene for 
     }
 
     fn add_model(&self, file_name: &str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) {
-        let mut lock = self.resource_manager
+        let resource_manager = self.resource_manager.upgrade();
+        if resource_manager.is_none() {
+            log::error!("Resource manager has been destroyed.");
+            return;
+        }
+        let resource_manager = resource_manager.unwrap();
+        let mut lock = resource_manager
             .write()
             .expect("Failed to lock resource manager.");
         unsafe {
@@ -71,5 +96,7 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> Scene for 
                 lock.add_model(model);
             }
         }
+        drop(lock);
+        drop(resource_manager);
     }
 }

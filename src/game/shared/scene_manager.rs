@@ -53,7 +53,7 @@ impl SceneManager {
     pub fn set_current_scene_by_name(&mut self, name: &str) {
         let mut index = 0_usize;
         let mut found = false;
-        let scene = self.scenes.iter().enumerate()
+        let _ = self.scenes.iter().enumerate()
             .find(|s| {
                 if (*s).1.borrow().get_scene_name() == name {
                     index = (*s).0;

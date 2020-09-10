@@ -1,4 +1,5 @@
 use glam::Vec4;
+use bytemuck::{Pod, Zeroable};
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug)]
@@ -22,3 +23,6 @@ impl PushConstant {
         }
     }
 }
+
+unsafe impl Zeroable for PushConstant {}
+unsafe impl Pod for PushConstant {}

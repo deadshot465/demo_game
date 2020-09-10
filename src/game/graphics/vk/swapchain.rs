@@ -11,7 +11,7 @@ pub struct Swapchain {
     pub format: SurfaceFormatKHR,
     pub present_mode: PresentModeKHR,
     pub swapchain_images: Vec<super::Image>,
-    swapchain_loader: ash::extensions::khr::Swapchain,
+    pub swapchain_loader: ash::extensions::khr::Swapchain,
     capabilities: SurfaceCapabilitiesKHR,
 }
 

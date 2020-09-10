@@ -1,5 +1,5 @@
 use ash::vk::DeviceSize;
-use glam::{Vec3A, Vec4, Mat4};
+use glam::Mat4;
 
 pub struct DynamicModel {
     pub model_indices: Vec<usize>,

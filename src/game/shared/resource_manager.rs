@@ -2,15 +2,14 @@ use std::cell::RefCell;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::shared::structs::Model;
-use crate::game::graphics::vk::{Graphics, Buffer};
-use glam::{Vec3A, Vec4};
+use crate::game::traits::GraphicsBase;
 
-pub struct ResourceManager<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> {
-    pub models: Vec<*mut Model<GraphicsType, BufferType>>,
+pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> {
+    pub models: Vec<*mut Model<GraphicsType, BufferType, CommandType>>,
     resource: Vec<RefCell<Box<dyn Disposable>>>,
 }
 
-impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> ResourceManager<GraphicsType, BufferType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> ResourceManager<GraphicsType, BufferType, CommandType> {
     pub fn new() -> Self {
         ResourceManager {
             resource: vec![],
@@ -34,9 +33,12 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> ResourceMa
         ptr
     }
 
-    pub fn add_model(&mut self, model: Model<GraphicsType, BufferType>) {
+    pub fn add_model(&mut self, model: Model<GraphicsType, BufferType, CommandType>) {
         let name = model.model_name.clone();
         let _model = self.add_resource_with_name(model, name);
+        unsafe {
+            _model.as_mut().unwrap().model_index = self.models.len();
+        }
         self.models.push(_model);
     }
 
@@ -70,7 +72,7 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> ResourceMa
     }
 }
 
-impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> Drop for ResourceManager<GraphicsType, BufferType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> Drop for ResourceManager<GraphicsType, BufferType, CommandType> {
     fn drop(&mut self) {
         log::info!("Dropping Resource Manager...");
         unsafe {
@@ -79,5 +81,6 @@ impl<GraphicsType: 'static, BufferType: 'static + Disposable + Clone> Drop for R
             }
         }
         self.resource.clear();
+        log::info!("Successfully dropped resource manager.");
     }
 }

@@ -21,6 +21,24 @@ impl Mesh<crate::game::graphics::vk::Buffer> {
             is_disposed: false
         }
     }
+
+    pub fn get_vertex_buffer(&self) -> ash::vk::Buffer {
+        if let Some(buffer) = self.vertex_buffer.as_ref() {
+            buffer.buffer
+        }
+        else {
+            panic!("Vertex buffer is not yet created.");
+        }
+    }
+
+    pub fn get_index_buffer(&self) -> ash::vk::Buffer {
+        if let Some(buffer) = self.index_buffer.as_ref() {
+            buffer.buffer
+        }
+        else {
+            panic!("Index buffer is not yet created.");
+        }
+    }
 }
 
 impl<BufferType: 'static + Disposable> Drop for Mesh<BufferType> {
@@ -34,8 +52,12 @@ impl<BufferType: 'static + Disposable> Drop for Mesh<BufferType> {
 impl<BufferType: 'static + Disposable> Disposable for Mesh<BufferType> {
     fn dispose(&mut self) {
         unsafe {
-            ManuallyDrop::drop(self.index_buffer.as_mut().unwrap());
-            ManuallyDrop::drop(self.vertex_buffer.as_mut().unwrap());
+            if let Some(buffer) = self.index_buffer.as_mut() {
+                ManuallyDrop::drop(buffer);
+            }
+            if let Some(buffer) = self.vertex_buffer.as_mut() {
+                ManuallyDrop::drop(buffer);
+            }
         }
         self.is_disposed = true;
     }
@@ -48,7 +70,7 @@ impl<BufferType: 'static + Disposable> Disposable for Mesh<BufferType> {
         unimplemented!()
     }
 
-    fn set_name(&mut self, name: String) -> &str {
+    fn set_name(&mut self, _name: String) -> &str {
         unimplemented!()
     }
 }
