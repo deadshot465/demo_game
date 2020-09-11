@@ -85,9 +85,11 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
+        log::info!("Dropping buffer...");
         if !self.is_disposed {
             self.dispose();
         }
+        log::info!("Successfully dropped buffer.");
     }
 }
 
@@ -96,6 +98,7 @@ impl Disposable for Buffer {
         if self.is_disposed {
             return;
         }
+        log::info!("Disposing buffer...");
         unsafe {
             if !self.mapped_memory.is_null() {
                 self.unmap_memory();
@@ -108,6 +111,7 @@ impl Disposable for Buffer {
             device.destroy_buffer(self.buffer, None);
             self.is_disposed = true;
         }
+        log::info!("Successfully disposed buffer.");
     }
 
     fn is_disposed(&self) -> bool {

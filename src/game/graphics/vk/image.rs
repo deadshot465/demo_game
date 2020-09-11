@@ -7,6 +7,7 @@ use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buf
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::mappable::Mappable;
 
+#[derive(Clone)]
 pub struct Image {
     pub image_view: ImageView,
     pub sampler: Sampler,
@@ -130,6 +131,55 @@ impl Image {
         }
     }
 
+    pub fn create_sampler(&mut self, mip_levels: u32) {
+        let create_info = SamplerCreateInfo::builder()
+            .address_mode_u(SamplerAddressMode::REPEAT)
+            .address_mode_v(SamplerAddressMode::REPEAT)
+            .address_mode_w(SamplerAddressMode::REPEAT)
+            .anisotropy_enable(true)
+            .border_color(BorderColor::FLOAT_OPAQUE_BLACK)
+            .compare_enable(false)
+            .compare_op(CompareOp::ALWAYS)
+            .mag_filter(Filter::LINEAR)
+            .max_anisotropy(16.0)
+            .max_lod(mip_levels as f32)
+            .min_filter(Filter::LINEAR)
+            .min_lod(0.0)
+            .mip_lod_bias(0.0)
+            .mipmap_mode(SamplerMipmapMode::LINEAR)
+            .unnormalized_coordinates(false)
+            .build();
+         unsafe {
+             self.sampler = self.logical_device.create_sampler(&create_info, None)
+                 .expect("Failed to create sampler.");
+         }
+    }
+
+    pub fn copy_buffer_to_image(&self, source_buffer: Buffer, width: u32, height: u32, command_pool: CommandPool, graphics_queue: Queue) {
+        let extent = Extent3D::builder()
+            .height(height)
+            .width(width)
+            .depth(1)
+            .build();
+
+        let copy_info = BufferImageCopy::builder()
+            .image_extent(extent)
+            .image_subresource(ImageSubresourceLayers::builder()
+                .base_array_layer(0)
+                .layer_count(1)
+                .aspect_mask(ImageAspectFlags::COLOR)
+                .mip_level(0)
+                .build())
+            .build();
+
+        let cmd_buffer = get_single_time_command_buffer(self.logical_device.as_ref(), command_pool);
+        unsafe {
+            self.logical_device
+                .cmd_copy_buffer_to_image(cmd_buffer, source_buffer, self.image, ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_info]);
+        }
+        end_one_time_command_buffer(cmd_buffer, self.logical_device.as_ref(), command_pool, graphics_queue);
+    }
+
     fn create_image_view(&mut self, format: Format, aspect_flags: ImageAspectFlags, mip_levels: u32) {
         let create_info = ImageViewCreateInfo::builder()
             .image(self.image)
@@ -156,7 +206,7 @@ impl Image {
         }
     }
 
-    unsafe fn generate_mipmap(&mut self, aspect_flags: ImageAspectFlags, mip_levels: u32, command_pool: CommandPool, graphics_queue: Queue) {
+    pub unsafe fn generate_mipmap(&mut self, aspect_flags: ImageAspectFlags, mip_levels: u32, command_pool: CommandPool, graphics_queue: Queue) {
         let mut barrier = ImageMemoryBarrier::builder()
             .src_queue_family_index(QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(QUEUE_FAMILY_IGNORED)

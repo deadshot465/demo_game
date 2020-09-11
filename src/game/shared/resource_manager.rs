@@ -4,12 +4,12 @@ use crate::game::shared::util::get_random_string;
 use crate::game::shared::structs::Model;
 use crate::game::traits::GraphicsBase;
 
-pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> {
-    pub models: Vec<*mut Model<GraphicsType, BufferType, CommandType>>,
+pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+    pub models: Vec<*mut Model<GraphicsType, BufferType, CommandType, TextureType>>,
     resource: Vec<RefCell<Box<dyn Disposable>>>,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> ResourceManager<GraphicsType, BufferType, CommandType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
     pub fn new() -> Self {
         ResourceManager {
             resource: vec![],
@@ -33,13 +33,17 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 
         ptr
     }
 
-    pub fn add_model(&mut self, model: Model<GraphicsType, BufferType, CommandType>) {
+    pub fn add_model(&mut self, model: Model<GraphicsType, BufferType, CommandType, TextureType>) {
         let name = model.model_name.clone();
         let _model = self.add_resource_with_name(model, name);
         unsafe {
             _model.as_mut().unwrap().model_index = self.models.len();
         }
         self.models.push(_model);
+    }
+
+    pub fn get_model_count(&self) -> usize {
+        self.models.len()
     }
 
     pub fn get_resource<U>(&self, resource_name: &str) -> *const U
@@ -72,15 +76,17 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> Drop for ResourceManager<GraphicsType, BufferType, CommandType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping Resource Manager...");
         unsafe {
             for resource in self.resource.iter_mut() {
+                if resource.as_ptr().as_ref().unwrap().is_disposed() {
+                    continue;
+                }
                 resource.as_ptr().as_mut().unwrap().dispose();
             }
         }
-        self.resource.clear();
         log::info!("Successfully dropped resource manager.");
     }
 }

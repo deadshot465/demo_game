@@ -56,7 +56,7 @@ pub struct Graphics {
     msaa_image: ManuallyDrop<super::Image>,
     uniform_buffers: ManuallyDrop<UniformBuffers>,
     camera: Arc<RwLock<Camera>>,
-    resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer>>>,
+    resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
     descriptor_pool: DescriptorPool,
     command_buffers: Vec<CommandBuffer>,
     frame_buffers: Vec<Framebuffer>,
@@ -67,7 +67,7 @@ pub struct Graphics {
 }
 
 impl Graphics {
-    pub fn new(window: &winit::window::Window, camera: Arc<RwLock<Camera>>, resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer>>>) -> Self {
+    pub fn new(window: &winit::window::Window, camera: Arc<RwLock<Camera>>, resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>) -> Self {
         let debug = true;
         let entry = Entry::new().unwrap();
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
@@ -529,29 +529,32 @@ impl Graphics {
         }
         drop(lock);
         drop(resource_manager);
-        let buffer_size = std::mem::size_of::<Mat4>() * matrices.len();
+        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
+        let buffer_size = dynamic_alignment * DeviceSize::try_from(matrices.len()).unwrap();
         let mut dynamic_model = DynamicModel {
             model_indices: indices,
             model_matrices: matrices,
             buffer: std::ptr::null_mut()
         };
-        dynamic_model.buffer = aligned_alloc::aligned_alloc(buffer_size, self.dynamic_objects.dynamic_alignment as usize) as *mut Mat4;
+        dynamic_model.buffer = aligned_alloc::aligned_alloc(buffer_size as usize, dynamic_alignment as usize) as *mut Mat4;
         assert_ne!(dynamic_model.buffer, std::ptr::null_mut());
 
         let mut buffer = super::Buffer::new(
             &self.instance, Arc::downgrade(&self.logical_device),
-            self.physical_device.physical_device, buffer_size as DeviceSize,
+            self.physical_device.physical_device, buffer_size,
             BufferUsageFlags::UNIFORM_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT);
         unsafe {
             for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
+                println!("{:?}", model);
                 let ptr = std::mem::transmute::<usize, *mut Mat4>(
-                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) + i
+                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
+                        (i * (dynamic_alignment as usize))
                 );
                 *ptr = model.clone();
             }
             let mapped = buffer.map_memory(WHOLE_SIZE, 0);
-            std::ptr::copy(dynamic_model.buffer as *mut c_void, mapped, buffer_size);
+            std::ptr::copy(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
         }
         self.dynamic_objects.models = dynamic_model;
         self.uniform_buffers.model_buffer = Some(ManuallyDrop::new(buffer));
@@ -836,9 +839,9 @@ impl Graphics {
 
     }
 
-    pub fn render(&self) -> u32 {
+    pub fn render(&self, current_index: u32) -> u32 {
         unsafe {
-            let index = self.current_index as usize;
+            let index = current_index as usize;
             let swapchain_loader = &self.swapchain.swapchain_loader;
             let image_count = self.swapchain.swapchain_images.len();
             let result = swapchain_loader
@@ -889,7 +892,7 @@ impl Graphics {
     }
 }
 
-impl GraphicsBase<super::Buffer, CommandBuffer> for Graphics {
+impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
     fn create_vertex_buffer(&self, vertices: &[Vertex]) -> super::Buffer {
         let buffer_size = DeviceSize::try_from(std::mem::size_of::<Vertex>() * vertices.len())
             .unwrap();
@@ -936,6 +939,40 @@ impl GraphicsBase<super::Buffer, CommandBuffer> for Graphics {
 
     fn get_commands(&self) -> &Vec<CommandBuffer> {
         &self.command_buffers
+    }
+
+    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32) -> super::Image {
+        let mut staging = super::Buffer::new(
+            &self.instance, Arc::downgrade(&self.logical_device),
+            self.physical_device.physical_device, buffer_size,
+            BufferUsageFlags::TRANSFER_SRC,
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT
+        );
+        unsafe {
+            let mapped = staging.map_memory(buffer_size, 0);
+            std::ptr::copy(image_data.as_ptr() as *const c_void, mapped, buffer_size as usize);
+
+            let format = self.swapchain.format.format;
+            let _width = width as f32;
+            let _height = height as f32;
+            let mip_levels = _width.max(_height).log2().floor() as u32;
+            let mut image = super::Image::new(
+                &self.instance, self.logical_device.clone(), self.physical_device.physical_device,
+                ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED,
+                MemoryPropertyFlags::DEVICE_LOCAL, format,
+                SampleCountFlags::TYPE_1,
+                Extent2D::builder().width(width).height(height).build(),
+                ImageType::TYPE_2D, mip_levels, ImageAspectFlags::COLOR
+            );
+            image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::TRANSFER_DST_OPTIMAL,
+            self.command_pool, self.graphics_queue, ImageAspectFlags::COLOR, mip_levels);
+            image.copy_buffer_to_image(staging.buffer, width, height, self.command_pool, self.graphics_queue);
+            unsafe {
+                image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, self.command_pool, self.graphics_queue);
+            }
+            image.create_sampler(mip_levels);
+            image
+        }
     }
 }
 

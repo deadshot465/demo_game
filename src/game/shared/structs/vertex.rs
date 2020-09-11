@@ -6,14 +6,17 @@ use ash::{
         VertexInputRate,
     }
 };
-use glam::{Vec2, Vec3A};
+use glam::{Vec2, Vec3A, Vec4};
 use std::convert::TryFrom;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
-    position: Vec3A,
-    normal: Vec3A,
-    tex_coord: Vec2
+    pub position: Vec3A,
+    pub normal: Vec3A,
+    pub tex_coord: Vec2,
+    pub uv: Option<Vec2>,
+    pub joints: Option<Vec4>,
+    pub weights: Option<Vec4>,
 }
 
 impl Vertex {
@@ -21,7 +24,10 @@ impl Vertex {
         Vertex {
             position,
             normal,
-            tex_coord
+            tex_coord,
+            uv: None,
+            joints: None,
+            weights: None,
         }
     }
 
@@ -44,13 +50,13 @@ impl Vertex {
             .build());
         descs.push(VertexInputAttributeDescription::builder()
             .binding(binding)
-            .offset(0)
+            .offset(u32::try_from(memoffset::offset_of!(Vertex, normal)).unwrap())
             .format(Format::R32G32B32_SFLOAT)
             .location(1)
             .build());
         descs.push(VertexInputAttributeDescription::builder()
             .binding(binding)
-            .offset(0)
+            .offset(u32::try_from(memoffset::offset_of!(Vertex, tex_coord)).unwrap())
             .format(Format::R32G32_SFLOAT)
             .location(2)
             .build());

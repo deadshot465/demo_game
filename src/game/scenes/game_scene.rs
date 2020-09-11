@@ -4,17 +4,18 @@ use std::sync::{RwLock, Weak};
 use crate::game::ResourceManager;
 use crate::game::traits::Disposable;
 use crate::game::shared::structs::Model;
-use crate::game::graphics::vk::{Graphics, Buffer};
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use ash::vk::CommandBuffer;
+use crossbeam::sync::ShardedLock;
 
-pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> {
-    graphics: Weak<RwLock<GraphicsType>>,
-    resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType>>>,
+pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+    graphics: Weak<ShardedLock<GraphicsType>>,
+    resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> GameScene<GraphicsType, BufferType, CommandType> {
-    pub fn new(resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType>>>, graphics: Weak<RwLock<GraphicsType>>) -> Self {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> GameScene<GraphicsType, BufferType, CommandType, TextureType> {
+    pub fn new(resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>, graphics: Weak<ShardedLock<GraphicsType>>) -> Self {
         GameScene {
             graphics,
             resource_manager,
@@ -23,14 +24,20 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 
     }
 }
 
-impl Scene for GameScene<Graphics, Buffer, CommandBuffer> {
+impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {
 
     }
 
     fn load_content(&mut self) {
+        self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0));
         self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));
+        self.add_model("./models/tank/tank.gltf", Vec3A::new(-1.5, 0.0, -1.5),
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 225.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
+        self.add_model("./models/tank/tank.gltf", Vec3A::new(2.5, 0.0, 2.5),
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 270.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));
     }
 
     fn update(&mut self, _delta_time: u64) {
@@ -46,7 +53,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer> {
                 let cmd_buffers = graphics_lock.get_commands();
                 let models = &resource_lock.models;
                 for buffer in cmd_buffers.iter() {
-                    for model in models.iter() {
+                    for (index, model) in models.iter().enumerate() {
                         unsafe {
                             model.as_ref().unwrap().render(*buffer);
                         }
@@ -89,6 +96,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer> {
                 let z: f32 = rotation.z();
                 model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
                 model.color = color;
+                model.model_index = lock.get_model_count();
                 lock.add_model(model);
             }
             else {

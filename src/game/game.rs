@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::{
+    AtomicU32, Ordering
+}};
+use crossbeam::sync::ShardedLock;
 use winit::{
     event::{
         ElementState,
@@ -14,20 +17,21 @@ use winit::{
     window::WindowBuilder
 };
 use crate::game::{ResourceManager, Camera, SceneManager, GameScene};
-use crate::game::graphics::vk::{Graphics, Buffer};
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use crate::game::traits::Disposable;
 use crate::game::shared::traits::GraphicsBase;
 use ash::vk::CommandBuffer;
 
-pub struct Game<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> {
+pub struct Game<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     pub window: Arc<RwLock<winit::window::Window>>,
-    pub resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType>>>,
+    pub resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     pub camera: Arc<RwLock<Camera>>,
-    pub graphics: Arc<RwLock<Graphics>>,
+    pub graphics: Arc<ShardedLock<GraphicsType>>,
     pub scene_manager: SceneManager,
+    current_index: AtomicU32,
 }
 
-impl Game<Graphics, Buffer, CommandBuffer> {
+impl Game<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(title: &str, width: f64, height: f64, event_loop: &EventLoop<()>) -> Self {
         let window = WindowBuilder::new()
             .with_title(title)
@@ -41,8 +45,9 @@ impl Game<Graphics, Buffer, CommandBuffer> {
             window: Arc::new(RwLock::new(window)),
             resource_manager,
             camera,
-            graphics: Arc::new(RwLock::new(graphics)),
+            graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
+            current_index: AtomicU32::new(0),
         }
     }
 
@@ -77,14 +82,14 @@ impl Game<Graphics, Buffer, CommandBuffer> {
     }
 
     pub fn render(&self) {
-        let mut lock = self.graphics.write().unwrap();
-        let index = lock.render();
-        lock.current_index = index;
+        let lock = self.graphics.read().unwrap();
+        let index = lock.render(self.current_index.load(Ordering::SeqCst));
+        self.current_index.store(index, Ordering::SeqCst);
         drop(lock);
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> Drop for Game<GraphicsType, BufferType, CommandType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for Game<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping game...");
     }

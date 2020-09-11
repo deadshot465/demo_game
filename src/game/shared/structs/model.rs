@@ -1,8 +1,8 @@
-use glam::{Vec2, Vec3A, Vec4, Mat4};
+use glam::{Vec2, Vec3, Vec3A, Vec4, Mat4, Quat};
 use crate::game::shared::traits::disposable::Disposable;
 use std::sync::{RwLock, Weak};
-use crate::game::shared::structs::{Mesh, Vertex, PushConstant};
-use crate::game::graphics::vk::{Graphics, Buffer};
+use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Joint, Animation};
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use gltf::{Node, Scene};
 use crate::game::traits::GraphicsBase;
 use std::mem::ManuallyDrop;
@@ -11,32 +11,38 @@ use std::convert::TryFrom;
 use ash::version::DeviceV1_0;
 use crate::game::shared::enums::ShaderType;
 use winapi::_core::marker::PhantomData;
+use gltf::scene::Transform;
+use crossbeam::sync::ShardedLock;
+use image::ImageFormat;
+use std::collections::HashMap;
 
-pub struct Model<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> {
+pub struct Model<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     pub position: Vec3A,
     pub scale: Vec3A,
     pub rotation: Vec3A,
     pub color: Vec4,
-    pub meshes: Vec<Mesh<BufferType>>,
+    pub meshes: Vec<Mesh<BufferType, TextureType>>,
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
-    graphics: Weak<RwLock<GraphicsType>>,
+    pub animations: Option<HashMap<String, Animation>>,
+    graphics: Weak<ShardedLock<GraphicsType>>,
     phantom: PhantomData<&'static CommandType>,
+    phantom_2: PhantomData<&'static TextureType>,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> Model<GraphicsType, BufferType, CommandType> {
-    pub fn new(file_name: &str, graphics: Weak<RwLock<GraphicsType>>,
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Model<GraphicsType, BufferType, CommandType, TextureType> {
+    pub fn new(file_name: &str, graphics: Weak<ShardedLock<GraphicsType>>,
                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
-        let (document, buffer, _image) = gltf::import(file_name)
+        let (document, buffer, image) = gltf::import(file_name)
             .expect("Failed to import the model.");
 
-        let mut meshes: Vec<Mesh<BufferType>>;
+        let mut meshes: Vec<Mesh<BufferType, TextureType>>;
         if let Some(scene) = document.default_scene() {
-            meshes = Model::<GraphicsType, BufferType, CommandType>::process_root_nodes(scene, buffer);
+            meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_root_nodes(scene, buffer);
         }
         else {
-            meshes = Model::<GraphicsType, BufferType, CommandType>::process_root_nodes(document.scenes().nth(0).unwrap(), buffer);
+            meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_root_nodes(document.scenes().nth(0).unwrap(), buffer);
         }
 
         let _graphics = graphics.upgrade();
@@ -66,33 +72,218 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 
             model_name: file_name.to_string(),
             model_index: 0,
             phantom: PhantomData,
+            phantom_2: PhantomData,
         }
     }
 
-    fn process_root_nodes(scene: Scene, buffer_data: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType>> {
+    pub fn load_skinned_mesh(file_name: &str, graphics: Weak<ShardedLock<GraphicsType>>,
+                             position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
+        let raw_data = match std::fs::read(file_name) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("Error reading the model: {}", e.to_string());
+                None
+            }
+        };
+        let gltf = gltf::Gltf::from_slice(raw_data.as_slice()).unwrap();
+        let blob = gltf.blob.as_ref().unwrap();
+
+        let mut textures = vec![];
+        for texture in gltf.textures() {
+            match texture.source().source() {
+                gltf::image::Source::View {
+                    view, mime_type
+                } => {
+                    let slice = &blob[view.offset()..view.offset() + view.length() - 1];
+                    let png = image::load_from_memory_with_format(slice, if mime_type == "image/jpeg" {
+                        ImageFormat::Jpeg
+                    } else {
+                        ImageFormat::Png
+                    });
+                    let png = match png {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::error!("Failed to load image from the memory.");
+                            None
+                        }
+                    };
+                    let image = match png.as_bgra8() {
+                        Some(d) => d,
+                        None => {
+                            log::error!("Cannot convert the image to BGRA8 format.");
+                        }
+                    };
+                    let buffer_size = image.height() * image.width() * 4;
+                    let data = image.to_vec();
+                    let _graphics = graphics.upgrade();
+                    if let Some(g) = _graphics {
+                        let lock = g.read().unwrap();
+                        let img = lock.create_image(data.as_slice(), buffer_size as u64, image.width(), image.height());
+                        textures.push(img);
+                    }
+                },
+                _ => {
+                    log::error!("The format has to be a binary GLTF.");
+                }
+            }
+        }
+
+        let scene = gltf.default_scene();
+        let meshes: Vec<Mesh<BufferType, TextureType>>;
+        if let Some(root_scene) = scene {
+            meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_skinned_mesh_root_nodes(root_scene, blob, &textures);
+        }
+        else {
+            meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_skinned_mesh_root_nodes(gltf.scenes().nth(0).unwrap(), blob, &textures);
+        }
+
+        let model = Model {
+            position,
+            scale,
+            rotation,
+            color,
+            meshes: vec![],
+            is_disposed: false,
+            model_name: "".to_string(),
+            model_index: 0,
+            graphics: Default::default(),
+            phantom: Default::default(),
+            phantom_2: Default::default()
+        };
+        model
+    }
+
+    fn process_skinned_mesh_root_nodes(scene: Scene, buffer_data: &Vec<u8>, textures: &Vec<TextureType>) -> Vec<Mesh<BufferType, TextureType>> {
         let mut meshes = vec![];
         for node in scene.nodes() {
-            let mut submeshes = Model::<GraphicsType, BufferType, CommandType>::process_node(node, &buffer_data);
-            meshes.append(&mut submeshes);
+            let mut sub_meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_skinned_mesh_node(node, &buffer_data, textures);
+            meshes.append(&mut sub_meshes);
         }
         meshes
     }
 
-    fn process_node(node: Node, buffer_data: &Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType>> {
+    fn process_skinned_mesh_node(node: Node, buffer_data: &Vec<u8>, textures: &Vec<TextureType>) -> Vec<Mesh<BufferType, TextureType>> {
         let mut meshes = vec![];
+        let (t, r, s) = node.transform().decomposed();
+        let transform = Mat4::from_scale_rotation_translation(
+            Vec3::from(s),
+            Quat::from(r),
+            Vec3::from(t)
+        );
         if let Some(mesh) = node.mesh() {
-            meshes.push(Model::<GraphicsType, BufferType, CommandType>::process_mesh(mesh, &buffer_data));
+            meshes.push(Model::<GraphicsType, BufferType, CommandType, TextureType>::process_skinned_mesh(&node, mesh, &buffer_data, transform.clone(), textures));
         }
         for _node in node.children() {
-            let mut submeshes = Model::<GraphicsType, BufferType, CommandType>::process_node(_node, &buffer_data);
+            let mut sub_meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_skinned_mesh_node(_node, &buffer_data, textures);
+            let (t, r, s) = transform.clone().decomposed();
+            let transform_matrix = Mat4::from_scale_rotation_translation(
+                glam::Vec3::from(s),
+                glam::Quat::from(r),
+                glam::Vec3::from(t)
+            );
+            for mesh in sub_meshes.iter_mut() {
+                for vertex in mesh.vertices.iter_mut() {
+                    vertex.position = Vec3A::from(transform_matrix.transform_point3(glam::Vec3::from(vertex.position)));
+                }
+            }
             meshes.append(&mut submeshes);
         }
         meshes
     }
 
-    fn process_mesh(mesh: gltf::Mesh, buffer_data: &Vec<gltf::buffer::Data>) -> Mesh<BufferType> {
+    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffer_data: &Vec<u8>, mut local_transform: Transform, textures: &Vec<TextureType>) -> Mesh<BufferType, TextureType> {
+        let mut root_joint = None;
+        if let Some(skin) = node.skin() {
+            let joints: Vec<_> = skin.joints().collect();
+            if !joints.is_empty() {
+                let reader = skin.reader(|buffer| {
+                    match buffer.source() {
+                        gltf::buffer::Source::Bin => (),
+                        gltf::buffer::Source::Uri(uri) => {
+                            log::error!("URI-based skins are not supported.");
+                        }
+                    }
+                    Some(&buffer_data)
+                });
+                let ibm: Vec<Mat4> = reader.read_inverse_bind_matrices()
+                    .unwrap()
+                    .map(|r| r.into())
+                    .collect();
+                let node_to_joints_lookup: Vec<_> = joints.iter().map(|n| n.index()).collect();
+                root_joint = Some()
+            }
+        }
+        Mesh
+    }
+
+    fn process_skeleton(node: &Node, buffer_data: &[u8], node_to_joints_lookup: &[usize], inverse_bind_matrices: &[Mat4], local_transform: Mat4) -> Joint {
+        let mut children = vec![];
+        let node_index = node.index();
+        let index = node_to_joints_lookup.iter()
+            .enumerate()
+            .find(|(_, x)| **x == node_index)
+            .unwrap()
+            .0;
+        let name = node.name().unwrap_or("");
+        let ibm = inverse_bind_matrices[index];
+        let (t, r, s) = node.transform().decomposed();
+        let node_transform = Mat4::from_scale_rotation_translation(
+            Vec3::from(s),
+            Quat::from(r),
+            Vec3::from(t)
+        );
+        let pose_transform = local_transform * node_transform;
+        for child in node.children() {
+            children.push(Self::process_skeleton(node, buffer_data, node_to_joints_lookup, inverse_bind_matrices, pose_transform.clone()));
+        }
+        let ibm = ibm.clone();
+
+
+        ()
+    }
+
+    fn process_root_nodes(scene: Scene, buffer_data: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, TextureType>> {
+        let mut meshes = vec![];
+        for node in scene.nodes() {
+            let mut submeshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_node(node, &buffer_data);
+            meshes.append(&mut submeshes);
+        }
+        meshes
+    }
+
+    fn process_node(node: Node, buffer_data: &Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, TextureType>> {
+        let mut meshes = vec![];
+        let transform = node.transform();
+        if let Some(mesh) = node.mesh() {
+            meshes.push(Model::<GraphicsType, BufferType, CommandType, TextureType>::process_mesh(mesh, &buffer_data, transform.clone()));
+        }
+        for _node in node.children() {
+            let mut submeshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_node(_node, &buffer_data);
+            let (t, r, s) = transform.clone().decomposed();
+            let transform_matrix = Mat4::from_scale_rotation_translation(
+                glam::Vec3::from(s),
+                glam::Quat::from(r),
+                glam::Vec3::from(t)
+            );
+            for mesh in submeshes.iter_mut() {
+                for vertex in mesh.vertices.iter_mut() {
+                    vertex.position = Vec3A::from(transform_matrix.transform_point3(glam::Vec3::from(vertex.position)));
+                }
+            }
+            meshes.append(&mut submeshes);
+        }
+        meshes
+    }
+
+    fn process_mesh(mesh: gltf::Mesh, buffer_data: &Vec<gltf::buffer::Data>, mut local_transform: Transform) -> Mesh<BufferType, TextureType> {
         let mut vertices: Vec<Vertex> = vec![];
         let mut indices: Vec<u32> = vec![];
+        let (t, r, s) = local_transform.decomposed();
+        let transform_matrix = Mat4::from_scale_rotation_translation(
+            Vec3::from(s),
+            Quat::from(r),
+            Vec3::from(t)
+        );
 
         for primitive in mesh.primitives() {
             let reader = primitive
@@ -139,31 +330,35 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 
                 } else {
                     Vec2::new(0.0, 0.0)
                 };
-                vertices.push(Vertex::new(positions[i], normals[i], tex_coord));
+                let vertex = Vertex::new(
+                    Vec3A::from(transform_matrix.transform_point3(Vec3::from(positions[i]))),
+                    normals[i],
+                    tex_coord
+                );
+                vertices.push(vertex);
             }
         }
+
         Mesh {
             vertices,
             indices,
             vertex_buffer: None,
             index_buffer: None,
-            is_disposed: false
+            is_disposed: false,
+            texture: None,
         }
     }
 
     pub fn get_world_matrix(&self) -> Mat4 {
         let world = Mat4::identity();
         let scale = Mat4::from_scale(glam::Vec3::from(self.scale));
-        let rotation_x = Mat4::from_rotation_x(self.rotation.x());
-        let rotation_y = Mat4::from_rotation_y(self.rotation.y());
-        let rotation_z = Mat4::from_rotation_z(self.rotation.z());
         let translation = Mat4::from_translation(glam::Vec3::from(self.position));
-        let rotate = rotation_z * rotation_y * rotation_x;
-        scale * rotate * translation * world
+        let rotate = Mat4::from_rotation_ypr(self.rotation.y(), self.rotation.x(), self.rotation.z());
+        world * translation * rotate * scale
     }
 }
 
-impl Model<Graphics, Buffer, CommandBuffer> {
+impl Model<Graphics, Buffer, CommandBuffer, Image> {
     pub fn render(&self, command_buffer: CommandBuffer) {
         let graphics = self.graphics.upgrade();
         if graphics.is_none() {
@@ -212,37 +407,49 @@ impl Model<Graphics, Buffer, CommandBuffer> {
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> From<&Model<GraphicsType, BufferType, CommandType>> for Model<GraphicsType, BufferType, CommandType> {
-    fn from(model: &Model<GraphicsType, BufferType, CommandType>) -> Self {
-        Model {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> From<&Model<GraphicsType, BufferType, CommandType, TextureType>> for Model<GraphicsType, BufferType, CommandType, TextureType> {
+    fn from(model: &Model<GraphicsType, BufferType, CommandType, TextureType>) -> Self {
+        let mut _model = Model {
             position: model.position,
             scale: model.scale,
             rotation: model.rotation,
             color: model.color,
             graphics: model.graphics.clone(),
             meshes: model.meshes.to_vec(),
-            is_disposed: false,
+            is_disposed: true,
             model_name: model.model_name.clone(),
             model_index: 0,
-            phantom: PhantomData
-        }
+            phantom: PhantomData,
+            phantom_2: PhantomData,
+        };
+
+        _model.meshes.iter_mut()
+            .for_each(|mesh| mesh.is_disposed = true);
+        _model
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> Drop for Model<GraphicsType, BufferType, CommandType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for Model<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
+        log::info!("Dropping model...Model: {}, Model Index: {}", self.model_name.as_str(), self.model_index);
         if !self.is_disposed {
             self.dispose();
+            log::info!("Successfully dropped model.");
+        }
+        else {
+            log::warn!("Model is already dropped.");
         }
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType>, BufferType: 'static + Disposable + Clone, CommandType: 'static> Disposable for Model<GraphicsType, BufferType, CommandType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Disposable for Model<GraphicsType, BufferType, CommandType, TextureType> {
     fn dispose(&mut self) {
+        log::info!("Disposing model...Model: {}, Model Index: {}", self.model_name.as_str(), self.model_index);
         for mesh in self.meshes.iter_mut() {
             mesh.dispose();
         }
         self.is_disposed = true;
+        log::info!("Successfully disposed model.");
     }
 
     fn is_disposed(&self) -> bool {

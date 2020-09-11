@@ -1,11 +1,15 @@
+pub mod animation;
 pub mod blend_mode;
+pub mod joint;
 pub mod lighting;
 pub mod mesh;
 pub mod model;
 pub mod push_constant;
 pub mod vertex;
 pub mod view_projection;
+pub use animation::*;
 pub use blend_mode::BlendMode;
+pub use joint::Joint;
 pub use lighting::*;
 pub use mesh::Mesh;
 pub use model::Model;
