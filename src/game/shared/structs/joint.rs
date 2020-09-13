@@ -1,6 +1,6 @@
 use glam::{Mat4, Quat, Vec3A};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Joint {
     pub name: String,
     pub node_index: usize,

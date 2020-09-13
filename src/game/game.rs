@@ -21,6 +21,8 @@ use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use crate::game::traits::Disposable;
 use crate::game::shared::traits::GraphicsBase;
 use ash::vk::CommandBuffer;
+use crate::game::graphics::dx12 as DX12;
+use winapi::um::d3d12::ID3D12CommandList;
 
 pub struct Game<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     pub window: Arc<RwLock<winit::window::Window>>,
@@ -86,6 +88,43 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         let index = lock.render(self.current_index.load(Ordering::SeqCst));
         self.current_index.store(index, Ordering::SeqCst);
         drop(lock);
+    }
+}
+
+impl Game<DX12::Graphics, DX12::Resource, ID3D12CommandList, DX12::Resource> {
+    pub unsafe fn new(title: &str, width: f64, height: f64, event_loop: &EventLoop<()>) -> Self {
+        let window = WindowBuilder::new()
+            .with_title(title)
+            .with_inner_size(winit::dpi::LogicalSize::new(width, height))
+            .build(event_loop)
+            .expect("Failed to create window.");
+        let camera = Arc::new(RwLock::new(Camera::new(width, height)));
+        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
+        let graphics = DX12::Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager));
+        Game {
+            window: Arc::new(RwLock::new(window)),
+            resource_manager,
+            camera,
+            graphics: Arc::new(ShardedLock::new(graphics)),
+            scene_manager: SceneManager::new(),
+            current_index: AtomicU32::new(0),
+        }
+    }
+
+    pub fn initialize(&mut self) -> bool {
+        true
+    }
+
+    pub async fn load_content(&mut self) {
+        ()
+    }
+
+    pub fn update(&self) {
+
+    }
+
+    pub fn render(&self) {
+
     }
 }
 

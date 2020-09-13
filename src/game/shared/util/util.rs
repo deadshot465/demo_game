@@ -2,6 +2,8 @@ use ash::Device;
 use ash::vk::{CommandPool, CommandBuffer, CommandBufferAllocateInfo, CommandBufferLevel, CommandBufferBeginInfo, CommandBufferUsageFlags, Queue, SubmitInfo, Fence};
 use ash::version::DeviceV1_0;
 use rand::prelude::*;
+use winapi::shared::winerror::{HRESULT, FAILED};
+use winapi::ctypes::c_void;
 
 const ALPHANUMERICS: &'static str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -50,5 +52,16 @@ pub fn end_one_time_command_buffer(cmd_buffer: CommandBuffer, device: &Device,
             .expect("Failed to submit the queue.");
         device.queue_wait_idle(graphics_queue).expect("Failed to wait for queue.");
         device.free_command_buffers(command_pool, &command_buffers);
+    }
+}
+
+pub fn get_nullptr() -> *mut c_void {
+    std::ptr::null_mut() as *mut c_void
+}
+
+pub fn log_error(result: HRESULT, msg: &str) {
+    if FAILED(result) {
+        log::error!("{} Error: {}.", msg, result);
+        panic!("{} Error: {}.", msg, result);
     }
 }

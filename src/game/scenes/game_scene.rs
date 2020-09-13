@@ -53,7 +53,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 let cmd_buffers = graphics_lock.get_commands();
                 let models = &resource_lock.models;
                 for buffer in cmd_buffers.iter() {
-                    for (index, model) in models.iter().enumerate() {
+                    for model in models.iter() {
                         unsafe {
                             model.as_ref().unwrap().render(*buffer);
                         }

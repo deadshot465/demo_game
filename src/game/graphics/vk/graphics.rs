@@ -33,6 +33,7 @@ use glam::{Vec3A, Vec4, Mat4};
 use crate::game::enums::ShaderType;
 use crate::game::shared::traits::GraphicsBase;
 
+#[allow(dead_code)]
 pub struct Graphics {
     pub dynamic_objects: DynamicBufferObject,
     pub logical_device: Arc<Device>,
@@ -872,7 +873,8 @@ impl Graphics {
             swapchain_loader
                 .queue_present(self.present_queue, &present_info)
                 .expect("Failed to present with the swapchain.");
-            self.logical_device.wait_for_fences(&[self.fences[index]], true, u64::MAX);
+            self.logical_device.wait_for_fences(&[self.fences[index]], true, u64::MAX)
+                .expect("Failed to wait for fences.");
             let current_index = ((index as u32) + 1) % (image_count as u32);
             current_index
         }
@@ -967,9 +969,7 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
             image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::TRANSFER_DST_OPTIMAL,
             self.command_pool, self.graphics_queue, ImageAspectFlags::COLOR, mip_levels);
             image.copy_buffer_to_image(staging.buffer, width, height, self.command_pool, self.graphics_queue);
-            unsafe {
-                image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, self.command_pool, self.graphics_queue);
-            }
+            image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, self.command_pool, self.graphics_queue);
             image.create_sampler(mip_levels);
             image
         }

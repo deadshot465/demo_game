@@ -1,8 +1,6 @@
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
 use std::mem::ManuallyDrop;
-use glam::Mat4;
-use crate::game::shared::structs::Joint;
 
 #[derive(Clone)]
 pub struct Mesh<BufferType: 'static + Disposable, TextureType: 'static + Clone + Disposable> {
@@ -12,8 +10,6 @@ pub struct Mesh<BufferType: 'static + Disposable, TextureType: 'static + Clone +
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
     pub is_disposed: bool,
     pub texture: Option<ManuallyDrop<TextureType>>,
-    pub transform: Option<Mat4>,
-    pub root_joint: Option<Joint>,
 }
 
 impl Mesh<crate::game::graphics::vk::Buffer, crate::game::graphics::vk::Image> {
@@ -25,8 +21,6 @@ impl Mesh<crate::game::graphics::vk::Buffer, crate::game::graphics::vk::Image> {
             index_buffer: None,
             is_disposed: false,
             texture: None,
-            transform: None,
-            root_joint: None,
         }
     }
 
