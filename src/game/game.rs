@@ -3,15 +3,7 @@ use std::sync::{Arc, RwLock, atomic::{
 }};
 use crossbeam::sync::ShardedLock;
 use winit::{
-    event::{
-        ElementState,
-        Event,
-        KeyboardInput,
-        VirtualKeyCode,
-        WindowEvent,
-    },
     event_loop::{
-        ControlFlow,
         EventLoop
     },
     window::WindowBuilder

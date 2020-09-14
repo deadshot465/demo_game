@@ -1,5 +1,5 @@
 use winapi::shared::dxgi1_6::{IDXGIFactory6, IDXGIAdapter4, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, DXGI_ADAPTER_DESC3, DXGI_ADAPTER_FLAG3_SOFTWARE};
-use winapi::shared::dxgi1_3::{CreateDXGIFactory2, DXGI_CREATE_FACTORY_DEBUG, IDXGIFactory3};
+use winapi::shared::dxgi1_3::{CreateDXGIFactory2, DXGI_CREATE_FACTORY_DEBUG};
 use winapi::Interface;
 use winapi::shared::guiddef::REFIID;
 use winapi::ctypes::c_void;
@@ -7,10 +7,10 @@ use winapi::shared::dxgi1_2::IDXGIFactory2;
 use winapi::um::unknwnbase::IUnknown;
 use wio::com::ComPtr;
 use winapi::shared::winerror::{FAILED, SUCCEEDED};
-use winapi::shared::minwindef::{UINT, INT, FALSE, BOOL, TRUE};
-use winapi::um::winnt::{RtlZeroMemory, LUID, HRESULT};
+use winapi::shared::minwindef::{UINT, FALSE, BOOL, TRUE};
+use winapi::um::winnt::{RtlZeroMemory, LUID};
 use winapi::shared::basetsd::SIZE_T;
-use winapi::um::d3d12::{D3D12CreateDevice, ID3D12Device2, ID3D12CommandList, D3D12GetDebugInterface, ID3D12CommandQueue, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_PRIORITY_NORMAL};
+use winapi::um::d3d12::{D3D12CreateDevice, ID3D12Device2, ID3D12CommandList, D3D12GetDebugInterface};
 use winapi::um::d3dcommon::D3D_FEATURE_LEVEL_12_1;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::graphics::dx12::{Resource, SwapChain, DescriptorHeap, CommandQueue, Pipeline};
@@ -24,6 +24,7 @@ use winapi::shared::dxgi1_5::DXGI_FEATURE_PRESENT_ALLOW_TEARING;
 use winit::platform::windows::WindowExtWindows;
 use winapi::shared::windef::HWND;
 
+#[allow(dead_code)]
 pub struct Graphics {
     camera: Arc<RwLock<Camera>>,
     resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ID3D12CommandList, Resource>>>,

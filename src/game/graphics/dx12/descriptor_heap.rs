@@ -1,4 +1,4 @@
-use winapi::um::d3d12::{D3D12_DESCRIPTOR_HEAP_DESC, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, ID3D12DescriptorHeap, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, ID3D12Device2, D3D12_CPU_DESCRIPTOR_HANDLE, ID3D12Resource, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_CLEAR_VALUE, D3D12_CLEAR_VALUE_u, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL};
+use winapi::um::d3d12::{D3D12_DESCRIPTOR_HEAP_DESC, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, ID3D12DescriptorHeap, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, ID3D12Device2, ID3D12Resource, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_CLEAR_VALUE, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL};
 use wio::com::ComPtr;
 use crate::game::graphics::dx12::{SwapChain, Resource, ResourceType};
 use crate::game::shared::util::{get_nullptr, log_error};
@@ -6,8 +6,6 @@ use winapi::shared::guiddef::{REFGUID, REFIID};
 use winapi::Interface;
 use winapi::shared::basetsd::{SIZE_T, UINT64};
 use winapi::shared::dxgiformat::DXGI_FORMAT_D32_FLOAT;
-use winapi::um::winnt::RtlZeroMemory;
-use winapi::ctypes::c_void;
 use std::mem::ManuallyDrop;
 
 pub struct DescriptorHeap {
@@ -66,7 +64,7 @@ impl DescriptorHeap {
                 handle
             );
             log::info!("Render target view {} successfully created.", i);
-            handle.ptr += (increment_size as SIZE_T);
+            handle.ptr += increment_size as SIZE_T;
             let comptr = ComPtr::from_raw(_ptr as *mut ID3D12Resource);
             rtvs.push(comptr);
         }
@@ -81,7 +79,7 @@ impl DescriptorHeap {
             NodeMask: 0
         };
         let mut ptr = get_nullptr();
-        let mut res = device.CreateDescriptorHeap(
+        let res = device.CreateDescriptorHeap(
             &desc as *const _,
             &ID3D12DescriptorHeap::uuidof() as REFGUID,
             &mut ptr as *mut _
@@ -99,7 +97,7 @@ impl DescriptorHeap {
         (*clear_depth).Stencil = 0;
         clear_value.Format = DXGI_FORMAT_D32_FLOAT;
 
-        let mut resource = Resource::new(
+        let resource = Resource::new(
             device, ResourceType::Image,
             swap_chain.width as UINT64,
             swap_chain.height, 0, DXGI_FORMAT_D32_FLOAT,

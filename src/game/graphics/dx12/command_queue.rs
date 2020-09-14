@@ -1,5 +1,5 @@
 use wio::com::ComPtr;
-use winapi::um::d3d12::{ID3D12CommandQueue, ID3D12Device2, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_PRIORITY_NORMAL, ID3D12CommandAllocator, ID3D12CommandList, ID3D12PipelineState, ID3D12GraphicsCommandList1};
+use winapi::um::d3d12::{ID3D12CommandQueue, ID3D12Device2, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_PRIORITY_NORMAL, ID3D12CommandAllocator, ID3D12CommandList, ID3D12GraphicsCommandList1};
 use crate::game::util::{get_nullptr, log_error};
 use winapi::shared::minwindef::{INT, UINT};
 use winapi::Interface;

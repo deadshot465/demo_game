@@ -1,13 +1,12 @@
-use winapi::um::d3d12::{D3D12_ROOT_SIGNATURE_DESC1, ID3D12Device2, D3D12_FEATURE_ROOT_SIGNATURE, D3D12_FEATURE_DATA_ROOT_SIGNATURE, D3D12_VERSIONED_ROOT_SIGNATURE_DESC, D3D_ROOT_SIGNATURE_VERSION_1_1, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT, D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS, D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS, D3D12_DESCRIPTOR_RANGE1, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND, D3D12_ROOT_PARAMETER1, D3D12_ROOT_PARAMETER_TYPE_CBV, D3D12_SHADER_VISIBILITY_VERTEX, D3D12_ROOT_CONSTANTS, D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS, D3D12_SHADER_VISIBILITY_PIXEL, D3D12_STATIC_SAMPLER_DESC, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_COMPARISON_FUNC_ALWAYS, D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK, D3D12SerializeVersionedRootSignature, ID3D12RootSignature, D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE, ID3D12PipelineState, D3D12_GRAPHICS_PIPELINE_STATE_DESC};
+use winapi::um::d3d12::*;
 use wio::com::ComPtr;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::UINT;
 use crate::game::shared::util::{log_error, get_nullptr};
 use crate::game::shared::structs::PushConstant;
 use winapi::um::d3dcommon::ID3DBlob;
-use winapi::shared::guiddef::{REFIID, REFGUID};
+use winapi::shared::guiddef::REFGUID;
 use winapi::Interface;
-use winapi::shared::winerror::E_INVALIDARG;
 
 pub struct Pipeline {
     pub root_signature: ComPtr<ID3D12RootSignature>,
@@ -90,7 +89,7 @@ impl Pipeline {
             u: Default::default(),
             ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL
         };
-        let mut constant = parameter_3.u.Constants_mut();
+        let constant = parameter_3.u.Constants_mut();
         *constant = root_constant.clone();
         root_parameters.push(parameter_3);
 
@@ -155,7 +154,7 @@ impl Pipeline {
 
     }
 
-    unsafe fn create_graphics_pipeline(device: &ComPtr<ID3D12Device2>,
+    /*unsafe fn create_graphics_pipeline(device: &ComPtr<ID3D12Device2>,
                                     root_signature: &ComPtr<ID3D12RootSignature>) -> ComPtr<ID3D12PipelineState> {
         let pipeline_desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
             pRootSignature: root_signature.as_raw(),
@@ -180,5 +179,5 @@ impl Pipeline {
             CachedPSO: Default::default(),
             Flags: 0
         };
-    }
+    }*/
 }

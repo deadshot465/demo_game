@@ -1,15 +1,14 @@
 use wio::com::ComPtr;
 use winapi::shared::dxgi1_4::IDXGISwapChain3;
-use winapi::shared::dxgi1_2::{IDXGIFactory2, DXGI_SWAP_CHAIN_DESC1, DXGI_SCALING_ASPECT_RATIO_STRETCH, DXGI_ALPHA_MODE_UNSPECIFIED, IDXGISwapChain1, DXGI_SCALING_STRETCH};
+use winapi::shared::dxgi1_2::{IDXGIFactory2, DXGI_SWAP_CHAIN_DESC1, DXGI_ALPHA_MODE_UNSPECIFIED, IDXGISwapChain1, DXGI_SCALING_STRETCH};
 use winapi::shared::minwindef::{BOOL, UINT, FALSE};
 use winapi::shared::dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM;
 use winapi::shared::dxgitype::{DXGI_SAMPLE_DESC, DXGI_USAGE_RENDER_TARGET_OUTPUT};
-use winapi::shared::dxgi::{DXGI_SWAP_EFFECT_DISCARD, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING};
+use winapi::shared::dxgi::{DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING};
 use winapi::um::d3d12::ID3D12CommandQueue;
 use winapi::um::unknwnbase::IUnknown;
 use winapi::shared::windef::HWND;
 use crate::game::shared::util::{get_nullptr, log_error};
-use winapi::_core::mem::ManuallyDrop;
 
 pub struct SwapChain {
     pub swap_chain: ComPtr<IDXGISwapChain3>,

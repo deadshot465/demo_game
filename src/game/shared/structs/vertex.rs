@@ -17,11 +17,11 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    pub fn new(position: Vec3A, normal: Vec3A, tex_coord: Vec2) -> Self {
+    pub fn new(position: Vec3A, normal: Vec3A, uv: Vec2) -> Self {
         Vertex {
             position,
             normal,
-            uv: tex_coord
+            uv
         }
     }
 

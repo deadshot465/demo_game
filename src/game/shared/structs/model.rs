@@ -31,15 +31,15 @@ pub struct Model<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, T
 impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Model<GraphicsType, BufferType, CommandType, TextureType> {
     pub fn new(file_name: &str, graphics: Weak<ShardedLock<GraphicsType>>,
                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
-        let (document, buffer, _image) = gltf::import(file_name)
+        let (document, buffer, image) = gltf::import(file_name)
             .expect("Failed to import the model.");
 
         let mut meshes: Vec<Mesh<BufferType, TextureType>>;
         if let Some(scene) = document.default_scene() {
-            meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_root_nodes(scene, buffer);
+            meshes = Self::process_root_nodes(scene, buffer, image);
         }
         else {
-            meshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_root_nodes(document.scenes().nth(0).unwrap(), buffer);
+            meshes = Self::process_root_nodes(document.scenes().nth(0).unwrap(), buffer, image);
         }
 
         let _graphics = graphics.upgrade();
@@ -73,23 +73,23 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         }
     }
 
-    fn process_root_nodes(scene: Scene, buffer_data: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, TextureType>> {
+    fn process_root_nodes(scene: Scene, buffer_data: Vec<gltf::buffer::Data>, image_data: Vec<gltf::image::Data>) -> Vec<Mesh<BufferType, TextureType>> {
         let mut meshes = vec![];
         for node in scene.nodes() {
-            let mut submeshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_node(node, &buffer_data);
+            let mut submeshes = Self::process_node(node, &buffer_data, &image_data);
             meshes.append(&mut submeshes);
         }
         meshes
     }
 
-    fn process_node(node: Node, buffer_data: &Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, TextureType>> {
+    fn process_node(node: Node, buffer_data: &Vec<gltf::buffer::Data>, image_data: &Vec<gltf::image::Data>) -> Vec<Mesh<BufferType, TextureType>> {
         let mut meshes = vec![];
         let transform = node.transform();
         if let Some(mesh) = node.mesh() {
-            meshes.push(Model::<GraphicsType, BufferType, CommandType, TextureType>::process_mesh(mesh, &buffer_data, transform.clone()));
+            meshes.push(Self::process_mesh(mesh, &buffer_data, transform.clone(), image_data));
         }
         for _node in node.children() {
-            let mut submeshes = Model::<GraphicsType, BufferType, CommandType, TextureType>::process_node(_node, &buffer_data);
+            let mut submeshes = Self::process_node(_node, &buffer_data, image_data);
             let (t, r, s) = transform.clone().decomposed();
             let transform_matrix = Mat4::from_scale_rotation_translation(
                 glam::Vec3::from(s),
@@ -106,7 +106,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         meshes
     }
 
-    fn process_mesh(mesh: gltf::Mesh, buffer_data: &Vec<gltf::buffer::Data>, mut local_transform: Transform) -> Mesh<BufferType, TextureType> {
+    fn process_mesh(mesh: gltf::Mesh, buffer_data: &Vec<gltf::buffer::Data>, mut local_transform: Transform, image_data: &Vec<gltf::image::Data>) -> Mesh<BufferType, TextureType> {
         let mut vertices: Vec<Vertex> = vec![];
         let mut indices: Vec<u32> = vec![];
         let (t, r, s) = local_transform.decomposed();
@@ -119,6 +119,8 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         for primitive in mesh.primitives() {
             let reader = primitive
                 .reader(|buffer| Some(&buffer_data[buffer.index()]));
+
+            primitive.material().pbr_metallic_roughness().base_color_texture()
 
             let mut positions: Vec<Vec3A> = vec![];
             let mut normals: Vec<Vec3A> = vec![];
