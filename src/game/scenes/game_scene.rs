@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use crate::game::shared::traits::{Scene, GraphicsBase};
 use glam::{Vec3A, Vec4};
 use std::sync::{RwLock, Weak};
@@ -8,11 +9,13 @@ use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 
 pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     graphics: Weak<ShardedLock<GraphicsType>>,
     resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
+    tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
 }
 
 impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> GameScene<GraphicsType, BufferType, CommandType, TextureType> {
@@ -20,22 +23,24 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         GameScene {
             graphics,
             resource_manager,
-            scene_name: String::from("GAME_SCENE")
+            scene_name: String::from("GAME_SCENE"),
+            tasks: vec![],
         }
     }
 }
 
+#[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {
 
     }
 
     fn load_content(&mut self) {
-        /*self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
+        self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0));
         self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));
-        self.add_model("./models/tank/tank.gltf", Vec3A::new(-1.5, 0.0, -1.5),
+        /*self.add_model("./models/tank/tank.gltf", Vec3A::new(-1.5, 0.0, -1.5),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 225.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
         self.add_model("./models/tank/tank.gltf", Vec3A::new(2.5, 0.0, 2.5),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 270.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));*/
@@ -78,7 +83,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    fn add_model(&self, file_name: &str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) {
+    fn add_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) {
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             log::error!("Resource manager has been destroyed.");
@@ -105,11 +110,33 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 lock.add_model(model);
             }
             else {
-                let mut model = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color);
-                lock.add_model(model);
+                let mut task = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color);
+                self.tasks.push(task);
             }
         }
         drop(lock);
         drop(resource_manager);
+    }
+
+    async fn wait_for_all_tasks(&mut self) {
+        let tasks = &mut self.tasks;
+        let mut models = vec![];
+        for task in tasks.into_iter() {
+            let model = task.await.unwrap();
+            models.push(model);
+        }
+        let rm = self.resource_manager.upgrade();
+        if rm.is_none() {
+            log::error!("Failed to lock resource manager for waiting tasks.");
+            return;
+        }
+        let rm = rm.unwrap();
+        let mut lock = rm.write().unwrap();
+        for model in models.into_iter() {
+            lock.add_model(model);
+        }
+        drop(lock);
+        drop(rm);
+        self.tasks.clear();
     }
 }

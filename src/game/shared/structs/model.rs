@@ -13,6 +13,7 @@ use crate::game::shared::enums::ShaderType;
 use winapi::_core::marker::PhantomData;
 use gltf::scene::Transform;
 use crossbeam::sync::ShardedLock;
+use tokio::task::JoinHandle;
 
 pub struct Model<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     pub position: Vec3A,
@@ -42,7 +43,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         meshes
     }
 
-    fn create_model(file_name: &str, graphics: Weak<ShardedLock<GraphicsType>>,
+    fn create_model(file_name: &'static str, graphics: Weak<ShardedLock<GraphicsType>>,
                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
         let (document, buffer, image) = gltf::import(file_name)
             .expect("Failed to import the model.");
@@ -249,9 +250,11 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
 }
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn new(file_name: &str, graphics: Weak<ShardedLock<Graphics>>,
-               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
-        let mut model = Self::create_model(file_name, graphics, position, scale, rotation, color);
+    pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
+               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> JoinHandle<Self> {
+        let model = tokio::spawn(async move {
+            Self::create_model(file_name, graphics, position, scale, rotation, color)
+        });
         model
     }
 
@@ -367,6 +370,9 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         _model
     }
 }
+
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Send for Model<GraphicsType, BufferType, CommandType, TextureType> { }
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Sync for Model<GraphicsType, BufferType, CommandType, TextureType> { }
 
 impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for Model<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {

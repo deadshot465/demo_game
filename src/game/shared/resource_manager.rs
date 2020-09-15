@@ -10,6 +10,9 @@ pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, Comm
     resource: Vec<RefCell<Box<dyn Disposable>>>,
 }
 
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Send for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> { }
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Sync for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> { }
+
 impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
     pub fn new() -> Self {
         ResourceManager {

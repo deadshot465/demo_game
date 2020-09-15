@@ -102,6 +102,9 @@ impl Mesh<graphics::vk::Buffer, graphics::vk::Image> {
     }
 }
 
+unsafe impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Send for Mesh<BufferType, TextureType> { }
+unsafe impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Sync for Mesh<BufferType, TextureType> { }
+
 impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Drop for Mesh<BufferType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping mesh...");

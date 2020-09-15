@@ -28,6 +28,13 @@ impl SceneManager {
         }
     }
 
+    pub async fn wait_for_all_tasks(&self) {
+        let current_index = self.current_index;
+        if let Some(scene) = self.scenes.get(current_index) {
+            scene.borrow_mut().wait_for_all_tasks().await;
+        }
+    }
+
     pub fn update(&self, delta_time: u64) {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {

@@ -1039,6 +1039,9 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
     }
 }
 
+unsafe impl Send for Graphics {}
+unsafe impl Sync for Graphics {}
+
 impl Drop for Graphics {
     fn drop(&mut self) {
         unsafe {
