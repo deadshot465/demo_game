@@ -214,7 +214,7 @@ impl GraphicsBase<Resource, ID3D12CommandList, Resource> for Graphics {
         unimplemented!()
     }
 
-    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32) -> Resource {
+    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32, format: gltf::image::Format) -> Resource {
         unimplemented!()
     }
 }

@@ -1,0 +1,2994 @@
+{
+    "asset": {
+        "generator": "FBX2glTF v0.9.7",
+        "version": "2.0"
+    },
+    "scene": 0,
+    "extensionsUsed": [
+        "KHR_lights_punctual"
+    ],
+    "buffers": [
+        {
+            "byteLength": 822464,
+            "uri": "buffer.bin"
+        }
+    ],
+    "bufferViews": [
+        {
+            "buffer": 0,
+            "byteLength": 20,
+            "byteOffset": 0
+        },
+        {
+            "buffer": 0,
+            "byteLength": 60,
+            "byteOffset": 20
+        },
+        {
+            "buffer": 0,
+            "byteLength": 40,
+            "byteOffset": 80
+        },
+        {
+            "buffer": 0,
+            "byteLength": 160,
+            "byteOffset": 120
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 280
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 304
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44,
+            "byteOffset": 400
+        },
+        {
+            "buffer": 0,
+            "byteLength": 176,
+            "byteOffset": 444
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 620
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 644
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 716
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 788
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 812
+        },
+        {
+            "buffer": 0,
+            "byteLength": 20,
+            "byteOffset": 884
+        },
+        {
+            "buffer": 0,
+            "byteLength": 60,
+            "byteOffset": 904
+        },
+        {
+            "buffer": 0,
+            "byteLength": 40,
+            "byteOffset": 964
+        },
+        {
+            "buffer": 0,
+            "byteLength": 160,
+            "byteOffset": 1004
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 1164
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 1188
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44,
+            "byteOffset": 1284
+        },
+        {
+            "buffer": 0,
+            "byteLength": 176,
+            "byteOffset": 1328
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 1504
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 1528
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 1600
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 1672
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 1696
+        },
+        {
+            "buffer": 0,
+            "byteLength": 20,
+            "byteOffset": 1768
+        },
+        {
+            "buffer": 0,
+            "byteLength": 60,
+            "byteOffset": 1788
+        },
+        {
+            "buffer": 0,
+            "byteLength": 40,
+            "byteOffset": 1848
+        },
+        {
+            "buffer": 0,
+            "byteLength": 160,
+            "byteOffset": 1888
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 2048
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 2072
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44,
+            "byteOffset": 2168
+        },
+        {
+            "buffer": 0,
+            "byteLength": 176,
+            "byteOffset": 2212
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 2388
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 2412
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 2484
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 2556
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 2580
+        },
+        {
+            "buffer": 0,
+            "byteLength": 20,
+            "byteOffset": 2652
+        },
+        {
+            "buffer": 0,
+            "byteLength": 60,
+            "byteOffset": 2672
+        },
+        {
+            "buffer": 0,
+            "byteLength": 40,
+            "byteOffset": 2732
+        },
+        {
+            "buffer": 0,
+            "byteLength": 160,
+            "byteOffset": 2772
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 2932
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 2956
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44,
+            "byteOffset": 3052
+        },
+        {
+            "buffer": 0,
+            "byteLength": 176,
+            "byteOffset": 3096
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 3272
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 3296
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 3368
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 3440
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 3464
+        },
+        {
+            "buffer": 0,
+            "byteLength": 20,
+            "byteOffset": 3536
+        },
+        {
+            "buffer": 0,
+            "byteLength": 60,
+            "byteOffset": 3556
+        },
+        {
+            "buffer": 0,
+            "byteLength": 40,
+            "byteOffset": 3616
+        },
+        {
+            "buffer": 0,
+            "byteLength": 160,
+            "byteOffset": 3656
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 3816
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 3840
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44,
+            "byteOffset": 3936
+        },
+        {
+            "buffer": 0,
+            "byteLength": 176,
+            "byteOffset": 3980
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 4156
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 4180
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 4252
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 4324
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 4348
+        },
+        {
+            "buffer": 0,
+            "byteLength": 20,
+            "byteOffset": 4420
+        },
+        {
+            "buffer": 0,
+            "byteLength": 60,
+            "byteOffset": 4440
+        },
+        {
+            "buffer": 0,
+            "byteLength": 40,
+            "byteOffset": 4500
+        },
+        {
+            "buffer": 0,
+            "byteLength": 160,
+            "byteOffset": 4540
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 4700
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 4724
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44,
+            "byteOffset": 4820
+        },
+        {
+            "buffer": 0,
+            "byteLength": 176,
+            "byteOffset": 4864
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 5040
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 5064
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 5136
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 5208
+        },
+        {
+            "buffer": 0,
+            "byteLength": 72,
+            "byteOffset": 5232
+        },
+        {
+            "buffer": 0,
+            "byteLength": 336,
+            "byteOffset": 5304,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 912,
+            "byteOffset": 5640,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 912,
+            "byteOffset": 6552,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 608,
+            "byteOffset": 7464,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 118308,
+            "byteOffset": 8072,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 145596,
+            "byteOffset": 126380,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 145596,
+            "byteOffset": 271976,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 97064,
+            "byteOffset": 417572,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 44868,
+            "byteOffset": 514636,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 95424,
+            "byteOffset": 559504,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 95424,
+            "byteOffset": 654928,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 63616,
+            "byteOffset": 750352,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 912,
+            "byteOffset": 813968,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 2376,
+            "byteOffset": 814880,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 2376,
+            "byteOffset": 817256,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 1584,
+            "byteOffset": 819632,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 24,
+            "byteOffset": 821216,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 821240,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 821336,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 64,
+            "byteOffset": 821432,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 120,
+            "byteOffset": 821496,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 144,
+            "byteOffset": 821616,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 144,
+            "byteOffset": 821760,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 96,
+            "byteOffset": 821904,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 48,
+            "byteOffset": 822000,
+            "target": 34963
+        },
+        {
+            "buffer": 0,
+            "byteLength": 156,
+            "byteOffset": 822048,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 156,
+            "byteOffset": 822204,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteLength": 104,
+            "byteOffset": 822360,
+            "target": 34962
+        }
+    ],
+    "scenes": [
+        {
+            "name": "Root Scene",
+            "nodes": [
+                0
+            ]
+        }
+    ],
+    "accessors": [
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 5,
+            "bufferView": 0,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.16666667163372
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 5,
+            "bufferView": 1,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 10,
+            "bufferView": 2,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.375
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 10,
+            "bufferView": 3,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 4,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 6,
+            "bufferView": 5,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 11,
+            "bufferView": 6,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.416666656732559
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 11,
+            "bufferView": 7,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 8,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 9,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 10,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 11,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 12,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 5,
+            "bufferView": 13,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.16666667163372
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 5,
+            "bufferView": 14,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 10,
+            "bufferView": 15,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.375
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 10,
+            "bufferView": 16,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 17,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 6,
+            "bufferView": 18,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 11,
+            "bufferView": 19,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.416666656732559
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 11,
+            "bufferView": 20,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 21,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 22,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 23,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 24,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 25,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 5,
+            "bufferView": 26,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.16666667163372
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 5,
+            "bufferView": 27,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 10,
+            "bufferView": 28,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.375
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 10,
+            "bufferView": 29,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 30,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 6,
+            "bufferView": 31,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 11,
+            "bufferView": 32,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.416666656732559
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 11,
+            "bufferView": 33,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 34,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 35,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 36,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 37,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 38,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 5,
+            "bufferView": 39,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.16666667163372
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 5,
+            "bufferView": 40,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 10,
+            "bufferView": 41,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.375
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 10,
+            "bufferView": 42,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 43,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 6,
+            "bufferView": 44,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 11,
+            "bufferView": 45,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.416666656732559
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 11,
+            "bufferView": 46,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 47,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 48,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 49,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 50,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 51,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 5,
+            "bufferView": 52,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.16666667163372
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 5,
+            "bufferView": 53,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 10,
+            "bufferView": 54,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.375
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 10,
+            "bufferView": 55,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 56,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 6,
+            "bufferView": 57,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 11,
+            "bufferView": 58,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.416666656732559
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 11,
+            "bufferView": 59,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 60,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 61,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 62,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 63,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 64,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 5,
+            "bufferView": 65,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.16666667163372
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 5,
+            "bufferView": 66,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 10,
+            "bufferView": 67,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.375
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 10,
+            "bufferView": 68,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 69,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 6,
+            "bufferView": 70,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 11,
+            "bufferView": 71,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.416666656732559
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC4",
+            "count": 11,
+            "bufferView": 72,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 73,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 74,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 75,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "SCALAR",
+            "count": 6,
+            "bufferView": 76,
+            "byteOffset": 0,
+            "min": [
+                0.0
+            ],
+            "max": [
+                0.20833332836628
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 6,
+            "bufferView": 77,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 168,
+            "bufferView": 78,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 76,
+            "bufferView": 79,
+            "byteOffset": 0,
+            "min": [
+                -0.00325729534961283,
+                -0.000741073919925839,
+                -0.00490472046658397
+            ],
+            "max": [
+                0.00287680351175368,
+                0.000741073919925839,
+                0.00515370117500424
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 76,
+            "bufferView": 80,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 76,
+            "bufferView": 81,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 59154,
+            "bufferView": 82,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 12133,
+            "bufferView": 83,
+            "byteOffset": 0,
+            "min": [
+                -0.00976024474948645,
+                -0.00123902026098222,
+                -0.00523885758593678
+            ],
+            "max": [
+                0.00874184630811214,
+                0.00126108271069825,
+                0.00566750112921
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 12133,
+            "bufferView": 84,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 12133,
+            "bufferView": 85,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 22434,
+            "bufferView": 86,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 7952,
+            "bufferView": 87,
+            "byteOffset": 0,
+            "min": [
+                -0.00759495794773102,
+                -0.00101531017571688,
+                0.00279060681350529
+            ],
+            "max": [
+                0.00856643076986074,
+                0.00101531017571688,
+                0.00645251246169209
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 7952,
+            "bufferView": 88,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 7952,
+            "bufferView": 89,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 456,
+            "bufferView": 90,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 198,
+            "bufferView": 91,
+            "byteOffset": 0,
+            "min": [
+                -0.00131606857758015,
+                -0.000148729552165605,
+                -0.00201168772764504
+            ],
+            "max": [
+                0.000135851281811483,
+                0.000161686242790893,
+                7.55451619625092e-05
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 198,
+            "bufferView": 92,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 198,
+            "bufferView": 93,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 12,
+            "bufferView": 94,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 8,
+            "bufferView": 95,
+            "byteOffset": 0,
+            "min": [
+                -0.0733426585793495,
+                -0.00021714459580835,
+                -0.000217143402551301
+            ],
+            "max": [
+                0.0169261638075113,
+                0.000217146982322447,
+                0.000217143446207047
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 8,
+            "bufferView": 96,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 8,
+            "bufferView": 97,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 60,
+            "bufferView": 98,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 12,
+            "bufferView": 99,
+            "byteOffset": 0,
+            "min": [
+                -0.00622550351545215,
+                -0.00119369279127568,
+                -0.00119369220919907
+            ],
+            "max": [
+                0.00414341408759356,
+                0.00119369209278375,
+                0.00119369220919907
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 12,
+            "bufferView": 100,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 12,
+            "bufferView": 101,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5123,
+            "type": "SCALAR",
+            "count": 24,
+            "bufferView": 102,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 13,
+            "bufferView": 103,
+            "byteOffset": 0,
+            "min": [
+                -0.0190052147954702,
+                -0.0114828841760755,
+                -0.00807580444961786
+            ],
+            "max": [
+                0.000994788948446512,
+                0.0114828823134303,
+                0.00828301068395376
+            ]
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC3",
+            "count": 13,
+            "bufferView": 104,
+            "byteOffset": 0
+        },
+        {
+            "componentType": 5126,
+            "type": "VEC2",
+            "count": 13,
+            "bufferView": 105,
+            "byteOffset": 0
+        }
+    ],
+    "images": [
+        {
+            "name": "handgun_Fire.png",
+            "uri": "handgun_Fire.png"
+        },
+        {
+            "name": "handgun_Fire.png",
+            "uri": "handgun_Fire.png"
+        },
+        {
+            "name": "handgun_N.jpg",
+            "uri": "handgun_N.jpg"
+        },
+        {
+            "name": "handgun_C.jpg",
+            "uri": "handgun_C.jpg"
+        },
+        {
+            "name": "handgun_Fire.png",
+            "uri": "handgun_Fire.png"
+        },
+        {
+            "name": "handgun_Fire.png",
+            "uri": "handgun_Fire.png"
+        }
+    ],
+    "samplers": [
+        {}
+    ],
+    "textures": [
+        {
+            "name": "Texture",
+            "sampler": 0,
+            "source": 0
+        },
+        {
+            "name": "Texture",
+            "sampler": 0,
+            "source": 1
+        },
+        {
+            "name": "handgun_N",
+            "sampler": 0,
+            "source": 2
+        },
+        {
+            "name": "handgun_C",
+            "sampler": 0,
+            "source": 3
+        },
+        {
+            "name": "handgun_Fire",
+            "sampler": 0,
+            "source": 4
+        },
+        {
+            "name": "handgun_Fire",
+            "sampler": 0,
+            "source": 5
+        }
+    ],
+    "materials": [
+        {
+            "name": "Material.001",
+            "alphaMode": "BLEND",
+            "extras": {
+                "fromFBX": {
+                    "shadingModel": "Phong",
+                    "isTruePBR": false
+                }
+            },
+            "emissiveTexture": {
+                "index": 0,
+                "texCoord": 0
+            },
+            "emissiveFactor": [
+                0.800000011920929,
+                0.800000011920929,
+                0.800000011920929
+            ],
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {
+                    "index": 1,
+                    "texCoord": 0
+                },
+                "baseColorFactor": [
+                    0.800000011920929,
+                    0.800000011920929,
+                    0.800000011920929,
+                    0.199999988079071
+                ],
+                "metallicFactor": 0.400000005960464,
+                "roughnessFactor": 0.415087103843689
+            }
+        },
+        {
+            "name": "handgun",
+            "alphaMode": "OPAQUE",
+            "extras": {
+                "fromFBX": {
+                    "shadingModel": "Phong",
+                    "isTruePBR": false
+                }
+            },
+            "normalTexture": {
+                "index": 2,
+                "texCoord": 0
+            },
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {
+                    "index": 3,
+                    "texCoord": 0
+                },
+                "baseColorFactor": [
+                    0.800000011920929,
+                    0.800000011920929,
+                    0.800000011920929,
+                    1.0
+                ],
+                "metallicFactor": 0.400000005960464,
+                "roughnessFactor": 0.415087103843689
+            }
+        },
+        {
+            "name": "Material.004",
+            "alphaMode": "OPAQUE",
+            "extras": {
+                "fromFBX": {
+                    "shadingModel": "Phong",
+                    "isTruePBR": false
+                }
+            },
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [
+                    0.64000004529953,
+                    0.64000004529953,
+                    0.64000004529953,
+                    1.0
+                ],
+                "metallicFactor": 0.400000005960464,
+                "roughnessFactor": 0.415087103843689
+            }
+        },
+        {
+            "name": "Fire.001",
+            "alphaMode": "BLEND",
+            "extras": {
+                "fromFBX": {
+                    "shadingModel": "Phong",
+                    "isTruePBR": false
+                }
+            },
+            "emissiveTexture": {
+                "index": 4,
+                "texCoord": 0
+            },
+            "emissiveFactor": [
+                0.800000011920929,
+                0.800000011920929,
+                0.800000011920929
+            ],
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {
+                    "index": 5,
+                    "texCoord": 0
+                },
+                "baseColorFactor": [
+                    0.800000011920929,
+                    0.800000011920929,
+                    0.800000011920929,
+                    0.199999988079071
+                ],
+                "metallicFactor": 0.400000005960464,
+                "roughnessFactor": 0.415087103843689
+            }
+        }
+    ],
+    "meshes": [
+        {
+            "name": "Cube.002",
+            "primitives": [
+                {
+                    "material": 1,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 80,
+                        "POSITION": 79,
+                        "TEXCOORD_0": 81
+                    },
+                    "indices": 78
+                }
+            ]
+        },
+        {
+            "name": "Gun",
+            "primitives": [
+                {
+                    "material": 1,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 84,
+                        "POSITION": 83,
+                        "TEXCOORD_0": 85
+                    },
+                    "indices": 82
+                }
+            ]
+        },
+        {
+            "name": "Cube.005",
+            "primitives": [
+                {
+                    "material": 1,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 88,
+                        "POSITION": 87,
+                        "TEXCOORD_0": 89
+                    },
+                    "indices": 86
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger",
+            "primitives": [
+                {
+                    "material": 1,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 92,
+                        "POSITION": 91,
+                        "TEXCOORD_0": 93
+                    },
+                    "indices": 90
+                }
+            ]
+        },
+        {
+            "name": "bullet",
+            "primitives": [
+                {
+                    "material": 0,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 96,
+                        "POSITION": 95,
+                        "TEXCOORD_0": 97
+                    },
+                    "indices": 94
+                }
+            ]
+        },
+        {
+            "name": "hulle",
+            "primitives": [
+                {
+                    "material": 2,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 100,
+                        "POSITION": 99,
+                        "TEXCOORD_0": 101
+                    },
+                    "indices": 98
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire",
+            "primitives": [
+                {
+                    "material": 3,
+                    "mode": 4,
+                    "attributes": {
+                        "NORMAL": 104,
+                        "POSITION": 103,
+                        "TEXCOORD_0": 105
+                    },
+                    "indices": 102
+                }
+            ]
+        }
+    ],
+    "animations": [
+        {
+            "name": "Cube.002|Cube.001Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 7,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 0,
+                    "interpolation": "LINEAR",
+                    "output": 1
+                }
+            ]
+        },
+        {
+            "name": "Cube.002|Cube.002Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 7,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 2,
+                    "interpolation": "LINEAR",
+                    "output": 3
+                }
+            ]
+        },
+        {
+            "name": "Cube.002|Gun_trigger",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 7,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 4,
+                    "interpolation": "LINEAR",
+                    "output": 5
+                }
+            ]
+        },
+        {
+            "name": "Cube.002|muni_rot",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 7,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 6,
+                    "interpolation": "LINEAR",
+                    "output": 7
+                }
+            ]
+        },
+        {
+            "name": "Cube.002|muzzle fire",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 7,
+                        "path": "translation"
+                    }
+                },
+                {
+                    "sampler": 1,
+                    "target": {
+                        "node": 7,
+                        "path": "scale"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 8,
+                    "interpolation": "LINEAR",
+                    "output": 9
+                },
+                {
+                    "input": 8,
+                    "interpolation": "LINEAR",
+                    "output": 10
+                }
+            ]
+        },
+        {
+            "name": "Cube.002|pistol slide",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 7,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 11,
+                    "interpolation": "LINEAR",
+                    "output": 12
+                }
+            ]
+        },
+        {
+            "name": "Gun|Cube.001Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 9,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 13,
+                    "interpolation": "LINEAR",
+                    "output": 14
+                }
+            ]
+        },
+        {
+            "name": "Gun|Cube.002Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 9,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 15,
+                    "interpolation": "LINEAR",
+                    "output": 16
+                }
+            ]
+        },
+        {
+            "name": "Gun|Gun_trigger",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 9,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 17,
+                    "interpolation": "LINEAR",
+                    "output": 18
+                }
+            ]
+        },
+        {
+            "name": "Gun|muni_rot",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 9,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 19,
+                    "interpolation": "LINEAR",
+                    "output": 20
+                }
+            ]
+        },
+        {
+            "name": "Gun|muzzle fire",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 9,
+                        "path": "translation"
+                    }
+                },
+                {
+                    "sampler": 1,
+                    "target": {
+                        "node": 9,
+                        "path": "scale"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 21,
+                    "interpolation": "LINEAR",
+                    "output": 22
+                },
+                {
+                    "input": 21,
+                    "interpolation": "LINEAR",
+                    "output": 23
+                }
+            ]
+        },
+        {
+            "name": "Gun|pistol slide",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 9,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 24,
+                    "interpolation": "LINEAR",
+                    "output": 25
+                }
+            ]
+        },
+        {
+            "name": "muni_rot|Cube.001Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 10,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 26,
+                    "interpolation": "LINEAR",
+                    "output": 27
+                }
+            ]
+        },
+        {
+            "name": "muni_rot|Cube.002Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 10,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 28,
+                    "interpolation": "LINEAR",
+                    "output": 29
+                }
+            ]
+        },
+        {
+            "name": "muni_rot|Gun_trigger",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 10,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 30,
+                    "interpolation": "LINEAR",
+                    "output": 31
+                }
+            ]
+        },
+        {
+            "name": "muni_rot|muni_rot",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 10,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 32,
+                    "interpolation": "LINEAR",
+                    "output": 33
+                }
+            ]
+        },
+        {
+            "name": "muni_rot|muzzle fire",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 10,
+                        "path": "translation"
+                    }
+                },
+                {
+                    "sampler": 1,
+                    "target": {
+                        "node": 10,
+                        "path": "scale"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 34,
+                    "interpolation": "LINEAR",
+                    "output": 35
+                },
+                {
+                    "input": 34,
+                    "interpolation": "LINEAR",
+                    "output": 36
+                }
+            ]
+        },
+        {
+            "name": "muni_rot|pistol slide",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 10,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 37,
+                    "interpolation": "LINEAR",
+                    "output": 38
+                }
+            ]
+        },
+        {
+            "name": "Cube.005|Cube.001Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 12,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 39,
+                    "interpolation": "LINEAR",
+                    "output": 40
+                }
+            ]
+        },
+        {
+            "name": "Cube.005|Cube.002Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 12,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 41,
+                    "interpolation": "LINEAR",
+                    "output": 42
+                }
+            ]
+        },
+        {
+            "name": "Cube.005|Gun_trigger",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 12,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 43,
+                    "interpolation": "LINEAR",
+                    "output": 44
+                }
+            ]
+        },
+        {
+            "name": "Cube.005|muni_rot",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 12,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 45,
+                    "interpolation": "LINEAR",
+                    "output": 46
+                }
+            ]
+        },
+        {
+            "name": "Cube.005|muzzle fire",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 12,
+                        "path": "translation"
+                    }
+                },
+                {
+                    "sampler": 1,
+                    "target": {
+                        "node": 12,
+                        "path": "scale"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 47,
+                    "interpolation": "LINEAR",
+                    "output": 48
+                },
+                {
+                    "input": 47,
+                    "interpolation": "LINEAR",
+                    "output": 49
+                }
+            ]
+        },
+        {
+            "name": "Cube.005|pistol slide",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 12,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 50,
+                    "interpolation": "LINEAR",
+                    "output": 51
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire|Cube.001Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 13,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 52,
+                    "interpolation": "LINEAR",
+                    "output": 53
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire|Cube.002Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 13,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 54,
+                    "interpolation": "LINEAR",
+                    "output": 55
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire|Gun_trigger",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 13,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 56,
+                    "interpolation": "LINEAR",
+                    "output": 57
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire|muni_rot",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 13,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 58,
+                    "interpolation": "LINEAR",
+                    "output": 59
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire|muzzle fire",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 13,
+                        "path": "translation"
+                    }
+                },
+                {
+                    "sampler": 1,
+                    "target": {
+                        "node": 13,
+                        "path": "scale"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 60,
+                    "interpolation": "LINEAR",
+                    "output": 61
+                },
+                {
+                    "input": 60,
+                    "interpolation": "LINEAR",
+                    "output": 62
+                }
+            ]
+        },
+        {
+            "name": "muzzle fire|pistol slide",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 13,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 63,
+                    "interpolation": "LINEAR",
+                    "output": 64
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger|Cube.001Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 14,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 65,
+                    "interpolation": "LINEAR",
+                    "output": 66
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger|Cube.002Action",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 14,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 67,
+                    "interpolation": "LINEAR",
+                    "output": 68
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger|Gun_trigger",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 14,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 69,
+                    "interpolation": "LINEAR",
+                    "output": 70
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger|muni_rot",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 14,
+                        "path": "rotation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 71,
+                    "interpolation": "LINEAR",
+                    "output": 72
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger|muzzle fire",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 14,
+                        "path": "translation"
+                    }
+                },
+                {
+                    "sampler": 1,
+                    "target": {
+                        "node": 14,
+                        "path": "scale"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 73,
+                    "interpolation": "LINEAR",
+                    "output": 74
+                },
+                {
+                    "input": 73,
+                    "interpolation": "LINEAR",
+                    "output": 75
+                }
+            ]
+        },
+        {
+            "name": "Gun_trigger|pistol slide",
+            "channels": [
+                {
+                    "sampler": 0,
+                    "target": {
+                        "node": 14,
+                        "path": "translation"
+                    }
+                }
+            ],
+            "samplers": [
+                {
+                    "input": 76,
+                    "interpolation": "LINEAR",
+                    "output": 77
+                }
+            ]
+        }
+    ],
+    "nodes": [
+        {
+            "name": "RootNode",
+            "translation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "children": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9
+            ]
+        },
+        {
+            "name": "Hemi.001",
+            "translation": [
+                -0.737029016017914,
+                -1.30668306350708,
+                0.653283596038818
+            ],
+            "rotation": [
+                -0.578210234642029,
+                0.17215821146965,
+                0.793600857257843,
+                -0.0789438858628273
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                100.0
+            ]
+        },
+        {
+            "name": "Hemi",
+            "translation": [
+                0.371853828430176,
+                1.46084642410278,
+                1.1992495059967
+            ],
+            "rotation": [
+                0.508851647377014,
+                -0.0757796317338943,
+                -0.1737901866436,
+                0.839716911315918
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                99.9999923706055
+            ]
+        },
+        {
+            "name": "Point.001",
+            "translation": [
+                -2.89297413825989,
+                2.83347320556641,
+                -2.50804090499878
+            ],
+            "rotation": [
+                -3.77489506320217e-08,
+                -0.0,
+                0.0,
+                1.0
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                100.0
+            ],
+            "extensions": {
+                "KHR_lights_punctual": {
+                    "light": 0
+                }
+            }
+        },
+        {
+            "name": "Point",
+            "translation": [
+                5.6264476776123,
+                2.94142389297485,
+                -4.59349203109741
+            ],
+            "rotation": [
+                -3.77489506320217e-08,
+                -0.0,
+                0.0,
+                1.0
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                100.0
+            ],
+            "extensions": {
+                "KHR_lights_punctual": {
+                    "light": 0
+                }
+            }
+        },
+        {
+            "name": "bullet",
+            "translation": [
+                0.0,
+                0.0,
+                -1.21930134296417
+            ],
+            "rotation": [
+                5.33850759154575e-08,
+                0.707106828689575,
+                0.70710676908493,
+                -5.33850794681712e-08
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                100.0
+            ],
+            "mesh": 4
+        },
+        {
+            "name": "bullet_light",
+            "translation": [
+                -0.175768435001373,
+                0.0811633765697479,
+                0.825112462043762
+            ],
+            "rotation": [
+                1.57771449238453e-08,
+                -3.15396242456245e-08,
+                0.908470511436462,
+                -0.417949020862579
+            ],
+            "scale": [
+                99.9999923706055,
+                99.9999923706055,
+                100.0
+            ]
+        },
+        {
+            "name": "Cube.002",
+            "translation": [
+                -0.597259640693665,
+                -0.120538972318172,
+                0.0
+            ],
+            "rotation": [
+                -0.707106828689575,
+                0.0,
+                0.0,
+                0.707106709480286
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                100.0
+            ],
+            "mesh": 0
+        },
+        {
+            "name": "hulle",
+            "translation": [
+                0.0381211899220943,
+                2.28495153353769e-10,
+                -1.00947988033295
+            ],
+            "rotation": [
+                -0.707106828689575,
+                0.0,
+                0.0,
+                0.707106709480286
+            ],
+            "scale": [
+                18.4008598327637,
+                18.4008598327637,
+                18.4008598327637
+            ],
+            "mesh": 5
+        },
+        {
+            "name": "Gun",
+            "translation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "rotation": [
+                -0.707106828689575,
+                0.0,
+                0.0,
+                0.707106709480286
+            ],
+            "scale": [
+                100.0,
+                100.0,
+                100.0
+            ],
+            "children": [
+                10,
+                11,
+                12,
+                13,
+                14
+            ],
+            "mesh": 1
+        },
+        {
+            "name": "muni_rot",
+            "translation": [
+                -0.00294346455484629,
+                -0.000526847550645471,
+                0.0051824226975441
+            ],
+            "rotation": [
+                0.0175411067903042,
+                0.0437808074057102,
+                -0.0431182719767094,
+                0.997956097126007
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "name": "bullet shooter",
+            "translation": [
+                0.00874748639762402,
+                0.0,
+                0.00498395320028067
+            ],
+            "rotation": [
+                9.9920640342495e-31,
+                1.32348898008484e-23,
+                1.0,
+                7.54979012640433e-08
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "name": "Cube.005",
+            "translation": [
+                -4.99767811561469e-05,
+                -0.0,
+                0.0
+            ],
+            "rotation": [
+                -1.32348898008484e-23,
+                -0.0,
+                0.0,
+                1.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "mesh": 2
+        },
+        {
+            "name": "muzzle fire",
+            "translation": [
+                0.00847139582037926,
+                1.49011591954462e-09,
+                0.00498395273461938
+            ],
+            "rotation": [
+                -1.50629520018323e-30,
+                1.13722130243751e-37,
+                1.0,
+                7.54979012640433e-08
+            ],
+            "scale": [
+                0.523709356784821,
+                0.851486504077911,
+                0.523709356784821
+            ],
+            "mesh": 6
+        },
+        {
+            "name": "Gun_trigger",
+            "translation": [
+                -0.00130817957688123,
+                3.36256335276008e-11,
+                0.00241000368259847
+            ],
+            "rotation": [
+                -1.35049358213673e-23,
+                0.115138150751591,
+                1.56534359676297e-24,
+                0.993349492549896
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "mesh": 3
+        }
+    ],
+    "extensions": {
+        "KHR_lights_punctual": {
+            "lights": [
+                {
+                    "name": "",
+                    "color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "intensity": 1.0,
+                    "type": "point"
+                }
+            ]
+        }
+    }
+}

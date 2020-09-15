@@ -1,7 +1,5 @@
 #version 450
 
-layout (set = 1, binding = 0) uniform sampler2D tex_sampler;
-
 layout (location = 1) in vec4 inNormal;
 layout (location = 2) in vec2 inTexCoord;
 layout (location = 3) in vec4 fragPos;
@@ -27,10 +25,10 @@ layout (binding = 1) uniform DirectionalLight
 void main()
 {
     // Texture
-    vec4 tex_color = texture(tex_sampler, inTexCoord);
+    /*vec4 tex_color = texture(tex_sampler, inTexCoord);
     if (tex_color.a < 0.1) {
         discard;
-    }
+    }*/
 
     // Ambient
     vec4 ambient = direction_light.diffuse * direction_light.ambient_intensity;
@@ -42,5 +40,5 @@ void main()
     vec4 diffuse = direction_light.diffuse * intensity;
 
     //vec4 result = (ambient + diffuse) * vec4(1.0, 0.0, 0.0, 1.0);
-    fragColor = vec4(1.0, 1.0, 1.0, 1.0) * tex_color;
+    fragColor = pco.object_color;
 }

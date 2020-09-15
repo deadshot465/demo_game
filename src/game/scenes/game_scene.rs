@@ -3,10 +3,11 @@ use glam::{Vec3A, Vec4};
 use std::sync::{RwLock, Weak};
 use crate::game::ResourceManager;
 use crate::game::traits::Disposable;
-use crate::game::shared::structs::Model;
+use crate::game::shared::structs::{Model, SamplerResource};
 use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
+use std::sync::Arc;
 
 pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     graphics: Weak<ShardedLock<GraphicsType>>,
@@ -30,14 +31,18 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn load_content(&mut self) {
-        self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
+        /*self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0));
         self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));
         self.add_model("./models/tank/tank.gltf", Vec3A::new(-1.5, 0.0, -1.5),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 225.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
         self.add_model("./models/tank/tank.gltf", Vec3A::new(2.5, 0.0, 2.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 270.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 270.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));*/
+        /*self.add_model("./models/mr.incredible/Mr.Incredible.glb", Vec3A::new(0.0, 0.0, 0.0),
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));*/
+        self.add_model("./models/bison/output.gltf", Vec3A::new(0.0, 0.0, 0.0),
+                       Vec3A::new(400.0, 400.0, 400.0), Vec3A::new(0.0, 90.0, 90.0), Vec4::new(1.0, 1.0, 1.0, 1.0));
     }
 
     fn update(&mut self, _delta_time: u64) {
@@ -100,7 +105,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 lock.add_model(model);
             }
             else {
-                let model = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color);
+                let mut model = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color);
                 lock.add_model(model);
             }
         }

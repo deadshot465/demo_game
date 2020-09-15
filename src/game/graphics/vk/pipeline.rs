@@ -56,8 +56,8 @@ use crate::game::graphics::vk::Shader;
 pub struct Pipeline {
     pub render_pass: RenderPass,
     logical_device: Arc<Device>,
-    pipeline_layouts: HashMap<ShaderType, PipelineLayout>,
-    graphic_pipelines: HashMap<ShaderType, Vec<ash::vk::Pipeline>>,
+    pub pipeline_layouts: HashMap<ShaderType, PipelineLayout>,
+    pub graphic_pipelines: HashMap<ShaderType, Vec<ash::vk::Pipeline>>,
     owned_renderpass: bool,
 }
 
@@ -151,7 +151,7 @@ impl Pipeline {
         }
     }
 
-    pub async fn create_graphic_pipelines(&mut self, descriptor_set_layout: DescriptorSetLayout,
+    pub async fn create_graphic_pipelines(&mut self, descriptor_set_layout: &[DescriptorSetLayout],
                                           sample_count: SampleCountFlags,
                                           shaders: Vec<Shader>,
                                           _pipeline_cache: Option<PipelineCache>,
@@ -162,7 +162,7 @@ impl Pipeline {
             .size(std::mem::size_of::<PushConstant>() as u32)
             .build();
         let layout_info = PipelineLayoutCreateInfo::builder()
-            .set_layouts(&[descriptor_set_layout])
+            .set_layouts(descriptor_set_layout)
             .push_constant_ranges(&[push_constant_range])
             .build();
         unsafe {
@@ -219,12 +219,6 @@ impl Pipeline {
             BlendFactor::ONE, BlendFactor::ONE, BlendFactor::SRC_ALPHA
         ];
 
-        let vector = self.graphic_pipelines
-            .entry(shader_type)
-            .or_insert(vec![]);
-        for _ in 0..BlendMode::END.0 {
-            vector.push(ash::vk::Pipeline::null());
-        }
         let mut worker_threads = vec![];
         let _shaders = Arc::new(Mutex::new(shaders));
         unsafe {

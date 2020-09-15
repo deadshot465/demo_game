@@ -3,6 +3,7 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::shared::structs::Model;
 use crate::game::traits::GraphicsBase;
+use crate::game::graphics::vk::{Buffer, Graphics, Image};
 
 pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     pub models: Vec<*mut Model<GraphicsType, BufferType, CommandType, TextureType>>,
@@ -72,6 +73,17 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         }
         if let Some(_) = res {
             self.resource.remove(_index);
+        }
+    }
+}
+
+impl ResourceManager<Graphics, Buffer, ash::vk::CommandBuffer, Image> {
+    pub fn create_sampler_resource(&self) {
+        unsafe {
+            for model in self.models.iter() {
+                let m = model.as_mut().unwrap();
+                m.create_sampler_resource();
+            }
         }
     }
 }

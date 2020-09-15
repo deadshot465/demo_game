@@ -41,6 +41,8 @@ pub struct Graphics {
     pub descriptor_sets: Vec<DescriptorSet>,
     pub push_constant: PushConstant,
     pub current_index: u32,
+    pub sampler_descriptor_set_layout: DescriptorSetLayout,
+    pub descriptor_pool: DescriptorPool,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
@@ -58,13 +60,13 @@ pub struct Graphics {
     uniform_buffers: ManuallyDrop<UniformBuffers>,
     camera: Arc<RwLock<Camera>>,
     resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
-    descriptor_pool: DescriptorPool,
     command_buffers: Vec<CommandBuffer>,
     frame_buffers: Vec<Framebuffer>,
     fences: Vec<Fence>,
     acquired_semaphores: Vec<Semaphore>,
     complete_semaphores: Vec<Semaphore>,
     sample_count: SampleCountFlags,
+    depth_format: Format,
 }
 
 impl Graphics {
@@ -100,8 +102,9 @@ impl Graphics {
                 .expect("Failed to create command pool.");
         }
         let sample_count = Graphics::get_sample_count(&instance, &physical_device);
+        let depth_format = Self::get_depth_format(&instance, &physical_device);
         let depth_image = Graphics::create_depth_image(
-            &instance, device.clone(), &physical_device, &swapchain, command_pool, graphics_queue, sample_count
+            &instance, device.clone(), &physical_device, depth_format, &swapchain, command_pool, graphics_queue, sample_count
         );
 
         let msaa_image = Graphics::create_msaa_image(
@@ -109,6 +112,7 @@ impl Graphics {
         );
 
         let descriptor_set_layout = Graphics::create_descriptor_set_layout(device.as_ref());
+        let sampler_descriptor_set_layout = Self::create_sampler_descriptor_set_layout(device.as_ref());
         let view_projection = Graphics::create_view_projection(
             camera.read().unwrap().deref(), &instance, device.clone(), &physical_device);
         let directional_light = Directional::new(
@@ -171,6 +175,8 @@ impl Graphics {
             complete_semaphores,
             current_index: 0,
             sample_count,
+            sampler_descriptor_set_layout,
+            depth_format,
         }
     }
 
@@ -363,10 +369,9 @@ impl Graphics {
     }
 
     fn create_depth_image(instance: &ash::Instance, device: Arc<ash::Device>,
-                          physical_device: &super::PhysicalDevice,
+                          physical_device: &super::PhysicalDevice, format: Format,
                           swapchain: &super::Swapchain, command_pool: CommandPool,
                           graphics_queue: Queue, sample_count: SampleCountFlags) -> super::Image {
-        let format = Graphics::get_depth_format(instance, physical_device);
         let extent = swapchain.extent;
         let mut image = super::Image
         ::new(instance,
@@ -475,6 +480,25 @@ impl Graphics {
         }
     }
 
+    fn create_sampler_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
+        let layout_binding = DescriptorSetLayoutBinding::builder()
+            .binding(0)
+            .descriptor_count(1)
+            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(ShaderStageFlags::FRAGMENT)
+            .build();
+        let create_info = DescriptorSetLayoutCreateInfo::builder()
+            .bindings(&[layout_binding])
+            .build();
+        unsafe {
+            let descriptor_set_layout = device
+                .create_descriptor_set_layout(&create_info, None)
+                .expect("Failed to create descriptor set layout for sampler.");
+            log::info!("Descriptor set layout for sampler successfully created.");
+            descriptor_set_layout
+        }
+    }
+
     fn create_view_projection(camera: &Camera, instance: &Instance,
                               device: Arc<Device>, physical_device: &super::PhysicalDevice) -> super::Buffer {
         let vp_size = std::mem::size_of::<ViewProjection>();
@@ -547,7 +571,6 @@ impl Graphics {
             MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT);
         unsafe {
             for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
-                println!("{:?}", model);
                 let ptr = std::mem::transmute::<usize, *mut Mat4>(
                     std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
                         (i * (dynamic_alignment as usize))
@@ -562,6 +585,25 @@ impl Graphics {
     }
 
     fn allocate_descriptor_set(&mut self) {
+        let mut texture_count = 0_usize;
+        if let Some(r) = self.resource_manager.upgrade() {
+            let lock = r.read().unwrap();
+            unsafe {
+                for model in lock.models.iter() {
+                    let meshes = &model.as_ref()
+                        .unwrap()
+                        .meshes;
+                    for mesh in meshes.iter() {
+                        texture_count += if mesh.texture.is_empty() {
+                            0
+                        } else {
+                            mesh.texture.len()
+                        };
+                    }
+                }
+            }
+            drop(lock);
+        }
         let mut pool_sizes = vec![];
         pool_sizes.push(DescriptorPoolSize::builder()
             .descriptor_count(1)
@@ -579,10 +621,14 @@ impl Graphics {
             .descriptor_count(1)
             .ty(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
             .build());
+        pool_sizes.push(DescriptorPoolSize::builder()
+            .descriptor_count(texture_count as u32)
+            .ty(DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .build());
 
         let image_count = self.swapchain.swapchain_images.len();
         let pool_info = DescriptorPoolCreateInfo::builder()
-            .max_sets(u32::try_from(image_count).unwrap())
+            .max_sets(u32::try_from(image_count + texture_count).unwrap())
             .pool_sizes(pool_sizes.as_slice())
             .build();
 
@@ -599,6 +645,8 @@ impl Graphics {
             self.descriptor_sets = self.logical_device
                 .allocate_descriptor_sets(&allocate_info)
                 .expect("Failed to allocate descriptor sets.");
+
+            println!("Descriptor set count: {}", self.descriptor_sets.len());
             log::info!("Descriptor sets successfully allocated.");
 
             let vp_buffer = &self.uniform_buffers.view_projection;
@@ -668,7 +716,7 @@ impl Graphics {
         }
     }
 
-    async fn create_graphics_pipeline(&mut self) {
+    async fn create_graphics_pipeline(&mut self, shader_type: ShaderType) {
         unsafe {
             let shaders = vec![
                 super::Shader::new(
@@ -678,21 +726,22 @@ impl Graphics {
                 ),
                 super::Shader::new(
                     self.logical_device.clone(),
-                    "./shaders/frag.spv",
+                    match shader_type {
+                        ShaderType::BasicShader => "./shaders/frag.spv",
+                        ShaderType::BasicShaderWithoutTexture => "./shaders/basicShader_noTexture.spv",
+                        _ => "./shaders/frag.spv"
+                    },
                     ShaderStageFlags::FRAGMENT
                 )
             ];
-            let color_format: Format = self.swapchain.format.format;
-            let depth_format = Graphics::get_depth_format(&self.instance, &self.physical_device);
-            let sample_count = Graphics::get_sample_count(&self.instance, &self.physical_device);
-            self.pipeline.create_renderpass(
-                color_format,
-                depth_format,
-                sample_count);
-            let descriptor_set_layout = self.descriptor_set_layout;
+
+            let mut descriptor_set_layout = vec![self.descriptor_set_layout];
+            if shader_type == ShaderType::BasicShader {
+                descriptor_set_layout.push(self.sampler_descriptor_set_layout);
+            }
             self.pipeline.create_graphic_pipelines(
-                descriptor_set_layout,
-                sample_count, shaders, None, ShaderType::BasicShader)
+                descriptor_set_layout.as_slice(),
+                self.sample_count, shaders, None, shader_type)
                 .await;
         }
     }
@@ -763,7 +812,15 @@ impl Graphics {
     pub async fn initialize(&mut self) {
         self.create_dynamic_model_buffers();
         self.allocate_descriptor_set();
-        self.create_graphics_pipeline().await;
+        let color_format: Format = self.swapchain.format.format;
+        let depth_format = self.depth_format;
+        let sample_count = self.sample_count;
+        self.pipeline.create_renderpass(
+            color_format,
+            depth_format,
+            sample_count);
+        self.create_graphics_pipeline(ShaderType::BasicShader).await;
+        self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture).await;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
         self.frame_buffers = Graphics::create_frame_buffers(
@@ -905,7 +962,7 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
         );
         let mapped = staging.map_memory(buffer_size, 0);
         unsafe {
-            std::ptr::copy(vertices.as_ptr() as *const c_void, mapped, buffer_size as usize);
+            std::ptr::copy_nonoverlapping(vertices.as_ptr() as *const c_void, mapped, buffer_size as usize);
         }
         let buffer = super::Buffer::new(
             &self.instance, Arc::downgrade(&self.logical_device), self.physical_device.physical_device, buffer_size,
@@ -927,7 +984,7 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
         );
         let mapped = staging.map_memory(buffer_size, 0);
         unsafe {
-            std::ptr::copy(indices.as_ptr() as *const c_void, mapped, buffer_size as usize);
+            std::ptr::copy_nonoverlapping(indices.as_ptr() as *const c_void, mapped, buffer_size as usize);
         }
         let buffer = super::Buffer::new(
             &self.instance, Arc::downgrade(&self.logical_device), self.physical_device.physical_device, buffer_size,
@@ -943,7 +1000,9 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
         &self.command_buffers
     }
 
-    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32) -> super::Image {
+    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32, format: gltf::image::Format) -> super::Image {
+        log::info!("Loading texture...");
+        log::info!("Image data length: {}, Buffer size: {}, Width: {}, Height: {}", image_data.len(), buffer_size, width, height);
         let mut staging = super::Buffer::new(
             &self.instance, Arc::downgrade(&self.logical_device),
             self.physical_device.physical_device, buffer_size,
@@ -952,16 +1011,20 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
         );
         unsafe {
             let mapped = staging.map_memory(buffer_size, 0);
-            std::ptr::copy(image_data.as_ptr() as *const c_void, mapped, buffer_size as usize);
+            std::ptr::copy_nonoverlapping(image_data.as_ptr() as *const c_void, mapped, buffer_size as usize);
 
-            let format = self.swapchain.format.format;
+            let _format = match format {
+                gltf::image::Format::B8G8R8A8 => ash::vk::Format::B8G8R8A8_UNORM,
+                gltf::image::Format::R8G8B8A8 => ash::vk::Format::R8G8B8A8_UNORM,
+                _ => self.swapchain.format.format
+            };
             let _width = width as f32;
             let _height = height as f32;
             let mip_levels = _width.max(_height).log2().floor() as u32;
             let mut image = super::Image::new(
                 &self.instance, self.logical_device.clone(), self.physical_device.physical_device,
-                ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED,
-                MemoryPropertyFlags::DEVICE_LOCAL, format,
+                ImageUsageFlags::TRANSFER_SRC | ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED,
+                MemoryPropertyFlags::DEVICE_LOCAL, _format,
                 SampleCountFlags::TYPE_1,
                 Extent2D::builder().width(width).height(height).build(),
                 ImageType::TYPE_2D, mip_levels, ImageAspectFlags::COLOR
@@ -993,6 +1056,7 @@ impl Drop for Graphics {
                 self.logical_device.destroy_fence(*fence, None);
             }
             self.logical_device.destroy_command_pool(self.command_pool, None);
+            self.logical_device.destroy_descriptor_set_layout(self.sampler_descriptor_set_layout, None);
             self.logical_device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.logical_device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);

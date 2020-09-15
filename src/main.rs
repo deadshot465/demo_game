@@ -6,11 +6,10 @@ use winit::event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode};
 use demo_game_rs::game::graphics::vk as VK;
 use demo_game_rs::game::graphics::dx12 as DX12;
 use winapi::um::d3d12::ID3D12CommandList;
-use demo_game_rs::game::structs::PushConstant;
 
 #[tokio::main]
 async fn main() {
-    println!("{}", std::mem::size_of::<PushConstant>() / 4);
+    println!("{:?}", std::mem::size_of::<std::ffi::c_void>());
     dotenv::dotenv().ok();
     Builder::new()
         .filter(None, LevelFilter::Trace)

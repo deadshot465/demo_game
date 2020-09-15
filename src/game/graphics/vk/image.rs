@@ -152,6 +152,7 @@ impl Image {
          unsafe {
              self.sampler = self.logical_device.create_sampler(&create_info, None)
                  .expect("Failed to create sampler.");
+             log::info!("Successfully loaded texture.");
          }
     }
 
@@ -214,7 +215,7 @@ impl Image {
                 .aspect_mask(aspect_flags)
                 .base_array_layer(0)
                 .layer_count(1)
-                .level_count(mip_levels)
+                .level_count(1)
                 .build())
             .image(self.image)
             .build();
@@ -317,10 +318,10 @@ impl Drop for Image {
 
 impl Disposable for Image {
     fn dispose(&mut self) {
-        log::info!("Disposing image...");
         if self.is_disposed {
             return
         }
+        log::info!("Disposing image...");
         unsafe {
             if !self.mapped_memory.is_null() {
                 self.unmap_memory();
@@ -340,6 +341,7 @@ impl Disposable for Image {
             }
         }
         self.is_disposed = true;
+        log::info!("Successfully disposed image.");
     }
 
     fn is_disposed(&self) -> bool {

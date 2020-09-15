@@ -14,7 +14,7 @@ pub use animation::*;
 pub use blend_mode::BlendMode;
 pub use joint::Joint;
 pub use lighting::*;
-pub use mesh::Mesh;
+pub use mesh::*;
 pub use model::Model;
 pub use push_constant::PushConstant;
 pub use skinned_mesh::*;

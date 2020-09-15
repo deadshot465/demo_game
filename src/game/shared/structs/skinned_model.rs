@@ -72,7 +72,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
                     let _graphics = graphics.upgrade();
                     if let Some(g) = _graphics {
                         let lock = g.read().unwrap();
-                        let img = lock.create_image(data.as_slice(), buffer_size as u64, image.width(), image.height());
+                        let img = lock.create_image(data.as_slice(), buffer_size as u64, image.width(), image.height(), gltf::image::Format::B8G8R8A8);
                         textures.push(img);
                     }
                 },

@@ -61,6 +61,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         let mut lock = self.graphics.write().unwrap();
         lock.initialize().await;
         drop(lock);
+        let lock = self.resource_manager.read().unwrap();
+        lock.create_sampler_resource();
+        drop(lock);
         let lock = self.graphics.read().unwrap();
         lock.begin_draw();
         self.scene_manager.render(0);
