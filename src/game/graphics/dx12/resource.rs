@@ -122,7 +122,7 @@ impl Disposable for Resource {
         unimplemented!()
     }
 
-    fn set_name(&mut self, name: String) -> &str {
+    fn set_name(&mut self, _name: String) -> &str {
         unimplemented!()
     }
 }

@@ -1,11 +1,13 @@
 use ash::vk::*;
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use ash::version::DeviceV1_0;
 use std::ffi::c_void;
-use std::sync::Arc;
+use std::sync::Weak;
 use std::convert::TryFrom;
 use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buffer};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::mappable::Mappable;
+use vk_mem::{Allocator, AllocationCreateInfo, MemoryUsage, AllocationCreateFlags, AllocationInfo, Allocation};
+use crossbeam::sync::ShardedLock;
 
 #[derive(Clone)]
 pub struct Image {
@@ -16,17 +18,19 @@ pub struct Image {
     pub width: u32,
     pub height: u32,
     image: ash::vk::Image,
-    logical_device: Arc<ash::Device>,
+    logical_device: Weak<ash::Device>,
     is_disposed: bool,
+    allocator: Weak<ShardedLock<Allocator>>,
+    allocation: Allocation,
+    allocation_info: Option<AllocationInfo>
 }
 
 impl Image {
-    pub fn new(instance: &ash::Instance, device: Arc<ash::Device>,
-               physical_device: PhysicalDevice,
+    pub fn new(device: Weak<ash::Device>,
                usage_flag: ImageUsageFlags,
                memory_properties: MemoryPropertyFlags, format: Format,
                sample_count: SampleCountFlags, extent: Extent2D, image_type: ImageType,
-               mip_levels: u32, aspect_flags: ImageAspectFlags) -> Self {
+               mip_levels: u32, aspect_flags: ImageAspectFlags, allocator: Weak<ShardedLock<Allocator>>) -> Self {
         let extent = Extent3D::builder()
             .height(extent.height)
             .width(extent.width)
@@ -44,41 +48,65 @@ impl Image {
             .samples(sample_count)
             .tiling(ImageTiling::OPTIMAL)
             .build();
-        unsafe {
-            let image = device.create_image(&create_info, None)
-                .expect("Failed to create image.");
-            log::info!("Image successfully created.");
-            let mut image = Image {
-                image,
-                logical_device: device,
-                image_view: ImageView::null(),
-                is_disposed: false,
-                sampler: Sampler::null(),
-                device_memory: DeviceMemory::null(),
-                mapped_memory: std::ptr::null_mut(),
-                width: extent.width,
-                height: extent.height
-            };
-            image.allocate_memory(instance, physical_device, memory_properties);
-            image.create_image_view(format, aspect_flags, mip_levels);
-            image
-        }
-    }
 
-    pub fn from_image(image: ash::vk::Image, device: Arc<ash::Device>, format: Format,
-                      aspect_flags: ImageAspectFlags, mip_levels: u32) -> Self {
+        let allocation_info = AllocationCreateInfo {
+            usage: MemoryUsage::GpuOnly,
+            flags: if (memory_properties & MemoryPropertyFlags::HOST_VISIBLE) == MemoryPropertyFlags::HOST_VISIBLE &&
+                (memory_properties & MemoryPropertyFlags::HOST_COHERENT) == MemoryPropertyFlags::HOST_COHERENT {
+                AllocationCreateFlags::MAPPED
+            } else {
+                AllocationCreateFlags::NONE
+            },
+            required_flags: memory_properties,
+            preferred_flags: MemoryPropertyFlags::empty(),
+            memory_type_bits: 0,
+            pool: None,
+            user_data: None
+        };
+        let arc = allocator.upgrade().unwrap();
+        let lock = arc.read().unwrap();
+        let (image, allocation, allocation_info) = lock.create_image(&create_info, &allocation_info)
+            .expect("Failed to create image using the VMA allocator.");
+        drop(lock);
+        let device_memory = allocation_info.get_device_memory();
+        let mapped = allocation_info.get_mapped_data();
+        let _device = device.upgrade().unwrap();
         let mut image = Image {
             image,
             logical_device: device,
             image_view: ImageView::null(),
             is_disposed: false,
             sampler: Sampler::null(),
+            device_memory,
+            mapped_memory: mapped as *mut c_void,
+            width: extent.width,
+            height: extent.height,
+            allocator,
+            allocation,
+            allocation_info: Some(allocation_info),
+        };
+        image.create_image_view(_device.as_ref(), format, aspect_flags, mip_levels);
+        image
+    }
+
+    pub fn from_image(image: ash::vk::Image, device: Weak<ash::Device>, format: Format,
+                      aspect_flags: ImageAspectFlags, mip_levels: u32, allocator: Weak<ShardedLock<Allocator>>) -> Self {
+        let _device = device.upgrade().unwrap();
+        let mut image = Image {
+            image,
+            logical_device: device,
+            image_view: ImageView::null(),
+            is_disposed: false,
+            allocator,
+            allocation: Allocation::null(),
+            sampler: Sampler::null(),
             device_memory: DeviceMemory::null(),
             mapped_memory: std::ptr::null_mut(),
             width: 0,
-            height: 0
+            height: 0,
+            allocation_info: None,
         };
-        image.create_image_view(format, aspect_flags, mip_levels);
+        image.create_image_view(_device.as_ref(), format, aspect_flags, mip_levels);
         image
     }
 
@@ -122,12 +150,13 @@ impl Image {
         }
 
         unsafe {
-            let cmd_buffer = get_single_time_command_buffer(self.logical_device.as_ref(), command_pool);
-            self.logical_device
+            let device = self.logical_device.upgrade().unwrap();
+            let cmd_buffer = get_single_time_command_buffer(device.as_ref(), command_pool);
+            device
                 .cmd_pipeline_barrier(cmd_buffer, old_stage,
                                       new_stage, DependencyFlags::empty(),
                                       &[], &[], &[barrier.build()]);
-            end_one_time_command_buffer(cmd_buffer, self.logical_device.as_ref(), command_pool, graphics_queue);
+            end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
         }
     }
 
@@ -150,7 +179,10 @@ impl Image {
             .unnormalized_coordinates(false)
             .build();
          unsafe {
-             self.sampler = self.logical_device.create_sampler(&create_info, None)
+             self.sampler = self.logical_device
+                 .upgrade()
+                 .unwrap()
+                 .create_sampler(&create_info, None)
                  .expect("Failed to create sampler.");
              log::info!("Successfully loaded texture.");
          }
@@ -173,15 +205,16 @@ impl Image {
                 .build())
             .build();
 
-        let cmd_buffer = get_single_time_command_buffer(self.logical_device.as_ref(), command_pool);
+        let device = self.logical_device.upgrade().unwrap();
+        let cmd_buffer = get_single_time_command_buffer(device.as_ref(), command_pool);
         unsafe {
-            self.logical_device
+            device
                 .cmd_copy_buffer_to_image(cmd_buffer, source_buffer, self.image, ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_info]);
         }
-        end_one_time_command_buffer(cmd_buffer, self.logical_device.as_ref(), command_pool, graphics_queue);
+        end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
     }
 
-    fn create_image_view(&mut self, format: Format, aspect_flags: ImageAspectFlags, mip_levels: u32) {
+    fn create_image_view(&mut self, device: &ash::Device, format: Format, aspect_flags: ImageAspectFlags, mip_levels: u32) {
         let create_info = ImageViewCreateInfo::builder()
             .image(self.image)
             .format(format)
@@ -202,7 +235,8 @@ impl Image {
             .build();
 
         unsafe {
-            self.image_view = self.logical_device.create_image_view(&create_info, None)
+            self.image_view = device
+                .create_image_view(&create_info, None)
                 .expect("Failed to create image view.");
         }
     }
@@ -220,8 +254,9 @@ impl Image {
             .image(self.image)
             .build();
 
+        let device = self.logical_device.upgrade().unwrap();
         let cmd_buffer = get_single_time_command_buffer(
-            self.logical_device.as_ref(), command_pool);
+            device.as_ref(), command_pool);
 
         let mut width = i32::try_from(self.width).unwrap();
         let mut height = i32::try_from(self.height).unwrap();
@@ -233,7 +268,7 @@ impl Image {
             barrier.old_layout = ImageLayout::TRANSFER_DST_OPTIMAL;
             barrier.new_layout = ImageLayout::TRANSFER_SRC_OPTIMAL;
 
-            self.logical_device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
+            device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
                                             PipelineStageFlags::TRANSFER, DependencyFlags::empty(), &[],
                                             &[], &[barrier]);
 
@@ -273,7 +308,7 @@ impl Image {
             };
             image_blit.dst_offsets[1].z = 1;
 
-            self.logical_device.cmd_blit_image(cmd_buffer, self.image, ImageLayout::TRANSFER_SRC_OPTIMAL,
+            device.cmd_blit_image(cmd_buffer, self.image, ImageLayout::TRANSFER_SRC_OPTIMAL,
                                       self.image, ImageLayout::TRANSFER_DST_OPTIMAL, &[image_blit], Filter::LINEAR);
 
             barrier.src_access_mask = AccessFlags::TRANSFER_READ;
@@ -281,7 +316,7 @@ impl Image {
             barrier.old_layout = ImageLayout::TRANSFER_SRC_OPTIMAL;
             barrier.new_layout = ImageLayout::SHADER_READ_ONLY_OPTIMAL;
 
-            self.logical_device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
+            device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
                                             PipelineStageFlags::FRAGMENT_SHADER, DependencyFlags::empty(), &[],
                                             &[], &[barrier]);
             width = if width > 1 {
@@ -301,10 +336,10 @@ impl Image {
         barrier.old_layout = ImageLayout::TRANSFER_DST_OPTIMAL;
         barrier.new_layout = ImageLayout::SHADER_READ_ONLY_OPTIMAL;
 
-        self.logical_device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
+        device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
                                         PipelineStageFlags::FRAGMENT_SHADER, DependencyFlags::empty(),
                                         &[], &[], &[barrier]);
-        end_one_time_command_buffer(cmd_buffer, self.logical_device.as_ref(), command_pool, graphics_queue);
+        end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
     }
 }
 
@@ -321,27 +356,28 @@ impl Disposable for Image {
         if self.is_disposed {
             return
         }
-        log::info!("Disposing image...");
+        let device = self.logical_device.upgrade().unwrap();
         unsafe {
             if !self.mapped_memory.is_null() {
                 self.unmap_memory();
             }
-            if self.device_memory != DeviceMemory::null() {
-                self.logical_device
-                    .free_memory(self.device_memory, None);
-            }
             if self.sampler != Sampler::null() {
-                self.logical_device.destroy_sampler(self.sampler, None)
+                device.destroy_sampler(self.sampler, None)
             }
             if self.image_view != ImageView::null() {
-                self.logical_device.destroy_image_view(self.image_view, None);
+                device.destroy_image_view(self.image_view, None);
             }
             if self.device_memory != DeviceMemory::null() {
-                self.logical_device.destroy_image(self.image, None);
+                self.allocator
+                    .upgrade()
+                    .unwrap()
+                    .read()
+                    .unwrap()
+                    .destroy_image(self.image, &self.allocation)
+                    .expect("Failed to destroy image.");
             }
         }
         self.is_disposed = true;
-        log::info!("Successfully disposed image.");
     }
 
     fn is_disposed(&self) -> bool {
@@ -358,58 +394,23 @@ impl Disposable for Image {
 }
 
 impl Mappable for Image {
-    fn allocate_memory(&mut self, instance: &ash::Instance, physical_device: PhysicalDevice, memory_properties: MemoryPropertyFlags) -> DeviceMemory {
-        unsafe {
-            let requirements = self.logical_device.get_image_memory_requirements(self.image);
-            let device_memory = self.map_device_memory(instance,
-                                                       &requirements, physical_device, memory_properties);
-            self.logical_device.bind_image_memory(self.image, device_memory, 0)
-                .expect("Failed to bind image memory.");
-            self.device_memory = device_memory;
-            self.device_memory
+    fn map_memory(&mut self, _device_size: u64, _offset: u64) -> *mut c_void {
+        if self.mapped_memory == std::ptr::null_mut() {
+            self.mapped_memory = self.allocator
+                .upgrade().unwrap()
+                .read().unwrap().map_memory(&self.allocation)
+                .expect("Failed to map device memory.") as *mut c_void;
         }
-    }
-
-    fn map_memory(&mut self, device_size: u64, offset: u64) -> *mut c_void {
-        unsafe {
-            self.mapped_memory = self.logical_device
-                .map_memory(self.device_memory, offset, device_size, MemoryMapFlags::empty())
-                .expect("Failed to map device memory.");
-            self.mapped_memory
-        }
+        self.mapped_memory
     }
 
     fn unmap_memory(&mut self) {
-        unsafe {
-            self.logical_device.unmap_memory(self.device_memory);
-        }
-    }
-
-    fn get_memory_type_index(&self, instance: &ash::Instance, physical_device: PhysicalDevice, memory_type: u32, memory_properties: MemoryPropertyFlags) -> u32 {
-        unsafe {
-            let properties = instance.get_physical_device_memory_properties(physical_device);
-            for i in 0..properties.memory_type_count {
-                if (memory_type & (1 << i)) != 0 &&
-                    ((properties.memory_types[i as usize].property_flags & memory_properties) == memory_properties) {
-                    return i as u32;
-                }
-            }
-        }
-        0
-    }
-
-    fn map_device_memory(&mut self, instance: &ash::Instance, memory_requirements: &MemoryRequirements, physical_device: PhysicalDevice, memory_properties: MemoryPropertyFlags) -> DeviceMemory {
-        let memory_type_index = self.get_memory_type_index(instance, physical_device,
-                                                           memory_requirements.memory_type_bits, memory_properties);
-        let allocate_info = MemoryAllocateInfo::builder()
-            .memory_type_index(memory_type_index)
-            .allocation_size(memory_requirements.size)
-            .build();
-        unsafe {
-            let device_memory = self.logical_device
-                .allocate_memory(&allocate_info, None)
-                .expect("Failed to allocate device memory.");
-            device_memory
-        }
+        self.allocator
+            .upgrade()
+            .unwrap()
+            .read()
+            .unwrap()
+            .unmap_memory(&self.allocation)
+            .expect("Failed to unmap memory.");
     }
 }

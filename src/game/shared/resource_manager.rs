@@ -5,15 +5,15 @@ use crate::game::shared::structs::Model;
 use crate::game::traits::GraphicsBase;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 
-pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+pub struct ResourceManager<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
     pub models: Vec<*mut Model<GraphicsType, BufferType, CommandType, TextureType>>,
     resource: Vec<RefCell<Box<dyn Disposable>>>,
 }
 
-unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Send for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> { }
-unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Sync for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> { }
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Send for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> { }
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Sync for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> { }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
     pub fn new() -> Self {
         ResourceManager {
             resource: vec![],
@@ -91,7 +91,7 @@ impl ResourceManager<Graphics, Buffer, ash::vk::CommandBuffer, Image> {
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Drop for ResourceManager<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping Resource Manager...");
         unsafe {

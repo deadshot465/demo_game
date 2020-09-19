@@ -6,30 +6,27 @@ use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use gltf::{Node, Scene};
 use crate::game::traits::GraphicsBase;
 use std::mem::ManuallyDrop;
-use ash::vk::{CommandBuffer, PipelineBindPoint, ShaderStageFlags, IndexType, DeviceSize};
+use ash::vk::{CommandBuffer, PipelineBindPoint, ShaderStageFlags, IndexType};
 use std::convert::TryFrom;
 use ash::version::DeviceV1_0;
 use crate::game::shared::enums::ShaderType;
-use winapi::_core::marker::PhantomData;
-use gltf::scene::Transform;
 use crossbeam::sync::ShardedLock;
 use tokio::task::JoinHandle;
 
-pub struct Model<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+pub struct Model<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
     pub position: Vec3A,
     pub scale: Vec3A,
     pub rotation: Vec3A,
     pub color: Vec4,
-    pub meshes: Vec<Mesh<BufferType, TextureType>>,
+    pub meshes: Vec<Mesh<BufferType, CommandType, TextureType>>,
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
     graphics: Weak<ShardedLock<GraphicsType>>,
-    phantom: PhantomData<&'static CommandType>,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Model<GraphicsType, BufferType, CommandType, TextureType> {
-    fn process_model(document: gltf::Document, buffer: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, TextureType>> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Model<GraphicsType, BufferType, CommandType, TextureType> {
+    fn process_model(document: gltf::Document, buffer: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let meshes = if let Some(scene) = document.default_scene() {
             Self::process_root_nodes(scene, buffer)
         }
@@ -44,86 +41,16 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
     }
 
     fn create_model(file_name: &'static str, graphics: Weak<ShardedLock<GraphicsType>>,
-               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
+               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> (Self, Vec<gltf::image::Data>) {
         let (document, buffer, image) = gltf::import(file_name)
             .expect("Failed to import the model.");
-
-        let mut meshes = Self::process_model(document, buffer);
-
-        let _graphics = graphics.upgrade();
-        if let Some(g) = _graphics {
-            let lock = g.read().unwrap();
-            for (index, mesh) in meshes.iter_mut().enumerate() {
-                log::info!("Creating buffer for mesh {}...", index);
-                let vertices = mesh.primitives.iter()
-                    .map(|p| &p.vertices)
-                    .flatten()
-                    .map(|v| *v)
-                    .collect::<Vec<_>>();
-                let indices = mesh.primitives.iter()
-                    .map(|p| &p.indices)
-                    .flatten()
-                    .map(|i| *i)
-                    .collect::<Vec<_>>();
-                let vertex_buffer = lock.create_vertex_buffer(vertices.as_slice());
-                mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
-                let index_buffer = lock.create_index_buffer(indices.as_slice());
-                mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
-
-                let mut texture_indices = mesh.primitives.iter()
-                    .filter_map(|p| {
-                        p.texture_index
-                    })
-                    .collect::<Vec<_>>();
-                texture_indices.sort();
-                texture_indices.dedup();
-                println!("Texture indices: {:?}", texture_indices.as_slice());
-                use gltf::image::Format;
-                for i in texture_indices.iter() {
-                    let img = image.get(*i);
-                    if let Some(_img) = img {
-                        let buffer_size = _img.width * _img.height * 4;
-                        match _img.format {
-                            Format::R8G8B8 | Format::B8G8R8 => {
-                                let pixels = &_img.pixels;
-                                let mut rgba_pixels: Vec<u8> = vec![];
-                                let mut rgba_index = 0;
-                                let mut rgb_index = 0;
-                                rgba_pixels.resize(buffer_size as usize, 0);
-                                for _ in 0..(_img.width * _img.height) {
-                                    rgba_pixels[rgba_index] = pixels[rgb_index];
-                                    rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
-                                    rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
-                                    rgba_pixels[rgba_index + 3] = 255;
-                                    rgba_index += 4;
-                                    rgb_index += 3;
-                                }
-                                let texture = lock.create_image(rgba_pixels.as_slice(), buffer_size as u64, _img.width as u32, _img.height as u32, match _img.format {
-                                    Format::B8G8R8 => Format::B8G8R8A8,
-                                    Format::R8G8B8 => Format::R8G8B8A8,
-                                    _ => _img.format
-                                });
-                                mesh.texture.push(ManuallyDrop::new(texture));
-                            },
-                            Format::R8G8B8A8 | Format::B8G8R8A8 => {
-                                let texture = lock.create_image(_img.pixels.as_slice(), buffer_size as u64, _img.width as u32, _img.height as u32, _img.format);
-                                mesh.texture.push(ManuallyDrop::new(texture));
-                            },
-                            _ => {
-                                unimplemented!("Unsupported image format: {:?}", _img.format);
-                            }
-                        }
-                    }
-                }
-            }
-            drop(lock);
-        }
+        let meshes = Self::process_model(document, buffer);
 
         let x: f32 = rotation.x();
         let y: f32 = rotation.y();
         let z: f32 = rotation.z();
 
-        Model {
+        let model = Model {
             position,
             scale,
             rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
@@ -133,11 +60,11 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
             is_disposed: false,
             model_name: file_name.to_string(),
             model_index: 0,
-            phantom: PhantomData,
-        }
+        };
+        (model, image)
     }
 
-    fn process_root_nodes(scene: Scene, buffer_data: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, TextureType>> {
+    fn process_root_nodes(scene: Scene, buffer_data: Vec<gltf::buffer::Data>) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(150);
         for node in scene.nodes() {
             let mut submeshes = Self::process_node(node, &buffer_data, Mat4::identity());
@@ -146,7 +73,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         meshes
     }
 
-    fn process_node(node: Node, buffer_data: &Vec<gltf::buffer::Data>, local_transform: Mat4) -> Vec<Mesh<BufferType, TextureType>> {
+    fn process_node(node: Node, buffer_data: &Vec<gltf::buffer::Data>, local_transform: Mat4) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(150);
         let (t, r, s) = node.transform().decomposed();
         let transform = Mat4::from_scale_rotation_translation(
@@ -165,7 +92,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         meshes
     }
 
-    fn process_mesh(mesh: gltf::Mesh, buffer_data: &Vec<gltf::buffer::Data>, local_transform: Mat4) -> Mesh<BufferType, TextureType> {
+    fn process_mesh(mesh: gltf::Mesh, buffer_data: &Vec<gltf::buffer::Data>, local_transform: Mat4) -> Mesh<BufferType, CommandType, TextureType> {
         let mut primitives = Vec::with_capacity(5);
 
         for primitive in mesh.primitives() {
@@ -237,6 +164,8 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
             texture: vec![],
             is_disposed: false,
             sampler_resource: None,
+            command_buffer: None,
+            command_pool: None,
         }
     }
 
@@ -251,11 +180,93 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
-               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> JoinHandle<Self> {
+               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> JoinHandle<Self> {
+        println!("Loading model {}...", file_name);
+        let _graphics = graphics.upgrade().unwrap();
         let model = tokio::spawn(async move {
-            Self::create_model(file_name, graphics, position, scale, rotation, color)
+            let (mut _model, image) = Self::create_model(file_name, graphics.clone(), position, scale, rotation, color);
+            let lock = _graphics.read().unwrap();
+            let thread_count = lock.thread_pool.thread_count;
+            let command_pool = lock.thread_pool.threads[model_index % thread_count].command_pool;
+            println!("Model index: {}, Command pool: {:?}", model_index, command_pool);
+            lock.command_buffer_list.insert(command_pool, vec![]);
+            for buffer in _model.meshes.iter_mut() {
+                let command_buffer = lock.create_secondary_command_buffer(command_pool);
+                buffer.command_pool = Some(command_pool);
+                buffer.command_buffer = Some(command_buffer);
+            }
+            _model.create_buffer_and_texture(&*lock, image);
+            drop(lock);
+            _model
         });
         model
+    }
+
+    fn create_buffer_and_texture(&mut self, graphics: &Graphics, image: Vec<gltf::image::Data>) {
+        for (index, mesh) in self.meshes.iter_mut().enumerate() {
+            log::info!("Creating buffer for mesh {}...", index);
+
+            mesh.begin_command_buffer(graphics.logical_device.as_ref());
+            mesh.create_vertex_buffer(graphics);
+            mesh.create_index_buffer(graphics);
+            mesh.end_command_buffer(graphics.logical_device.as_ref());
+            let result = graphics.command_buffer_list.update(
+                mesh.command_pool.as_ref().unwrap(),
+                |_, v| {
+                    let mut vec = v.clone();
+                    vec.push(mesh.command_buffer.unwrap());
+                    vec
+                }
+            );
+            println!("Successfully pushed command buffer into the queue.");
+            assert!(result);
+
+            let mut texture_indices = mesh.primitives.iter()
+                .filter_map(|p| {
+                    p.texture_index
+                })
+                .collect::<Vec<_>>();
+            texture_indices.sort();
+            texture_indices.dedup();
+            println!("Texture indices: {:?}", texture_indices.as_slice());
+            use gltf::image::Format;
+            for i in texture_indices.iter() {
+                let img = image.get(*i);
+                if let Some(_img) = img {
+                    let buffer_size = _img.width * _img.height * 4;
+                    match _img.format {
+                        Format::R8G8B8 | Format::B8G8R8 => {
+                            let pixels = &_img.pixels;
+                            let mut rgba_pixels: Vec<u8> = vec![];
+                            let mut rgba_index = 0;
+                            let mut rgb_index = 0;
+                            rgba_pixels.resize(buffer_size as usize, 0);
+                            for _ in 0..(_img.width * _img.height) {
+                                rgba_pixels[rgba_index] = pixels[rgb_index];
+                                rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
+                                rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
+                                rgba_pixels[rgba_index + 3] = 255;
+                                rgba_index += 4;
+                                rgb_index += 3;
+                            }
+                            let texture = graphics.create_image(rgba_pixels.as_slice(), buffer_size as u64, _img.width as u32, _img.height as u32, match _img.format {
+                                Format::B8G8R8 => Format::B8G8R8A8,
+                                Format::R8G8B8 => Format::R8G8B8A8,
+                                _ => _img.format
+                            });
+                            mesh.texture.push(ManuallyDrop::new(texture));
+                        },
+                        Format::R8G8B8A8 | Format::B8G8R8A8 => {
+                            let texture = graphics.create_image(_img.pixels.as_slice(), buffer_size as u64, _img.width as u32, _img.height as u32, _img.format);
+                            mesh.texture.push(ManuallyDrop::new(texture));
+                        },
+                        _ => {
+                            unimplemented!("Unsupported image format: {:?}", _img.format);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn create_sampler_resource(&mut self) {
@@ -350,8 +361,15 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> From<&Model<GraphicsType, BufferType, CommandType, TextureType>> for Model<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> From<&Model<GraphicsType, BufferType, CommandType, TextureType>> for Model<GraphicsType, BufferType, CommandType, TextureType> {
     fn from(model: &Model<GraphicsType, BufferType, CommandType, TextureType>) -> Self {
+        loop {
+            if model.meshes.iter().all(|mesh| {
+                mesh.vertex_buffer.is_some() && mesh.index_buffer.is_some()
+            }) {
+                break;
+            }
+        }
         let mut _model = Model {
             position: model.position,
             scale: model.scale,
@@ -362,7 +380,6 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
             is_disposed: true,
             model_name: model.model_name.clone(),
             model_index: 0,
-            phantom: PhantomData,
         };
 
         _model.meshes.iter_mut()
@@ -371,10 +388,10 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
     }
 }
 
-unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Send for Model<GraphicsType, BufferType, CommandType, TextureType> { }
-unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Sync for Model<GraphicsType, BufferType, CommandType, TextureType> { }
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Send for Model<GraphicsType, BufferType, CommandType, TextureType> { }
+unsafe impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Sync for Model<GraphicsType, BufferType, CommandType, TextureType> { }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for Model<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Drop for Model<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping model...Model: {}, Model Index: {}", self.model_name.as_str(), self.model_index);
         if !self.is_disposed {
@@ -387,7 +404,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Disposable for Model<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Disposable for Model<GraphicsType, BufferType, CommandType, TextureType> {
     fn dispose(&mut self) {
         log::info!("Disposing model...Model: {}, Model Index: {}", self.model_name.as_str(), self.model_index);
         for mesh in self.meshes.iter_mut() {

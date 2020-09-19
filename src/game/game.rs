@@ -14,9 +14,10 @@ use crate::game::traits::Disposable;
 use crate::game::shared::traits::GraphicsBase;
 use ash::vk::CommandBuffer;
 use crate::game::graphics::dx12 as DX12;
-use winapi::um::d3d12::ID3D12CommandList;
+use winapi::um::d3d12::ID3D12GraphicsCommandList;
+use wio::com::ComPtr;
 
-pub struct Game<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+pub struct Game<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
     pub window: Arc<RwLock<winit::window::Window>>,
     pub resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     pub camera: Arc<RwLock<Camera>>,
@@ -87,7 +88,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 }
 
-impl Game<DX12::Graphics, DX12::Resource, ID3D12CommandList, DX12::Resource> {
+impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX12::Resource> {
     pub unsafe fn new(title: &str, width: f64, height: f64, event_loop: &EventLoop<()>) -> Self {
         let window = WindowBuilder::new()
             .with_title(title)
@@ -124,7 +125,7 @@ impl Game<DX12::Graphics, DX12::Resource, ID3D12CommandList, DX12::Resource> {
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> Drop for Game<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Drop for Game<GraphicsType, BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping game...");
     }

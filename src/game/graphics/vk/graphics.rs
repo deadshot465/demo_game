@@ -28,10 +28,13 @@ use crate::game::shared::structs::{ViewProjection, Directional, Vertex, PushCons
 use std::convert::TryFrom;
 use crate::game::traits::Mappable;
 use std::ops::Deref;
-use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel};
+use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel, ThreadPool};
 use glam::{Vec3A, Vec4, Mat4};
 use crate::game::enums::ShaderType;
 use crate::game::shared::traits::GraphicsBase;
+use vk_mem::*;
+use crossbeam::sync::ShardedLock;
+use dashmap::DashMap;
 
 #[allow(dead_code)]
 pub struct Graphics {
@@ -43,18 +46,21 @@ pub struct Graphics {
     pub current_index: u32,
     pub sampler_descriptor_set_layout: DescriptorSetLayout,
     pub descriptor_pool: DescriptorPool,
+    pub command_pool: CommandPool,
+    pub thread_pool: ThreadPool<fn()>,
+    pub allocator: Arc<ShardedLock<Allocator>>,
+    pub graphics_queue: Queue,
+    pub present_queue: Queue,
+    pub compute_queue: Queue,
+    pub command_buffer_list: DashMap<CommandPool, Vec<CommandBuffer>>,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
     debug_messenger: DebugUtilsMessengerEXT,
     surface: SurfaceKHR,
     physical_device: super::PhysicalDevice,
-    graphics_queue: Queue,
-    present_queue: Queue,
-    compute_queue: Queue,
     swapchain: ManuallyDrop<super::Swapchain>,
     descriptor_set_layout: DescriptorSetLayout,
-    command_pool: CommandPool,
     depth_image: ManuallyDrop<super::Image>,
     msaa_image: ManuallyDrop<super::Image>,
     uniform_buffers: ManuallyDrop<UniformBuffers>,
@@ -86,9 +92,22 @@ impl Graphics {
         let (logical_device, graphics_queue, present_queue, compute_queue) = Graphics::create_logical_device(
             &instance, &physical_device, &enabled_layers, true
         );
+        let allocator_info = vk_mem::AllocatorCreateInfo {
+            physical_device: physical_device.physical_device,
+            device: logical_device.clone(),
+            instance: instance.clone(),
+            flags: AllocatorCreateFlags::NONE,
+            preferred_large_heap_block_size: 0,
+            frame_in_use_count: 0,
+            heap_size_limits: None,
+        };
+        let allocator = vk_mem::Allocator::new(&allocator_info)
+            .expect("Failed to create VMA memory allocator.");
         let device = Arc::new(logical_device);
+        let allocator = Arc::new(ShardedLock::new(allocator));
         let swapchain = Graphics::create_swapchain(
-            &surface_loader, surface, &physical_device, window, &instance, device.clone()
+            &surface_loader, surface, &physical_device, window, &instance, Arc::downgrade(&device),
+            Arc::downgrade(&allocator)
         );
 
         let command_pool_create_info = CommandPoolCreateInfo::builder()
@@ -101,27 +120,31 @@ impl Graphics {
                 .create_command_pool(&command_pool_create_info, None)
                 .expect("Failed to create command pool.");
         }
+        let cpu_count = num_cpus::get();
+        let thread_pool = ThreadPool::<fn()>::new(cpu_count, device.as_ref(),
+                                                  physical_device.queue_indices.graphics_family.unwrap());
         let sample_count = Graphics::get_sample_count(&instance, &physical_device);
         let depth_format = Self::get_depth_format(&instance, &physical_device);
-        let depth_image = Graphics::create_depth_image(
-            &instance, device.clone(), &physical_device, depth_format, &swapchain, command_pool, graphics_queue, sample_count
+        let depth_image = Self::create_depth_image(
+            Arc::downgrade(&device), depth_format, &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
         let msaa_image = Graphics::create_msaa_image(
-            &instance, device.clone(), &physical_device, &swapchain, command_pool, graphics_queue, sample_count
+            Arc::downgrade(&device), &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
         let descriptor_set_layout = Graphics::create_descriptor_set_layout(device.as_ref());
         let sampler_descriptor_set_layout = Self::create_sampler_descriptor_set_layout(device.as_ref());
         let view_projection = Graphics::create_view_projection(
-            camera.read().unwrap().deref(), &instance, device.clone(), &physical_device);
+            camera.read().unwrap().deref(), Arc::downgrade(&device), Arc::downgrade(&allocator));
         let directional_light = Directional::new(
             Vec4::new(1.0, 1.0, 1.0, 1.0),
             Vec3A::new(0.0, -5.0, 0.0),
             0.1,
             0.5);
         let directional = Graphics::create_directional_light(
-            &directional_light, &instance, device.clone(), &physical_device
+            &directional_light, Arc::downgrade(&device),
+            Arc::downgrade(&allocator)
         );
 
         let uniform_buffers = UniformBuffers::new(view_projection, directional);
@@ -177,6 +200,9 @@ impl Graphics {
             sample_count,
             sampler_descriptor_set_layout,
             depth_format,
+            allocator,
+            thread_pool,
+            command_buffer_list: DashMap::new(),
         }
     }
 
@@ -336,10 +362,10 @@ impl Graphics {
 
     fn create_swapchain(surface_loader: &Surface, surface: SurfaceKHR,
                         physical_device: &super::PhysicalDevice, window: &winit::window::Window,
-                        instance: &Instance, device: Arc<Device>) -> super::Swapchain {
+                        instance: &Instance, device: Weak<Device>, allocator: Weak<ShardedLock<Allocator>>) -> super::Swapchain {
         super::Swapchain::new(
             surface_loader, surface, physical_device.physical_device, window,
-            physical_device.queue_indices, instance, device
+            physical_device.queue_indices, instance, device, allocator
         )
     }
 
@@ -368,18 +394,17 @@ impl Graphics {
                             ImageTiling::OPTIMAL, FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT, instance, physical_device)
     }
 
-    fn create_depth_image(instance: &ash::Instance, device: Arc<ash::Device>,
-                          physical_device: &super::PhysicalDevice, format: Format,
+    fn create_depth_image(device: Weak<ash::Device>,
+                          format: Format,
                           swapchain: &super::Swapchain, command_pool: CommandPool,
-                          graphics_queue: Queue, sample_count: SampleCountFlags) -> super::Image {
+                          graphics_queue: Queue, sample_count: SampleCountFlags, allocator: Weak<ShardedLock<Allocator>>) -> super::Image {
         let extent = swapchain.extent;
         let mut image = super::Image
-        ::new(instance,
-              device,
-              physical_device.physical_device,
+        ::new(device,
               ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
               MemoryPropertyFlags::DEVICE_LOCAL, format,
-              sample_count, extent, ImageType::TYPE_2D, 1, ImageAspectFlags::DEPTH);
+              sample_count, extent, ImageType::TYPE_2D, 1, ImageAspectFlags::DEPTH,
+              allocator);
         image.transition_layout(ImageLayout::UNDEFINED,
                                 ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                 command_pool, graphics_queue,
@@ -414,19 +439,16 @@ impl Graphics {
         }
     }
 
-    fn create_msaa_image(instance: &ash::Instance, device: Arc<ash::Device>,
-                         physical_device: &super::PhysicalDevice,
+    fn create_msaa_image(device: Weak<ash::Device>,
                          swapchain: &super::Swapchain, command_pool: CommandPool,
-                         graphics_queue: Queue, sample_count: SampleCountFlags) -> super::Image {
+                         graphics_queue: Queue, sample_count: SampleCountFlags, allocator: Weak<ShardedLock<Allocator>>) -> super::Image {
         let mut image = super::image::Image::new(
-            instance,
             device,
-            physical_device.physical_device,
             ImageUsageFlags::TRANSIENT_ATTACHMENT | ImageUsageFlags::COLOR_ATTACHMENT,
             MemoryPropertyFlags::DEVICE_LOCAL,
             swapchain.format.format,
             sample_count, swapchain.extent, ImageType::TYPE_2D, 1,
-            ImageAspectFlags::COLOR
+            ImageAspectFlags::COLOR, allocator
         );
         image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                                 command_pool, graphics_queue, ImageAspectFlags::COLOR, 1);
@@ -499,8 +521,8 @@ impl Graphics {
         }
     }
 
-    fn create_view_projection(camera: &Camera, instance: &Instance,
-                              device: Arc<Device>, physical_device: &super::PhysicalDevice) -> super::Buffer {
+    fn create_view_projection(camera: &Camera,
+                              device: Weak<Device>, allocator: Weak<ShardedLock<Allocator>>) -> super::Buffer {
         let vp_size = std::mem::size_of::<ViewProjection>();
         let view_projection = ViewProjection::new(
             camera.get_view_matrix(),
@@ -508,25 +530,25 @@ impl Graphics {
         );
         unsafe {
             let mut vp_buffer = super::buffer::Buffer::new(
-                instance, Arc::downgrade(&device), physical_device.physical_device,
+                device,
                 DeviceSize::try_from(vp_size).unwrap(),
                 BufferUsageFlags::UNIFORM_BUFFER,
-                MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT);
+                MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT, allocator);
             let mapped = vp_buffer.map_memory(u64::try_from(vp_size).unwrap(), 0);
-            std::ptr::copy(&view_projection as *const _ as *const c_void, mapped, vp_size);
+            std::ptr::copy_nonoverlapping(&view_projection as *const _ as *const c_void, mapped, vp_size);
             vp_buffer
         }
     }
 
-    fn create_directional_light(directional: &Directional, instance: &Instance,
-                              device: Arc<Device>, physical_device: &super::PhysicalDevice) -> super::Buffer {
+    fn create_directional_light(directional: &Directional,
+                              device: Weak<Device>, allocator: Weak<ShardedLock<Allocator>>) -> super::Buffer {
         let dl_size = std::mem::size_of::<Directional>();
         unsafe {
             let mut dl_buffer = super::buffer::Buffer::new(
-                instance, Arc::downgrade(&device), physical_device.physical_device,
+                device,
                 DeviceSize::try_from(dl_size).unwrap(),
                 BufferUsageFlags::UNIFORM_BUFFER,
-                MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE);
+                MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE, allocator);
             let mapped = dl_buffer.map_memory(u64::try_from(dl_size).unwrap(), 0);
             std::ptr::copy(directional as *const _ as *const c_void, mapped, dl_size);
             dl_buffer
@@ -565,10 +587,10 @@ impl Graphics {
         assert_ne!(dynamic_model.buffer, std::ptr::null_mut());
 
         let mut buffer = super::Buffer::new(
-            &self.instance, Arc::downgrade(&self.logical_device),
-            self.physical_device.physical_device, buffer_size,
+            Arc::downgrade(&self.logical_device),
+            buffer_size,
             BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT);
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT, Arc::downgrade(&self.allocator));
         unsafe {
             for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
                 let ptr = std::mem::transmute::<usize, *mut Mat4>(
@@ -809,6 +831,41 @@ impl Graphics {
         (fences, acquired_semaphores, complete_semaphores)
     }
 
+    pub fn create_secondary_command_buffer(&self, command_pool: CommandPool) -> CommandBuffer {
+        let allocate_info = CommandBufferAllocateInfo::builder()
+            .command_buffer_count(1)
+            .level(CommandBufferLevel::SECONDARY)
+            .command_pool(command_pool)
+            .build();
+        unsafe {
+            let buffer = self.logical_device
+                .allocate_command_buffers(&allocate_info)
+                .expect("Failed to allocate secondary command buffer.");
+            buffer[0]
+        }
+    }
+
+    pub fn execute_command_buffers(&self) {
+        unsafe {
+            let begin_info = CommandBufferBeginInfo::builder()
+                .build();
+            self.logical_device.begin_command_buffer(self.command_buffers[0], &begin_info)
+                .expect("Failed to begin primary command buffer.");
+            for item in self.command_buffer_list.iter() {
+                self.logical_device
+                    .cmd_execute_commands(self.command_buffers[0], item.as_slice());
+            }
+            self.logical_device.end_command_buffer(self.command_buffers[0])
+                .expect("Failed to end primary command buffer.");
+            let submit_info = SubmitInfo::builder()
+                .command_buffers(&[self.command_buffers[0]])
+                .build();
+            self.logical_device.queue_submit(self.graphics_queue,
+                                             &[submit_info], Fence::null())
+                .expect("Failed to submit queue for execution.");
+        }
+    }
+
     pub async fn initialize(&mut self) {
         self.create_dynamic_model_buffers();
         self.allocate_descriptor_set();
@@ -952,46 +1009,50 @@ impl Graphics {
 }
 
 impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
-    fn create_vertex_buffer(&self, vertices: &[Vertex]) -> super::Buffer {
+    fn create_vertex_buffer(&self, vertices: &[Vertex], command_buffer: Option<CommandBuffer>) -> super::Buffer {
         let buffer_size = DeviceSize::try_from(std::mem::size_of::<Vertex>() * vertices.len())
             .unwrap();
         let mut staging = super::Buffer::new(
-            &self.instance, Arc::downgrade(&self.logical_device), self.physical_device.physical_device, buffer_size,
+            Arc::downgrade(&self.logical_device), buffer_size,
             BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE
+            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
+            Arc::downgrade(&self.allocator)
         );
         let mapped = staging.map_memory(buffer_size, 0);
         unsafe {
             std::ptr::copy_nonoverlapping(vertices.as_ptr() as *const c_void, mapped, buffer_size as usize);
         }
         let buffer = super::Buffer::new(
-            &self.instance, Arc::downgrade(&self.logical_device), self.physical_device.physical_device, buffer_size,
+            Arc::downgrade(&self.logical_device), buffer_size,
             BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::VERTEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            Arc::downgrade(&self.allocator)
         );
-        buffer.copy_buffer(&staging, buffer_size, self.command_pool, self.graphics_queue);
+        buffer.copy_buffer(&staging, buffer_size, self.command_pool, self.graphics_queue, command_buffer);
         drop(staging);
         buffer
     }
 
-    fn create_index_buffer(&self, indices: &[u32]) -> super::Buffer {
+    fn create_index_buffer(&self, indices: &[u32], command_buffer: Option<CommandBuffer>) -> super::Buffer {
         let buffer_size = DeviceSize::try_from(std::mem::size_of::<u32>() * indices.len())
             .unwrap();
         let mut staging = super::Buffer::new(
-            &self.instance, Arc::downgrade(&self.logical_device), self.physical_device.physical_device, buffer_size,
+            Arc::downgrade(&self.logical_device), buffer_size,
             BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE
+            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
+            Arc::downgrade(&self.allocator)
         );
         let mapped = staging.map_memory(buffer_size, 0);
         unsafe {
             std::ptr::copy_nonoverlapping(indices.as_ptr() as *const c_void, mapped, buffer_size as usize);
         }
         let buffer = super::Buffer::new(
-            &self.instance, Arc::downgrade(&self.logical_device), self.physical_device.physical_device, buffer_size,
+            Arc::downgrade(&self.logical_device), buffer_size,
             BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::INDEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            Arc::downgrade(&self.allocator)
         );
-        buffer.copy_buffer(&staging, buffer_size, self.command_pool, self.graphics_queue);
+        buffer.copy_buffer(&staging, buffer_size, self.command_pool, self.graphics_queue, command_buffer);
         drop(staging);
         buffer
     }
@@ -1004,10 +1065,11 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
         log::info!("Loading texture...");
         log::info!("Image data length: {}, Buffer size: {}, Width: {}, Height: {}", image_data.len(), buffer_size, width, height);
         let mut staging = super::Buffer::new(
-            &self.instance, Arc::downgrade(&self.logical_device),
-            self.physical_device.physical_device, buffer_size,
+            Arc::downgrade(&self.logical_device),
+            buffer_size,
             BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
+            Arc::downgrade(&self.allocator)
         );
         unsafe {
             let mapped = staging.map_memory(buffer_size, 0);
@@ -1022,12 +1084,12 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
             let _height = height as f32;
             let mip_levels = _width.max(_height).log2().floor() as u32;
             let mut image = super::Image::new(
-                &self.instance, self.logical_device.clone(), self.physical_device.physical_device,
+                Arc::downgrade(&self.logical_device),
                 ImageUsageFlags::TRANSFER_SRC | ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED,
                 MemoryPropertyFlags::DEVICE_LOCAL, _format,
                 SampleCountFlags::TYPE_1,
                 Extent2D::builder().width(width).height(height).build(),
-                ImageType::TYPE_2D, mip_levels, ImageAspectFlags::COLOR
+                ImageType::TYPE_2D, mip_levels, ImageAspectFlags::COLOR, Arc::downgrade(&self.allocator)
             );
             image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::TRANSFER_DST_OPTIMAL,
             self.command_pool, self.graphics_queue, ImageAspectFlags::COLOR, mip_levels);
@@ -1061,6 +1123,7 @@ impl Drop for Graphics {
             self.logical_device.destroy_command_pool(self.command_pool, None);
             self.logical_device.destroy_descriptor_set_layout(self.sampler_descriptor_set_layout, None);
             self.logical_device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.allocator.write().unwrap().destroy();
             self.logical_device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             let debug_loader = DebugUtils::new(&self.entry, &self.instance);

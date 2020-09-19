@@ -5,7 +5,8 @@ use winit::event_loop::{EventLoop, ControlFlow};
 use winit::event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode};
 use demo_game_rs::game::graphics::vk as VK;
 use demo_game_rs::game::graphics::dx12 as DX12;
-use winapi::um::d3d12::ID3D12CommandList;
+use winapi::um::d3d12::ID3D12GraphicsCommandList;
+use wio::com::ComPtr;
 
 #[tokio::main]
 async fn main() {
@@ -54,7 +55,7 @@ async fn main() {
         },
         "DX12" => {
             unsafe {
-                let mut game = Game::<DX12::Graphics, DX12::Resource, ID3D12CommandList, DX12::Resource>::new("Demo game", 1280.0, 720.0, &event_loop);
+                let mut game = Game::<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX12::Resource>::new("Demo game", 1280.0, 720.0, &event_loop);
                 if game.initialize() {
                     game.load_content().await;
                 }

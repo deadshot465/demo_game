@@ -1,6 +1,5 @@
 use ash::{
     Device,
-    Instance,
     vk::{
         BufferCopy,
         BufferCreateInfo,
@@ -8,21 +7,20 @@ use ash::{
         CommandPool,
         DeviceMemory,
         DeviceSize,
-        MemoryAllocateInfo,
-        MemoryMapFlags,
         MemoryPropertyFlags,
-        MemoryRequirements,
-        PhysicalDevice,
         Queue,
         SharingMode,
     },
 };
 use std::ffi::c_void;
 use std::sync::Weak;
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use ash::version::DeviceV1_0;
 use crate::game::shared::traits::mappable::Mappable;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buffer};
+use vk_mem::*;
+use crossbeam::sync::ShardedLock;
+use ash::vk::CommandBuffer;
 
 #[derive(Clone)]
 pub struct Buffer {
@@ -32,41 +30,61 @@ pub struct Buffer {
     pub is_disposed: bool,
     pub buffer_size: DeviceSize,
     logical_device: Weak<Device>,
+    allocator: Weak<ShardedLock<Allocator>>,
+    allocation: Allocation,
+    allocation_info: Option<AllocationInfo>,
 }
 
 impl Buffer {
-    pub fn new(instance: &Instance, device: Weak<Device>,
-               physical_device: PhysicalDevice, buffer_size: DeviceSize,
+    pub fn new(device: Weak<Device>,
+               buffer_size: DeviceSize,
                usage_flag: BufferUsageFlags,
-               memory_properties: MemoryPropertyFlags) -> Self {
+               memory_properties: MemoryPropertyFlags, allocator: Weak<ShardedLock<Allocator>>) -> Self {
         let create_info = BufferCreateInfo::builder()
             .sharing_mode(SharingMode::EXCLUSIVE)
             .size(buffer_size)
             .usage(usage_flag)
             .build();
-        unsafe {
-            let buffer = device
-                .upgrade()
-                .unwrap()
-                .create_buffer(&create_info, None)
-                .expect("Failed to create buffer.");
-
-            let mut _instance = Buffer {
-                logical_device: device,
-                buffer,
-                device_memory: DeviceMemory::null(),
-                mapped_memory: std::ptr::null_mut(),
-                is_disposed: false,
-                buffer_size,
-            };
-
-            let device_memory = _instance.allocate_memory(instance, physical_device, memory_properties);
-            _instance.device_memory = device_memory;
-            _instance
-        }
+        let allocation_info = AllocationCreateInfo {
+            usage: match usage_flag {
+                BufferUsageFlags::TRANSFER_SRC => MemoryUsage::CpuOnly,
+                x if (x & BufferUsageFlags::TRANSFER_DST) == BufferUsageFlags::empty() => MemoryUsage::CpuToGpu,
+                _ => MemoryUsage::GpuOnly
+            },
+            flags: if (memory_properties & MemoryPropertyFlags::HOST_VISIBLE) == MemoryPropertyFlags::HOST_VISIBLE &&
+                (memory_properties & MemoryPropertyFlags::HOST_COHERENT) == MemoryPropertyFlags::HOST_COHERENT {
+                AllocationCreateFlags::MAPPED
+            } else {
+                AllocationCreateFlags::NONE
+            },
+            required_flags: memory_properties,
+            preferred_flags: MemoryPropertyFlags::empty(),
+            memory_type_bits: 0,
+            pool: None,
+            user_data: None
+        };
+        let arc = allocator.upgrade().unwrap();
+        let lock = arc.read().unwrap();
+        let (buffer, allocation, allocation_info) = lock.create_buffer(&create_info, &allocation_info)
+            .expect("Failed to create buffer from VMA allocator.");
+        drop(lock);
+        let device_memory = allocation_info.get_device_memory();
+        let mapped = allocation_info.get_mapped_data();
+        let mut _instance = Buffer {
+            logical_device: device,
+            buffer,
+            device_memory,
+            mapped_memory: mapped as *mut c_void,
+            is_disposed: false,
+            buffer_size,
+            allocation,
+            allocation_info: Some(allocation_info),
+            allocator
+        };
+        _instance
     }
 
-    pub fn copy_buffer(&self, src_buffer: &Buffer, buffer_size: DeviceSize, command_pool: CommandPool, graphics_queue: Queue) {
+    pub fn copy_buffer(&self, src_buffer: &Buffer, buffer_size: DeviceSize, command_pool: CommandPool, graphics_queue: Queue, command_buffer: Option<CommandBuffer>) {
         unsafe {
             let device = self.logical_device.upgrade();
             if let Some(d) = device {
@@ -74,9 +92,15 @@ impl Buffer {
                     .src_offset(0)
                     .size(buffer_size)
                     .dst_offset(0);
-                let cmd_buffer = get_single_time_command_buffer(d.as_ref(), command_pool);
+                let cmd_buffer = if let Some(buffer) = command_buffer {
+                    buffer
+                } else {
+                    get_single_time_command_buffer(d.as_ref(), command_pool)
+                };
                 d.cmd_copy_buffer(cmd_buffer, src_buffer.buffer, self.buffer, &[copy_info.build()]);
-                end_one_time_command_buffer(cmd_buffer, d.as_ref(), command_pool, graphics_queue);
+                if command_buffer.is_none() {
+                    end_one_time_command_buffer(cmd_buffer, d.as_ref(), command_pool, graphics_queue);
+                }
             }
         }
     }
@@ -95,18 +119,19 @@ impl Disposable for Buffer {
         if self.is_disposed {
             return;
         }
-        unsafe {
-            if !self.mapped_memory.is_null() {
-                self.unmap_memory();
-            }
-            let device = self.logical_device.upgrade().unwrap();
-            if self.device_memory != DeviceMemory::null() {
-                device
-                    .free_memory(self.device_memory, None);
-            }
-            device.destroy_buffer(self.buffer, None);
-            self.is_disposed = true;
+        if !self.mapped_memory.is_null() {
+            self.unmap_memory();
         }
+        if self.device_memory != DeviceMemory::null() {
+            self.allocator
+                .upgrade()
+                .unwrap()
+                .read()
+                .unwrap()
+                .destroy_buffer(self.buffer, &self.allocation)
+                .expect("Failed to destroy buffer.");
+        }
+        self.is_disposed = true;
     }
 
     fn is_disposed(&self) -> bool {
@@ -123,68 +148,27 @@ impl Disposable for Buffer {
 }
 
 impl Mappable for Buffer {
-    fn allocate_memory(&mut self, instance: &Instance, physical_device: PhysicalDevice, memory_properties: MemoryPropertyFlags) -> DeviceMemory {
-        unsafe {
-            let device = self.logical_device.upgrade().unwrap();
-            let requirements = device
-                .get_buffer_memory_requirements(self.buffer);
-            let device_memory = self.map_device_memory(instance,
-                                                       &requirements, physical_device, memory_properties);
-            device
-                .bind_buffer_memory(self.buffer, device_memory, 0)
-                .expect("Failed to bind buffer memory.");
-            self.device_memory = device_memory;
-            self.device_memory
+    fn map_memory(&mut self, _device_size: u64, _offset: u64) -> *mut c_void {
+        if self.mapped_memory == std::ptr::null_mut() &&
+            self.allocation_info.as_ref().unwrap().get_mapped_data() == std::ptr::null_mut() {
+            self.mapped_memory = self.allocator
+                .upgrade().unwrap()
+                .read().unwrap().map_memory(&self.allocation)
+                .expect("Failed to map device memory.") as *mut c_void;
         }
-    }
-
-    fn map_memory(&mut self, device_size: u64, offset: u64) -> *mut c_void {
-        unsafe {
-            self.mapped_memory = self.logical_device
-                .upgrade()
-                .unwrap()
-                .map_memory(self.device_memory, offset, device_size, MemoryMapFlags::empty())
-                .expect("Failed to map device memory.");
-            self.mapped_memory
-        }
+        self.mapped_memory
     }
 
     fn unmap_memory(&mut self) {
-        unsafe {
-            self.logical_device
+        if self.allocation_info.as_ref().unwrap().get_mapped_data() == std::ptr::null_mut() &&
+            self.mapped_memory != std::ptr::null_mut() {
+            self.allocator
                 .upgrade()
                 .unwrap()
-                .unmap_memory(self.device_memory);
-        }
-    }
-
-    fn get_memory_type_index(&self, instance: &Instance, physical_device: PhysicalDevice, memory_type: u32, memory_properties: MemoryPropertyFlags) -> u32 {
-        unsafe {
-            let properties = instance.get_physical_device_memory_properties(physical_device);
-            for i in 0..properties.memory_type_count {
-                if (memory_type & (1 << i)) != 0 &&
-                    ((properties.memory_types[i as usize].property_flags & memory_properties) == memory_properties) {
-                    return i as u32;
-                }
-            }
-        }
-        0
-    }
-
-    fn map_device_memory(&mut self, instance: &Instance, memory_requirements: &MemoryRequirements, physical_device: PhysicalDevice, memory_properties: MemoryPropertyFlags) -> DeviceMemory {
-        let memory_type_index = self.get_memory_type_index(instance, physical_device,
-                                                           memory_requirements.memory_type_bits, memory_properties);
-        let allocate_info = MemoryAllocateInfo::builder()
-            .memory_type_index(memory_type_index)
-            .allocation_size(memory_requirements.size)
-            .build();
-        unsafe {
-            let device_memory = self.logical_device
-                .upgrade()
+                .read()
                 .unwrap()
-                .allocate_memory(&allocate_info, None)
-                .expect("Failed to allocate device memory.");
-            device_memory
+                .unmap_memory(&self.allocation)
+                .expect("Failed to unmap memory.");
         }
     }
 }

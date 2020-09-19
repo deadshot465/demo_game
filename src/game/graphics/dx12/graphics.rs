@@ -10,7 +10,7 @@ use winapi::shared::winerror::{FAILED, SUCCEEDED};
 use winapi::shared::minwindef::{UINT, FALSE, BOOL, TRUE};
 use winapi::um::winnt::{RtlZeroMemory, LUID};
 use winapi::shared::basetsd::SIZE_T;
-use winapi::um::d3d12::{D3D12CreateDevice, ID3D12Device2, ID3D12CommandList, D3D12GetDebugInterface};
+use winapi::um::d3d12::{D3D12CreateDevice, ID3D12Device2, D3D12GetDebugInterface, ID3D12GraphicsCommandList};
 use winapi::um::d3dcommon::D3D_FEATURE_LEVEL_12_1;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::graphics::dx12::{Resource, SwapChain, DescriptorHeap, CommandQueue, Pipeline};
@@ -27,7 +27,7 @@ use winapi::shared::windef::HWND;
 #[allow(dead_code)]
 pub struct Graphics {
     camera: Arc<RwLock<Camera>>,
-    resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ID3D12CommandList, Resource>>>,
+    resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>,
     debug: ComPtr<ID3D12Debug2>,
     dxgi_factory: ComPtr<IDXGIFactory2>,
     dxgi_adapter: ComPtr<IDXGIAdapter4>,
@@ -40,7 +40,7 @@ pub struct Graphics {
 }
 
 impl Graphics {
-    pub unsafe fn new(_window: &winit::window::Window, camera: Arc<RwLock<Camera>>, resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ID3D12CommandList, Resource>>>) -> Self {
+    pub unsafe fn new(_window: &winit::window::Window, camera: Arc<RwLock<Camera>>, resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>) -> Self {
         let debug = Self::enable_debug();
         let (factory, adapter) = Self::get_adapter();
         let device = Self::create_device(adapter.as_raw());
@@ -201,20 +201,20 @@ impl Graphics {
     }
 }
 
-impl GraphicsBase<Resource, ID3D12CommandList, Resource> for Graphics {
-    fn create_vertex_buffer(&self, vertices: &[Vertex]) -> Resource {
+impl GraphicsBase<Resource, ComPtr<ID3D12GraphicsCommandList>, Resource> for Graphics {
+    fn create_vertex_buffer(&self, _vertices: &[Vertex], _command_buffer: Option<ComPtr<ID3D12GraphicsCommandList>>) -> Resource {
         unimplemented!()
     }
 
-    fn create_index_buffer(&self, indices: &[u32]) -> Resource {
+    fn create_index_buffer(&self, _indices: &[u32], _command_buffer: Option<ComPtr<ID3D12GraphicsCommandList>>) -> Resource {
         unimplemented!()
     }
 
-    fn get_commands(&self) -> &Vec<ID3D12CommandList> {
+    fn get_commands(&self) -> &Vec<ComPtr<ID3D12GraphicsCommandList>> {
         unimplemented!()
     }
 
-    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32, format: gltf::image::Format) -> Resource {
+    fn create_image(&self, _image_data: &[u8], _buffer_size: u64, _width: u32, _height: u32, _format: gltf::image::Format) -> Resource {
         unimplemented!()
     }
 }

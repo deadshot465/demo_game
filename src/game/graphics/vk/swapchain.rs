@@ -3,7 +3,9 @@ use ash::{
     vk::*
 };
 use super::physical_device::QueueIndices;
-use std::sync::Arc;
+use std::sync::Weak;
+use vk_mem::Allocator;
+use crossbeam::sync::ShardedLock;
 
 pub struct Swapchain {
     pub swapchain: SwapchainKHR,
@@ -20,15 +22,16 @@ impl Swapchain {
                surface: SurfaceKHR,
                physical_device: PhysicalDevice,
                window: &winit::window::Window,
-               queue_indices: QueueIndices, instance: &ash::Instance, device: Arc<ash::Device>) -> Self {
+               queue_indices: QueueIndices, instance: &ash::Instance, device: Weak<ash::Device>, allocator: Weak<ShardedLock<Allocator>>) -> Self {
         let (capabilities, formats, present_modes) = Swapchain::get_swapchain_details(surface_loader, surface, physical_device);
+        let logical_device = device.upgrade().unwrap();
         let mut swapchain = Swapchain {
             swapchain: SwapchainKHR::null(),
             capabilities,
             extent: Swapchain::choose_extent(&capabilities, window),
             format: Swapchain::choose_format(&formats),
             present_mode: Swapchain::choose_present_mode(&present_modes),
-            swapchain_loader: ash::extensions::khr::Swapchain::new(instance, device.as_ref()),
+            swapchain_loader: ash::extensions::khr::Swapchain::new(instance, logical_device.as_ref()),
             swapchain_images: vec![]
         };
         swapchain.create_swapchain(surface, queue_indices);
@@ -37,7 +40,7 @@ impl Swapchain {
                 .expect("Failed to acquire swapchain images.");
             let format = swapchain.format.format;
             for image in images.into_iter() {
-                let img = super::Image::from_image(image, device.clone(), format, ImageAspectFlags::COLOR, 1);
+                let img = super::Image::from_image(image, device.clone(), format, ImageAspectFlags::COLOR, 1, allocator.clone());
                 swapchain.swapchain_images.push(img);
             }
         }

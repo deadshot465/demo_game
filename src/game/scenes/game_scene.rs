@@ -4,21 +4,20 @@ use glam::{Vec3A, Vec4};
 use std::sync::{RwLock, Weak};
 use crate::game::ResourceManager;
 use crate::game::traits::Disposable;
-use crate::game::shared::structs::{Model, SamplerResource};
+use crate::game::shared::structs::Model;
 use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
-use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+pub struct GameScene<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
     graphics: Weak<ShardedLock<GraphicsType>>,
     resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
     tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> GameScene<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> GameScene<GraphicsType, BufferType, CommandType, TextureType> {
     pub fn new(resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>, graphics: Weak<ShardedLock<GraphicsType>>) -> Self {
         GameScene {
             graphics,
@@ -90,10 +89,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return;
         }
         let resource_manager = resource_manager.unwrap();
-        let mut lock = resource_manager
-            .write()
-            .expect("Failed to lock resource manager.");
         unsafe {
+            let lock = resource_manager
+                .read()
+                .expect("Failed to lock resource manager.");
             let item = lock.models.iter()
                 .find(|m| (*m).as_ref().unwrap().get_name() == file_name);
             if let Some(m) = item {
@@ -107,14 +106,20 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
                 model.color = color;
                 model.model_index = lock.get_model_count();
+                drop(lock);
+                let mut lock = resource_manager
+                    .write()
+                    .unwrap();
                 lock.add_model(model);
+                drop(lock);
             }
             else {
-                let mut task = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color);
+                let model_index = lock.get_model_count();
+                drop(lock);
+                let task = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color, model_index);
                 self.tasks.push(task);
             }
         }
-        drop(lock);
         drop(resource_manager);
     }
 

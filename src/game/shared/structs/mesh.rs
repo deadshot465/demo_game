@@ -2,13 +2,12 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
 use std::mem::ManuallyDrop;
 use crate::game::graphics;
-use std::marker::PhantomData;
-use ash::vk::{DescriptorSetLayoutCreateInfo, DescriptorSetLayoutBinding, ShaderStageFlags, DescriptorType, DescriptorSetLayout, DescriptorPoolSize, DescriptorPoolCreateInfo, DescriptorSetAllocateInfo, DescriptorImageInfo, ImageLayout, WriteDescriptorSet, DescriptorPool};
+use ash::vk::*;
 use ash::version::DeviceV1_0;
-use std::sync::Weak;
-use crossbeam::sync::ShardedLock;
-use crate::game::graphics::vk::Graphics;
-use crate::game::traits::GraphicsBase;
+use std::sync::{Arc, Weak};
+use std::convert::TryFrom;
+use crate::game::traits::Mappable;
+use std::ffi::c_void;
 
 #[derive(Clone)]
 pub enum SamplerResource {
@@ -24,16 +23,18 @@ pub struct Primitive {
 }
 
 #[derive(Clone)]
-pub struct Mesh<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> {
+pub struct Mesh<BufferType: 'static + Clone + Disposable, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
     pub primitives: Vec<Primitive>,
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
     pub texture: Vec<ManuallyDrop<TextureType>>,
     pub sampler_resource: Option<SamplerResource>,
     pub is_disposed: bool,
+    pub command_pool: Option<ash::vk::CommandPool>,
+    pub command_buffer: Option<CommandType>,
 }
 
-impl Mesh<graphics::vk::Buffer, graphics::vk::Image> {
+impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
     pub fn new(primitives: Vec<Primitive>) -> Self {
         let mesh = Mesh {
             primitives,
@@ -42,6 +43,8 @@ impl Mesh<graphics::vk::Buffer, graphics::vk::Image> {
             is_disposed: false,
             texture: vec![],
             sampler_resource: None,
+            command_pool: None,
+            command_buffer: None,
         };
         mesh
     }
@@ -61,6 +64,52 @@ impl Mesh<graphics::vk::Buffer, graphics::vk::Image> {
         }
         else {
             panic!("Index buffer is not yet created.");
+        }
+    }
+
+    pub fn create_vertex_buffer(&mut self, graphics: &graphics::vk::Graphics) {
+        let vertices = self.primitives.iter()
+            .map(|p| &p.vertices)
+            .flatten()
+            .map(|v| *v)
+            .collect::<Vec<_>>();
+        let buffer_size = DeviceSize::try_from(std::mem::size_of::<Vertex>() * vertices.len())
+            .unwrap();
+        let buffer = Self::create_buffer(vertices, buffer_size, graphics,
+                            BufferUsageFlags::VERTEX_BUFFER,
+                            *self.command_pool.as_ref().unwrap(),
+                            *self.command_buffer.as_ref().unwrap());
+        self.vertex_buffer = Some(ManuallyDrop::new(buffer));
+    }
+
+    pub fn create_index_buffer(&mut self, graphics: &graphics::vk::Graphics) {
+        let indices = self.primitives.iter()
+            .map(|p| &p.indices)
+            .flatten()
+            .map(|i| *i)
+            .collect::<Vec<_>>();
+        let buffer_size = DeviceSize::try_from(std::mem::size_of::<u32>() * indices.len())
+            .unwrap();
+        let buffer = Self::create_buffer(indices, buffer_size, graphics,
+                                         BufferUsageFlags::INDEX_BUFFER,
+                                         *self.command_pool.as_ref().unwrap(),
+                                         *self.command_buffer.as_ref().unwrap());
+        self.index_buffer = Some(ManuallyDrop::new(buffer));
+    }
+
+    pub fn begin_command_buffer(&self, device: &ash::Device) {
+        let begin_info = CommandBufferBeginInfo::builder()
+            .build();
+        unsafe {
+            device.begin_command_buffer(self.command_buffer.unwrap(), &begin_info)
+                .expect("Failed to begin command buffer for mesh.");
+        }
+    }
+
+    pub fn end_command_buffer(&self, device: &ash::Device) {
+        unsafe {
+            device.end_command_buffer(self.command_buffer.unwrap())
+                .expect("Failed to end command buffer for mesh.");
         }
     }
 
@@ -100,12 +149,38 @@ impl Mesh<graphics::vk::Buffer, graphics::vk::Image> {
             log::info!("Descriptor set for texture sampler successfully updated.");
         }
     }
+
+    fn create_buffer<T>(data: Vec<T>, buffer_size: DeviceSize,
+                        graphics: &graphics::vk::Graphics, buffer_usage: BufferUsageFlags,
+                        command_pool: CommandPool, command_buffer: CommandBuffer) -> graphics::vk::Buffer {
+        let mut staging = graphics::vk::Buffer::new(
+            Arc::downgrade(&graphics.logical_device), buffer_size,
+            BufferUsageFlags::TRANSFER_SRC,
+            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
+            Arc::downgrade(&graphics.allocator)
+        );
+        let mapped = staging.map_memory(buffer_size, 0);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr() as *const c_void, mapped, buffer_size as usize);
+        }
+        let buffer = graphics::vk::Buffer::new(
+            Arc::downgrade(&graphics.logical_device), buffer_size,
+            BufferUsageFlags::TRANSFER_DST | buffer_usage,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            Arc::downgrade(&graphics.allocator)
+        );
+        buffer.copy_buffer(
+            &staging, buffer_size, command_pool,
+            graphics.graphics_queue, Some(command_buffer)
+        );
+        buffer
+    }
 }
 
-unsafe impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Send for Mesh<BufferType, TextureType> { }
-unsafe impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Sync for Mesh<BufferType, TextureType> { }
+unsafe impl<BufferType: 'static + Clone + Disposable, CommandType, TextureType: 'static + Clone + Disposable> Send for Mesh<BufferType, CommandType, TextureType> { }
+unsafe impl<BufferType: 'static + Clone + Disposable, CommandType, TextureType: 'static + Clone + Disposable> Sync for Mesh<BufferType, CommandType, TextureType> { }
 
-impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Drop for Mesh<BufferType, TextureType> {
+impl<BufferType: 'static + Clone + Disposable, CommandType, TextureType: 'static + Clone + Disposable> Drop for Mesh<BufferType, CommandType, TextureType> {
     fn drop(&mut self) {
         log::info!("Dropping mesh...");
         if !self.is_disposed {
@@ -118,7 +193,7 @@ impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Di
     }
 }
 
-impl<BufferType: 'static + Clone + Disposable, TextureType: 'static + Clone + Disposable> Disposable for Mesh<BufferType, TextureType> {
+impl<BufferType: 'static + Clone + Disposable, CommandType, TextureType: 'static + Clone + Disposable> Disposable for Mesh<BufferType, CommandType, TextureType> {
     fn dispose(&mut self) {
         log::info!("Disposing mesh...");
         unsafe {

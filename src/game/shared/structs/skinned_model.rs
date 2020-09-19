@@ -11,7 +11,8 @@ use crate::game::structs::Joint;
 use std::mem::ManuallyDrop;
 use gltf::animation::util::ReadOutputs;
 
-pub struct SkinnedModel<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> {
+#[allow(dead_code)]
+pub struct SkinnedModel<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
     pub position: Vec3A,
     pub scale: Vec3A,
     pub rotation: Vec3A,
@@ -25,7 +26,7 @@ pub struct SkinnedModel<GraphicsType: 'static + GraphicsBase<BufferType, Command
     phantom: PhantomData<&'static CommandType>,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static, TextureType: 'static + Clone + Disposable> SkinnedModel<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> SkinnedModel<GraphicsType, BufferType, CommandType, TextureType> {
     pub fn load_skinned_mesh(file_name: &str, graphics: Weak<ShardedLock<GraphicsType>>,
                              position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
         let raw_data = match std::fs::read(file_name) {
