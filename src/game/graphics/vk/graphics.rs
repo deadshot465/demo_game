@@ -21,22 +21,23 @@ use std::collections::HashSet;
 use std::ffi::{
     c_void, CStr, CString
 };
-use std::mem::ManuallyDrop;
-use std::sync::{Arc, RwLock, Weak};
-use std::sync::atomic::AtomicPtr;
-use crate::game::{Camera, ResourceManager};
-use crate::game::shared::structs::{ViewProjection, Directional, Vertex, PushConstant};
-use std::convert::TryFrom;
-use crate::game::traits::Mappable;
-use std::ops::Deref;
-use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel, ThreadPool};
-use glam::{Vec3A, Vec4, Mat4};
-use crate::game::enums::ShaderType;
-use crate::game::shared::traits::GraphicsBase;
-use vk_mem::*;
 use crossbeam::sync::ShardedLock;
 use dashmap::DashMap;
+use glam::{Vec3A, Vec4, Mat4};
 use parking_lot::Mutex;
+use std::convert::TryFrom;
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
+use std::sync::{Arc, Weak};
+use std::sync::atomic::AtomicPtr;
+use vk_mem::*;
+
+use crate::game::{Camera, ResourceManager};
+use crate::game::enums::ShaderType;
+use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel, ThreadPool};
+use crate::game::shared::structs::{ViewProjection, Directional, Vertex, PushConstant};
+use crate::game::shared::traits::GraphicsBase;
+use crate::game::traits::Mappable;
 
 #[allow(dead_code)]
 pub struct Graphics {
@@ -67,8 +68,8 @@ pub struct Graphics {
     depth_image: ManuallyDrop<super::Image>,
     msaa_image: ManuallyDrop<super::Image>,
     uniform_buffers: ManuallyDrop<UniformBuffers>,
-    camera: Arc<RwLock<Camera>>,
-    resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+    camera: Arc<ShardedLock<Camera>>,
+    resource_manager: Weak<ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
     command_buffers: Vec<CommandBuffer>,
     fences: Vec<Fence>,
     acquired_semaphores: Vec<Semaphore>,
@@ -78,8 +79,11 @@ pub struct Graphics {
 }
 
 impl Graphics {
-    pub fn new(window: &winit::window::Window, camera: Arc<RwLock<Camera>>, resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>) -> Self {
-        let debug = true;
+    pub fn new(window: &winit::window::Window, camera: Arc<ShardedLock<Camera>>, resource_manager: Weak<ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>) -> Self {
+        let debug = dotenv::var("DEBUG")
+            .unwrap()
+            .parse::<bool>()
+            .unwrap();
         let entry = Entry::new().unwrap();
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
         let instance = Self::create_instance(debug, &enabled_layers, &entry);
@@ -92,7 +96,7 @@ impl Graphics {
         let surface = Self::create_surface(window, &entry, &instance);
         let physical_device = super::PhysicalDevice::new(&instance, &surface_loader, surface);
         let (logical_device, graphics_queue, present_queue, compute_queue) = Self::create_logical_device(
-            &instance, &physical_device, &enabled_layers, true
+            &instance, &physical_device, &enabled_layers, debug
         );
         let allocator_info = vk_mem::AllocatorCreateInfo {
             physical_device: physical_device.physical_device,
@@ -114,8 +118,7 @@ impl Graphics {
 
         let command_pool_create_info = CommandPoolCreateInfo::builder()
             .queue_family_index(physical_device.queue_indices.graphics_family.unwrap())
-            .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .build();
+            .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
         let command_pool: CommandPool;
         unsafe {
@@ -209,13 +212,18 @@ impl Graphics {
         }
     }
 
-    unsafe extern "system" fn debug_callback(_severity: DebugUtilsMessageSeverityFlagsEXT,
+    unsafe extern "system" fn debug_callback(severity: DebugUtilsMessageSeverityFlagsEXT,
                                              _message_type: DebugUtilsMessageTypeFlagsEXT,
                                              p_callback_data: *const DebugUtilsMessengerCallbackDataEXT,
                                              _p_user_data: *mut c_void) -> Bool32 {
         let message = CStr::from_ptr((*p_callback_data).p_message);
         if let Ok(msg) = message.to_str() {
-            log::info!("{}", msg);
+            match severity {
+                DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::info!("{}", msg),
+                DebugUtilsMessageSeverityFlagsEXT::WARNING => log::warn!("{}", msg),
+                DebugUtilsMessageSeverityFlagsEXT::ERROR => log::error!("{}", msg),
+                _ => (),
+            }
         }
         FALSE
     }
@@ -255,7 +263,6 @@ impl Graphics {
             instance_info = instance_info.enabled_layer_names(layers.as_slice());
         }
 
-        let instance_info = instance_info.build();
         unsafe {
             let instance = entry.create_instance(&instance_info, None)
                 .expect("Failed to create Vulkan instance.");
@@ -270,8 +277,7 @@ impl Graphics {
                 DebugUtilsMessageSeverityFlagsEXT::WARNING |
                 DebugUtilsMessageSeverityFlagsEXT::VERBOSE)
             .message_type(DebugUtilsMessageTypeFlagsEXT::all())
-            .pfn_user_callback(Some(Self::debug_callback))
-            .build();
+            .pfn_user_callback(Some(Self::debug_callback));
         let debug_utils_loader = DebugUtils::new(entry, instance);
         unsafe {
             let messenger = debug_utils_loader
@@ -292,8 +298,7 @@ impl Graphics {
             let hinstance = GetModuleHandleW(std::ptr::null()) as *const c_void;
             let win32_create_info = Win32SurfaceCreateInfoKHR::builder()
                 .hwnd(hwnd)
-                .hinstance(hinstance)
-                .build();
+                .hinstance(hinstance);
             let win32_surface_loader = Win32Surface::new(entry, instance);
             let surface = win32_surface_loader
                 .create_win32_surface(&win32_create_info, None)
@@ -317,12 +322,10 @@ impl Graphics {
             .shader_sampled_image_array_dynamic_indexing(true)
             .sampler_anisotropy(true)
             .sample_rate_shading(true)
-            .geometry_shader(true)
-            .build();
+            .geometry_shader(true);
         let mut indexing_features = PhysicalDeviceDescriptorIndexingFeatures::builder()
             .runtime_descriptor_array(true)
-            .descriptor_binding_partially_bound(true)
-            .build();
+            .descriptor_binding_partially_bound(true);
         let mut queue_create_infos = vec![];
         let mut unique_indices = HashSet::new();
         unique_indices.insert(physical_device.queue_indices.graphics_family.unwrap());
@@ -346,7 +349,7 @@ impl Graphics {
         }
         unsafe {
             let device = instance
-                .create_device(physical_device.physical_device.clone(), &create_info.build(), None)
+                .create_device(physical_device.physical_device.clone(), &create_info, None)
                 .expect("Failed to create logical device.");
             let graphics_queue = device.get_device_queue(physical_device
                                                               .queue_indices
@@ -494,8 +497,7 @@ impl Graphics {
                 .build());
 
         let create_info = DescriptorSetLayoutCreateInfo::builder()
-            .bindings(descriptor_set_layout_binding.as_slice())
-            .build();
+            .bindings(descriptor_set_layout_binding.as_slice());
         unsafe {
             let descriptor_set_layout = device
                 .create_descriptor_set_layout(&create_info, None)
@@ -506,15 +508,14 @@ impl Graphics {
     }
 
     fn create_sampler_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
-        let layout_binding = DescriptorSetLayoutBinding::builder()
+        let layout_bindings = vec![DescriptorSetLayoutBinding::builder()
             .binding(0)
             .descriptor_count(1)
             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
             .stage_flags(ShaderStageFlags::FRAGMENT)
-            .build();
+            .build()];
         let create_info = DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&[layout_binding])
-            .build();
+            .bindings(layout_bindings.as_slice());
         unsafe {
             let descriptor_set_layout = device
                 .create_descriptor_set_layout(&create_info, None)
@@ -646,8 +647,7 @@ impl Graphics {
         let image_count = self.swapchain.swapchain_images.len();
         let pool_info = DescriptorPoolCreateInfo::builder()
             .max_sets(u32::try_from(image_count + texture_count).unwrap())
-            .pool_sizes(pool_sizes.as_slice())
-            .build();
+            .pool_sizes(pool_sizes.as_slice());
 
         unsafe {
             self.descriptor_pool = self.logical_device
@@ -657,71 +657,72 @@ impl Graphics {
             let set_layout = vec![self.descriptor_set_layout];
             let allocate_info = DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(self.descriptor_pool)
-                .set_layouts(set_layout.as_slice())
-                .build();
+                .set_layouts(set_layout.as_slice());
             self.descriptor_sets = self.logical_device
                 .allocate_descriptor_sets(&allocate_info)
                 .expect("Failed to allocate descriptor sets.");
 
-            println!("Descriptor set count: {}", self.descriptor_sets.len());
             log::info!("Descriptor sets successfully allocated.");
 
             let vp_buffer = &self.uniform_buffers.view_projection;
-            let vp_buffer_info = DescriptorBufferInfo::builder()
+            let vp_buffer_info = vec![DescriptorBufferInfo::builder()
                 .buffer(vp_buffer.buffer)
                 .offset(0)
                 .range(vp_buffer.buffer_size)
-                .build();
+                .build()];
 
             let dl_buffer = &self.uniform_buffers.directional_light;
-            let dl_buffer_info = DescriptorBufferInfo::builder()
+            let dl_buffer_info = vec![DescriptorBufferInfo::builder()
                 .buffer(dl_buffer.buffer)
                 .offset(0)
                 .range(dl_buffer.buffer_size)
-                .build();
+                .build()];
 
             let mut write_descriptors = vec![];
             write_descriptors.push(WriteDescriptorSet::builder()
                 .dst_array_element(0)
-                .buffer_info(&[vp_buffer_info])
+                .buffer_info(vp_buffer_info.as_slice())
                 .descriptor_type(DescriptorType::UNIFORM_BUFFER)
                 .dst_binding(0)
                 .dst_set(self.descriptor_sets[0])
                 .build());
             write_descriptors.push(WriteDescriptorSet::builder()
                 .dst_array_element(0)
-                .buffer_info(&[dl_buffer_info])
+                .buffer_info(dl_buffer_info.as_slice())
                 .descriptor_type(DescriptorType::UNIFORM_BUFFER)
                 .dst_binding(1)
                 .dst_set(self.descriptor_sets[0])
                 .build());
 
-            if let Some(buffer) = self.uniform_buffers.model_buffer.as_ref() {
-                let model_buffer_info = DescriptorBufferInfo::builder()
-                    .range(WHOLE_SIZE)
-                    .offset(0)
-                    .buffer(buffer.buffer)
-                    .build();
+            let model_buffer_info = vec![DescriptorBufferInfo::builder()
+                .range(WHOLE_SIZE)
+                .offset(0)
+                .buffer(self.uniform_buffers.model_buffer
+                    .as_ref()
+                    .unwrap()
+                    .buffer)
+                .build()];
 
+            let mesh_buffer_info = vec![DescriptorBufferInfo::builder()
+                .range(WHOLE_SIZE)
+                .offset(0)
+                .buffer(ash::vk::Buffer::null())
+                .build()];
+
+            if self.uniform_buffers.model_buffer.is_some() {
                 write_descriptors.push(WriteDescriptorSet::builder()
                     .dst_array_element(0)
-                    .buffer_info(&[model_buffer_info])
+                    .buffer_info(model_buffer_info.as_slice())
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                     .dst_binding(2)
                     .dst_set(self.descriptor_sets[0])
                     .build());
             }
 
-            if let Some(buffer) = self.uniform_buffers.mesh_buffer.as_ref() {
-                let mesh_buffer_info = DescriptorBufferInfo::builder()
-                    .range(WHOLE_SIZE)
-                    .offset(0)
-                    .buffer(buffer.buffer)
-                    .build();
-
+            if self.uniform_buffers.mesh_buffer.is_some() {
                 write_descriptors.push(WriteDescriptorSet::builder()
                     .dst_array_element(0)
-                    .buffer_info(&[mesh_buffer_info])
+                    .buffer_info(mesh_buffer_info.as_slice())
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                     .dst_binding(3)
                     .dst_set(self.descriptor_sets[0])
@@ -767,8 +768,7 @@ impl Graphics {
         let command_buffer_info = CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             .command_buffer_count(image_count)
-            .level(CommandBufferLevel::PRIMARY)
-            .build();
+            .level(CommandBufferLevel::PRIMARY);
         unsafe {
             let cmd_buffers = device.allocate_command_buffers(&command_buffer_info)
                 .expect("Failed to allocate command buffers.");
@@ -792,8 +792,7 @@ impl Graphics {
                 .width(frame_width)
                 .layers(1)
                 .attachments(image_views.as_slice())
-                .render_pass(renderpass)
-                .build();
+                .render_pass(renderpass);
             unsafe {
                 frame_buffers.push(
                     device.create_framebuffer(&frame_buffer_info, None)
@@ -805,8 +804,8 @@ impl Graphics {
     }
 
     fn create_sync_object(device: &Device, image_count: u32) -> (Vec<Fence>, Vec<Semaphore>, Vec<Semaphore>) {
-        let fence_info = FenceCreateInfo::builder().build();
-        let semaphore_info = SemaphoreCreateInfo::builder().build();
+        let fence_info = FenceCreateInfo::builder();
+        let semaphore_info = SemaphoreCreateInfo::builder();
         let mut fences = vec![];
         let mut acquired_semaphores = vec![];
         let mut complete_semaphores = vec![];
@@ -830,8 +829,7 @@ impl Graphics {
         let allocate_info = CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .level(CommandBufferLevel::SECONDARY)
-            .command_pool(*command_pool.lock())
-            .build();
+            .command_pool(*command_pool.lock());
         unsafe {
             let buffer = self.logical_device
                 .allocate_command_buffers(&allocate_info)
@@ -865,25 +863,22 @@ impl Graphics {
             float32: [1.0, 1.0, 0.0, 1.0]
         };
         let clear_depth = ClearDepthStencilValue::builder()
-            .depth(1.0).stencil(0).build();
+            .depth(1.0).stencil(0);
         let clear_values = vec![ClearValue {
             color: clear_color
         }, ClearValue {
-            depth_stencil: clear_depth
+            depth_stencil: *clear_depth
         }];
-        let cmd_buffer_begin_info = CommandBufferBeginInfo::builder()
-            .build();
+        let cmd_buffer_begin_info = CommandBufferBeginInfo::builder();
         let extent = self.swapchain.extent;
         let render_area = Rect2D::builder()
             .extent(extent)
-            .offset(Offset2D::default())
-            .build();
+            .offset(Offset2D::default());
         let renderpass_begin_info = RenderPassBeginInfo::builder()
             .render_pass(self.pipeline.render_pass)
             .clear_values(clear_values.as_slice())
-            .render_area(render_area)
-            .framebuffer(frame_buffer)
-            .build();
+            .render_area(*render_area)
+            .framebuffer(frame_buffer);
         let viewports = vec![Viewport::builder()
             .width(extent.width as f32)
             .height(extent.height as f32)
@@ -972,16 +967,16 @@ impl Graphics {
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
-            let submit_info = SubmitInfo::builder()
+            let submit_info = vec![SubmitInfo::builder()
                 .command_buffers(&[self.command_buffers[0]])
                 .signal_semaphores(&[self.complete_semaphores[self.current_index]])
                 .wait_dst_stage_mask(wait_stages.as_slice())
                 .wait_semaphores(&[self.acquired_semaphores[self.current_index]])
-                .build();
+                .build()];
 
             self.logical_device.reset_fences(&[self.fences[self.current_index]])
                 .expect("Failed to reset fences.");
-            self.logical_device.queue_submit(*self.graphics_queue.lock(), &[submit_info], self.fences[self.current_index])
+            self.logical_device.queue_submit(*self.graphics_queue.lock(), submit_info.as_slice(), self.fences[self.current_index])
                 .expect("Failed to submit the queue.");
 
             let present_info = PresentInfoKHR::builder()
@@ -1134,8 +1129,10 @@ impl Drop for Graphics {
             self.allocator.write().unwrap().destroy();
             self.logical_device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
-            let debug_loader = DebugUtils::new(&self.entry, &self.instance);
-            debug_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
+            if self.debug_messenger != DebugUtilsMessengerEXT::null() {
+                let debug_loader = DebugUtils::new(&self.entry, &self.instance);
+                debug_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
+            }
             self.instance.destroy_instance(None);
             log::info!("Successfully dropped graphics.");
         }

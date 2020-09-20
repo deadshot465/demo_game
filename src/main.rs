@@ -10,10 +10,17 @@ use wio::com::ComPtr;
 
 #[tokio::main]
 async fn main() {
-    println!("{:?}", std::mem::size_of::<std::ffi::c_void>());
     dotenv::dotenv().ok();
+    let log_level = dotenv::var("LOG").unwrap();
     Builder::new()
-        .filter(None, LevelFilter::Trace)
+        .filter(None, match log_level.as_str() {
+            "trace" => LevelFilter::Trace,
+            "info" => LevelFilter::Info,
+            "warn" => LevelFilter::Warn,
+            "debug" => LevelFilter::Debug,
+            "error" => LevelFilter::Error,
+            _ => LevelFilter::Off
+        })
         .default_format()
         .init();
     let api = dotenv::var("API").unwrap();
@@ -25,7 +32,7 @@ async fn main() {
             if game.initialize() {
                 game.load_content().await;
             }
-            println!("Game content loaded.");
+            log::info!("Game content loaded.");
             event_loop.run(move |event, _target, control_flow| {
                 //*control_flow = ControlFlow::Poll;
                 let game = &mut game;

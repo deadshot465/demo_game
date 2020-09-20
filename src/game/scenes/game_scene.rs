@@ -1,14 +1,15 @@
-use async_trait::async_trait;
-use crate::game::shared::traits::{Scene, GraphicsBase};
-use glam::{Vec3A, Vec4};
-use std::sync::{RwLock, Weak};
-use crate::game::ResourceManager;
-use crate::game::traits::Disposable;
-use crate::game::shared::structs::Model;
-use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use ash::vk::CommandBuffer;
+use async_trait::async_trait;
 use crossbeam::sync::ShardedLock;
+use glam::{Vec3A, Vec4};
+use std::sync::Weak;
 use tokio::task::JoinHandle;
+
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
+use crate::game::shared::structs::Model;
+use crate::game::shared::traits::{Scene, GraphicsBase};
+use crate::game::traits::Disposable;
+use crate::game::ResourceManager;
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -16,7 +17,7 @@ pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
     graphics: Weak<ShardedLock<GraphicsType>>,
-    resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+    resource_manager: Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
     tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     model_count: usize,
@@ -27,7 +28,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType,
           BufferType: 'static + Disposable + Clone,
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
-    pub fn new(resource_manager: Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>, graphics: Weak<ShardedLock<GraphicsType>>) -> Self {
+    pub fn new(resource_manager: Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>, graphics: Weak<ShardedLock<GraphicsType>>) -> Self {
         GameScene {
             graphics,
             resource_manager,

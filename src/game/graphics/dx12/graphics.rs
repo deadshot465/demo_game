@@ -15,7 +15,7 @@ use winapi::um::d3dcommon::D3D_FEATURE_LEVEL_12_1;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::graphics::dx12::{Resource, SwapChain, DescriptorHeap, CommandQueue, Pipeline};
 use crate::game::shared::structs::Vertex;
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Weak};
 use crate::game::{Camera, ResourceManager};
 use winapi::um::d3d12sdklayers::*;
 use crate::game::util::{log_error, get_nullptr};
@@ -23,11 +23,12 @@ use std::mem::ManuallyDrop;
 use winapi::shared::dxgi1_5::DXGI_FEATURE_PRESENT_ALLOW_TEARING;
 use winit::platform::windows::WindowExtWindows;
 use winapi::shared::windef::HWND;
+use crossbeam::sync::ShardedLock;
 
 #[allow(dead_code)]
 pub struct Graphics {
-    camera: Arc<RwLock<Camera>>,
-    resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>,
+    camera: Arc<ShardedLock<Camera>>,
+    resource_manager: Weak<ShardedLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>,
     debug: ComPtr<ID3D12Debug2>,
     dxgi_factory: ComPtr<IDXGIFactory2>,
     dxgi_adapter: ComPtr<IDXGIAdapter4>,
@@ -40,7 +41,7 @@ pub struct Graphics {
 }
 
 impl Graphics {
-    pub unsafe fn new(_window: &winit::window::Window, camera: Arc<RwLock<Camera>>, resource_manager: Weak<RwLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>) -> Self {
+    pub unsafe fn new(_window: &winit::window::Window, camera: Arc<ShardedLock<Camera>>, resource_manager: Weak<ShardedLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>) -> Self {
         let debug = Self::enable_debug();
         let (factory, adapter) = Self::get_adapter();
         let device = Self::create_device(adapter.as_raw());

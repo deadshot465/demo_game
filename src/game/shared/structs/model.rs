@@ -45,9 +45,8 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
         else {
             Self::process_root_nodes(document.scenes().nth(0).unwrap(), buffer)
         };
-        println!("Mesh count: {}", meshes.len());
         for (index, mesh) in meshes.iter().enumerate() {
-            println!("Mesh {} primitive count: {}", index, mesh.primitives.len());
+            log::info!("Mesh {} primitive count: {}", index, mesh.primitives.len());
         }
         meshes
     }
@@ -193,7 +192,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> JoinHandle<Self> {
-        println!("Loading model {}...", file_name);
+        log::info!("Loading model {}...", file_name);
         let _graphics = graphics.upgrade().unwrap();
         let g = _graphics.clone();
         let model = tokio::spawn(async move {
@@ -205,7 +204,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     .thread_pool
                     .threads[model_index % thread_count]
                     .command_pool;
-                println!("Model index: {}, Command pool: {:?}", model_index, command_pool);
+                log::info!("Model index: {}, Command pool: {:?}", model_index, command_pool);
                 lock.command_buffer_list.insert(*command_pool.lock(), vec![]);
                 for mesh in _model.meshes.iter_mut() {
                     let command_buffer = lock.create_secondary_command_buffer(command_pool.clone());
@@ -247,7 +246,6 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 .collect::<Vec<_>>();
             texture_indices.sort();
             texture_indices.dedup();
-            println!("Texture indices: {:?}", texture_indices.as_slice());
             use gltf::image::Format;
             for i in texture_indices.iter() {
                 let img = image.get(*i);

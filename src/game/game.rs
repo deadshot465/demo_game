@@ -1,30 +1,31 @@
-use std::sync::{Arc, RwLock, atomic::{
+use ash::vk::CommandBuffer;
+use crossbeam::sync::ShardedLock;
+use std::sync::{Arc, atomic::{
     AtomicU32
 }};
-use crossbeam::sync::ShardedLock;
+use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use winit::{
     event_loop::{
         EventLoop
     },
     window::WindowBuilder
 };
-use crate::game::{ResourceManager, Camera, SceneManager, GameScene};
-use crate::game::graphics::vk::{Graphics, Buffer, Image};
-use crate::game::traits::Disposable;
-use crate::game::shared::traits::GraphicsBase;
-use ash::vk::CommandBuffer;
-use crate::game::graphics::dx12 as DX12;
-use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use wio::com::ComPtr;
+
+use crate::game::{ResourceManager, Camera, SceneManager, GameScene};
+use crate::game::graphics::dx12 as DX12;
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
+use crate::game::shared::traits::GraphicsBase;
+use crate::game::traits::Disposable;
 
 pub struct Game<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
           BufferType: 'static + Disposable + Clone,
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
-    pub window: Arc<RwLock<winit::window::Window>>,
-    pub resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
-    pub camera: Arc<RwLock<Camera>>,
+    pub window: Arc<ShardedLock<winit::window::Window>>,
+    pub resource_manager: Arc<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+    pub camera: Arc<ShardedLock<Camera>>,
     pub graphics: Arc<ShardedLock<GraphicsType>>,
     pub scene_manager: SceneManager,
     current_index: AtomicU32,
@@ -37,11 +38,11 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             .with_inner_size(winit::dpi::LogicalSize::new(width, height))
             .build(event_loop)
             .expect("Failed to create window.");
-        let camera = Arc::new(RwLock::new(Camera::new(width, height)));
-        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
+        let camera = Arc::new(ShardedLock::new(Camera::new(width, height)));
+        let resource_manager = Arc::new(ShardedLock::new(ResourceManager::new()));
         let graphics = Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager));
         Game {
-            window: Arc::new(RwLock::new(window)),
+            window: Arc::new(ShardedLock::new(window)),
             resource_manager,
             camera,
             graphics: Arc::new(ShardedLock::new(graphics)),
@@ -93,11 +94,11 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             .with_inner_size(winit::dpi::LogicalSize::new(width, height))
             .build(event_loop)
             .expect("Failed to create window.");
-        let camera = Arc::new(RwLock::new(Camera::new(width, height)));
-        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
+        let camera = Arc::new(ShardedLock::new(Camera::new(width, height)));
+        let resource_manager = Arc::new(ShardedLock::new(ResourceManager::new()));
         let graphics = DX12::Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager));
         Game {
-            window: Arc::new(RwLock::new(window)),
+            window: Arc::new(ShardedLock::new(window)),
             resource_manager,
             camera,
             graphics: Arc::new(ShardedLock::new(graphics)),
