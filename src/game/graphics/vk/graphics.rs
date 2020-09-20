@@ -23,6 +23,7 @@ use std::ffi::{
 };
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, RwLock, Weak};
+use std::sync::atomic::AtomicPtr;
 use crate::game::{Camera, ResourceManager};
 use crate::game::shared::structs::{ViewProjection, Directional, Vertex, PushConstant};
 use std::convert::TryFrom;
@@ -35,6 +36,7 @@ use crate::game::shared::traits::GraphicsBase;
 use vk_mem::*;
 use crossbeam::sync::ShardedLock;
 use dashmap::DashMap;
+use parking_lot::Mutex;
 
 #[allow(dead_code)]
 pub struct Graphics {
@@ -43,23 +45,24 @@ pub struct Graphics {
     pub pipeline: ManuallyDrop<super::Pipeline>,
     pub descriptor_sets: Vec<DescriptorSet>,
     pub push_constant: PushConstant,
-    pub current_index: u32,
+    pub current_index: usize,
     pub sampler_descriptor_set_layout: DescriptorSetLayout,
     pub descriptor_pool: DescriptorPool,
     pub command_pool: CommandPool,
-    pub thread_pool: ThreadPool<fn()>,
+    pub thread_pool: ThreadPool,
     pub allocator: Arc<ShardedLock<Allocator>>,
-    pub graphics_queue: Queue,
-    pub present_queue: Queue,
-    pub compute_queue: Queue,
+    pub graphics_queue: Arc<Mutex<Queue>>,
+    pub present_queue: Arc<Mutex<Queue>>,
+    pub compute_queue: Arc<Mutex<Queue>>,
     pub command_buffer_list: DashMap<CommandPool, Vec<CommandBuffer>>,
+    pub swapchain: ManuallyDrop<super::Swapchain>,
+    pub frame_buffers: Vec<Framebuffer>,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
     debug_messenger: DebugUtilsMessengerEXT,
     surface: SurfaceKHR,
     physical_device: super::PhysicalDevice,
-    swapchain: ManuallyDrop<super::Swapchain>,
     descriptor_set_layout: DescriptorSetLayout,
     depth_image: ManuallyDrop<super::Image>,
     msaa_image: ManuallyDrop<super::Image>,
@@ -67,7 +70,6 @@ pub struct Graphics {
     camera: Arc<RwLock<Camera>>,
     resource_manager: Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
     command_buffers: Vec<CommandBuffer>,
-    frame_buffers: Vec<Framebuffer>,
     fences: Vec<Fence>,
     acquired_semaphores: Vec<Semaphore>,
     complete_semaphores: Vec<Semaphore>,
@@ -80,16 +82,16 @@ impl Graphics {
         let debug = true;
         let entry = Entry::new().unwrap();
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        let instance = Graphics::create_instance(debug, &enabled_layers, &entry);
+        let instance = Self::create_instance(debug, &enabled_layers, &entry);
         let surface_loader = Surface::new(&entry, &instance);
         let debug_messenger = if debug {
-            Graphics::create_debug_messenger(&instance, &entry)
+            Self::create_debug_messenger(&instance, &entry)
         } else {
             DebugUtilsMessengerEXT::null()
         };
-        let surface = Graphics::create_surface(window, &entry, &instance);
+        let surface = Self::create_surface(window, &entry, &instance);
         let physical_device = super::PhysicalDevice::new(&instance, &surface_loader, surface);
-        let (logical_device, graphics_queue, present_queue, compute_queue) = Graphics::create_logical_device(
+        let (logical_device, graphics_queue, present_queue, compute_queue) = Self::create_logical_device(
             &instance, &physical_device, &enabled_layers, true
         );
         let allocator_info = vk_mem::AllocatorCreateInfo {
@@ -105,13 +107,14 @@ impl Graphics {
             .expect("Failed to create VMA memory allocator.");
         let device = Arc::new(logical_device);
         let allocator = Arc::new(ShardedLock::new(allocator));
-        let swapchain = Graphics::create_swapchain(
+        let swapchain = Self::create_swapchain(
             &surface_loader, surface, &physical_device, window, &instance, Arc::downgrade(&device),
             Arc::downgrade(&allocator)
         );
 
         let command_pool_create_info = CommandPoolCreateInfo::builder()
             .queue_family_index(physical_device.queue_indices.graphics_family.unwrap())
+            .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .build();
 
         let command_pool: CommandPool;
@@ -121,28 +124,28 @@ impl Graphics {
                 .expect("Failed to create command pool.");
         }
         let cpu_count = num_cpus::get();
-        let thread_pool = ThreadPool::<fn()>::new(cpu_count, device.as_ref(),
+        let thread_pool = ThreadPool::new(cpu_count, device.as_ref(),
                                                   physical_device.queue_indices.graphics_family.unwrap());
-        let sample_count = Graphics::get_sample_count(&instance, &physical_device);
+        let sample_count = Self::get_sample_count(&instance, &physical_device);
         let depth_format = Self::get_depth_format(&instance, &physical_device);
         let depth_image = Self::create_depth_image(
             Arc::downgrade(&device), depth_format, &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
-        let msaa_image = Graphics::create_msaa_image(
+        let msaa_image = Self::create_msaa_image(
             Arc::downgrade(&device), &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
-        let descriptor_set_layout = Graphics::create_descriptor_set_layout(device.as_ref());
+        let descriptor_set_layout = Self::create_descriptor_set_layout(device.as_ref());
         let sampler_descriptor_set_layout = Self::create_sampler_descriptor_set_layout(device.as_ref());
-        let view_projection = Graphics::create_view_projection(
+        let view_projection = Self::create_view_projection(
             camera.read().unwrap().deref(), Arc::downgrade(&device), Arc::downgrade(&allocator));
         let directional_light = Directional::new(
             Vec4::new(1.0, 1.0, 1.0, 1.0),
             Vec3A::new(0.0, -5.0, 0.0),
             0.1,
             0.5);
-        let directional = Graphics::create_directional_light(
+        let directional = Self::create_directional_light(
             &directional_light, Arc::downgrade(&device),
             Arc::downgrade(&allocator)
         );
@@ -159,8 +162,8 @@ impl Graphics {
             std::mem::size_of::<Mat4>()
         };
         let pipeline = super::Pipeline::new(device.clone());
-        let command_buffers = Graphics::allocate_command_buffers(device.as_ref(), command_pool, swapchain.swapchain_images.len() as u32);
-        let (fences, acquired_semaphores, complete_semaphores) = Graphics::create_sync_object(device.as_ref(), swapchain.swapchain_images.len() as u32);
+        let command_buffers = Self::allocate_command_buffers(device.as_ref(), command_pool, swapchain.swapchain_images.len() as u32);
+        let (fences, acquired_semaphores, complete_semaphores) = Self::create_sync_object(device.as_ref(), swapchain.swapchain_images.len() as u32);
 
         Graphics {
             entry: Entry::new().unwrap(),
@@ -170,9 +173,9 @@ impl Graphics {
             surface,
             physical_device,
             logical_device: device,
-            graphics_queue,
-            present_queue,
-            compute_queue,
+            graphics_queue: Arc::new(Mutex::new(graphics_queue)),
+            present_queue: Arc::new(Mutex::new(present_queue)),
+            compute_queue: Arc::new(Mutex::new(compute_queue)),
             swapchain: ManuallyDrop::new(swapchain),
             command_pool,
             depth_image: ManuallyDrop::new(depth_image),
@@ -238,7 +241,7 @@ impl Graphics {
             .engine_name(&*engine_name)
             .engine_version(make_version(0, 0, 1));
 
-        let extensions = Graphics::get_required_extensions(debug);
+        let extensions = Self::get_required_extensions(debug);
         let layers = enabled_layers.iter().map(|s| {
             s.as_ptr()
         }).collect::<Vec<_>>();
@@ -267,7 +270,7 @@ impl Graphics {
                 DebugUtilsMessageSeverityFlagsEXT::WARNING |
                 DebugUtilsMessageSeverityFlagsEXT::VERBOSE)
             .message_type(DebugUtilsMessageTypeFlagsEXT::all())
-            .pfn_user_callback(Some(Graphics::debug_callback))
+            .pfn_user_callback(Some(Self::debug_callback))
             .build();
         let debug_utils_loader = DebugUtils::new(entry, instance);
         unsafe {
@@ -390,7 +393,7 @@ impl Graphics {
     }
 
     fn get_depth_format(instance: &Instance, physical_device: &super::PhysicalDevice) -> Format {
-        Graphics::choose_depth_format(vec![Format::D32_SFLOAT, Format::D24_UNORM_S8_UINT, Format::D16_UNORM],
+        Self::choose_depth_format(vec![Format::D32_SFLOAT, Format::D24_UNORM_S8_UINT, Format::D16_UNORM],
                             ImageTiling::OPTIMAL, FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT, instance, physical_device)
     }
 
@@ -408,7 +411,7 @@ impl Graphics {
         image.transition_layout(ImageLayout::UNDEFINED,
                                 ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                 command_pool, graphics_queue,
-                                ImageAspectFlags::DEPTH, 1);
+                                ImageAspectFlags::DEPTH, 1, None);
         log::info!("Depth image successfully created.");
         image
     }
@@ -451,7 +454,7 @@ impl Graphics {
             ImageAspectFlags::COLOR, allocator
         );
         image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                                command_pool, graphics_queue, ImageAspectFlags::COLOR, 1);
+                                command_pool, graphics_queue, ImageAspectFlags::COLOR, 1, None);
         log::info!("Msaa image successfully created.");
         image
     }
@@ -561,20 +564,17 @@ impl Graphics {
             panic!("Resource manager has been destroyed.");
         }
         let resource_manager = arc.unwrap();
-        let lock = resource_manager.read().unwrap();
+        let resource_lock = resource_manager.read().unwrap();
         let mut matrices = vec![];
         let mut indices = vec![];
-        if lock.models.is_empty() {
+        if resource_lock.models.is_empty() {
             return;
         }
-        unsafe {
-            for model in lock.models.iter() {
-                let m = model.as_ref().unwrap();
-                indices.push(indices.len());
-                matrices.push(m.get_world_matrix());
-            }
+        for model in resource_lock.models.iter() {
+            indices.push(indices.len());
+            matrices.push(model.lock().get_world_matrix());
         }
-        drop(lock);
+        drop(resource_lock);
         drop(resource_manager);
         let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
         let buffer_size = dynamic_alignment * DeviceSize::try_from(matrices.len()).unwrap();
@@ -609,22 +609,17 @@ impl Graphics {
     fn allocate_descriptor_set(&mut self) {
         let mut texture_count = 0_usize;
         if let Some(r) = self.resource_manager.upgrade() {
-            let lock = r.read().unwrap();
-            unsafe {
-                for model in lock.models.iter() {
-                    let meshes = &model.as_ref()
-                        .unwrap()
-                        .meshes;
-                    for mesh in meshes.iter() {
-                        texture_count += if mesh.texture.is_empty() {
-                            0
-                        } else {
-                            mesh.texture.len()
-                        };
-                    }
+            let resource_lock = r.read().unwrap();
+            for model in resource_lock.models.iter() {
+                for mesh in model.lock().meshes.iter() {
+                    texture_count += if mesh.texture.is_empty() {
+                        0
+                    } else {
+                        mesh.texture.len()
+                    };
                 }
             }
-            drop(lock);
+            drop(resource_lock);
         }
         let mut pool_sizes = vec![];
         pool_sizes.push(DescriptorPoolSize::builder()
@@ -831,38 +826,17 @@ impl Graphics {
         (fences, acquired_semaphores, complete_semaphores)
     }
 
-    pub fn create_secondary_command_buffer(&self, command_pool: CommandPool) -> CommandBuffer {
+    pub fn create_secondary_command_buffer(&self, command_pool: Arc<Mutex<CommandPool>>) -> CommandBuffer {
         let allocate_info = CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .level(CommandBufferLevel::SECONDARY)
-            .command_pool(command_pool)
+            .command_pool(*command_pool.lock())
             .build();
         unsafe {
             let buffer = self.logical_device
                 .allocate_command_buffers(&allocate_info)
                 .expect("Failed to allocate secondary command buffer.");
             buffer[0]
-        }
-    }
-
-    pub fn execute_command_buffers(&self) {
-        unsafe {
-            let begin_info = CommandBufferBeginInfo::builder()
-                .build();
-            self.logical_device.begin_command_buffer(self.command_buffers[0], &begin_info)
-                .expect("Failed to begin primary command buffer.");
-            for item in self.command_buffer_list.iter() {
-                self.logical_device
-                    .cmd_execute_commands(self.command_buffers[0], item.as_slice());
-            }
-            self.logical_device.end_command_buffer(self.command_buffers[0])
-                .expect("Failed to end primary command buffer.");
-            let submit_info = SubmitInfo::builder()
-                .command_buffers(&[self.command_buffers[0]])
-                .build();
-            self.logical_device.queue_submit(self.graphics_queue,
-                                             &[submit_info], Fence::null())
-                .expect("Failed to submit queue for execution.");
         }
     }
 
@@ -880,13 +854,13 @@ impl Graphics {
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture).await;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
-        self.frame_buffers = Graphics::create_frame_buffers(
+        self.frame_buffers = Self::create_frame_buffers(
             width, height, self.pipeline.render_pass,
             &self.swapchain, &self.depth_image, &self.msaa_image, self.logical_device.as_ref()
         );
     }
 
-    pub fn begin_draw(&self) {
+    pub fn begin_draw(&self, frame_buffer: Framebuffer) {
         let clear_color = ClearColorValue {
             float32: [1.0, 1.0, 0.0, 1.0]
         };
@@ -897,7 +871,8 @@ impl Graphics {
         }, ClearValue {
             depth_stencil: clear_depth
         }];
-        let cmd_buffer_begin_info = CommandBufferBeginInfo::builder().build();
+        let cmd_buffer_begin_info = CommandBufferBeginInfo::builder()
+            .build();
         let extent = self.swapchain.extent;
         let render_area = Rect2D::builder()
             .extent(extent)
@@ -907,8 +882,8 @@ impl Graphics {
             .render_pass(self.pipeline.render_pass)
             .clear_values(clear_values.as_slice())
             .render_area(render_area)
+            .framebuffer(frame_buffer)
             .build();
-        let cmd_buffer_count = self.command_buffers.len();
         let viewports = vec![Viewport::builder()
             .width(extent.width as f32)
             .height(extent.height as f32)
@@ -918,79 +893,109 @@ impl Graphics {
                 .extent(extent)
                 .offset(Offset2D::default())
                 .build()];
+        let mut inheritance_info = CommandBufferInheritanceInfo::builder()
+            .framebuffer(frame_buffer)
+            .render_pass(self.pipeline.render_pass)
+            .build();
+        let inheritance_ptr = &mut inheritance_info as *mut CommandBufferInheritanceInfo;
+        let ptr = Arc::new(AtomicPtr::from(inheritance_ptr));
         unsafe {
-            for i in 0..cmd_buffer_count {
-                let mut renderpass_info = renderpass_begin_info.clone();
-                renderpass_info.framebuffer = self.frame_buffers[i];
-                self.logical_device.begin_command_buffer(self.command_buffers[i], &cmd_buffer_begin_info)
-                    .expect("Failed to begin command buffer.");
-                self.logical_device.cmd_begin_render_pass(self.command_buffers[i],
-                                                          &renderpass_info,
-                                                          SubpassContents::INLINE);
-                self.logical_device.cmd_set_viewport(
-                    self.command_buffers[i], 0,
-                    viewports.as_slice());
-                self.logical_device.cmd_set_scissor(
-                    self.command_buffers[i], 0,
-                    scissors.as_slice());
-                self.logical_device.cmd_bind_pipeline(self.command_buffers[i], PipelineBindPoint::GRAPHICS,
-                                         self.pipeline.get_pipeline(ShaderType::BasicShader, 0));
+            let result = self.logical_device.begin_command_buffer(self.command_buffers[0], &cmd_buffer_begin_info);
+            if let Err(e) = result {
+                log::error!("Error beginning command buffer: {}", e.to_string());
+            }
+            self.logical_device.cmd_begin_render_pass(self.command_buffers[0],
+                                                      &renderpass_begin_info,
+                                                      SubpassContents::SECONDARY_COMMAND_BUFFERS);
+
+            let command_buffers = self
+                .update_secondary_command_buffers(ptr, viewports[0], scissors[0]);
+            self.logical_device.cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
+            self.logical_device.cmd_end_render_pass(self.command_buffers[0]);
+            let result = self.logical_device.end_command_buffer(self.command_buffers[0]);
+            if let Err(e) = result {
+                log::error!("Error ending command buffer: {}", e.to_string());
             }
         }
     }
 
-    pub fn end_draw(&self) {
-        let cmd_buffer_count = self.command_buffers.len();
-        unsafe {
-            for i in 0..cmd_buffer_count {
-                self.logical_device.cmd_end_render_pass(self.command_buffers[i]);
-                self.logical_device.end_command_buffer(self.command_buffers[i])
-                    .expect("Failed to end command buffer.");
-            }
+    pub fn update_secondary_command_buffers(&self,
+                                            inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
+                                            viewport: Viewport, scissor: Rect2D) -> Vec<CommandBuffer> {
+        let resource_manager = self.resource_manager.upgrade().unwrap();
+        let resource_lock = resource_manager.read().unwrap();
+        let model_count = resource_lock.get_model_count();
+        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
+        let push_constant = self.push_constant;
+        let ptr = inheritance_info;
+        for model in resource_lock.models.iter() {
+            let model_clone = model.clone();
+            let model_index = model_clone.lock().model_index;
+            let ptr_clone = ptr.clone();
+            self.thread_pool.threads[model_index % model_count]
+                .add_job(move || {
+                    let model_lock = model_clone.lock();
+                    let ptr = ptr_clone;
+                    model_lock
+                        .render(ptr, dynamic_alignment, push_constant, viewport, scissor);
+                });
         }
+        self.thread_pool.wait();
+        let command_buffers = resource_lock.models.iter()
+            .map(|model| {
+                let mesh_command_buffers = model.lock().meshes.iter()
+                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .collect::<Vec<_>>();
+                mesh_command_buffers
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        command_buffers
     }
 
     pub fn update(&mut self) {
 
     }
 
-    pub fn render(&self, current_index: u32) -> u32 {
+    pub fn render(&self) -> u32 {
         unsafe {
-            let index = current_index as usize;
-            let swapchain_loader = &self.swapchain.swapchain_loader;
-            let image_count = self.swapchain.swapchain_images.len();
+            let swapchain_loader = self.swapchain.swapchain_loader.clone();
             let result = swapchain_loader
                 .acquire_next_image(self.swapchain.swapchain, u64::MAX,
-                                    self.acquired_semaphores[index], Fence::null())
-                .expect("Failed to acquire next image of the swapchain.");
+                                    self.acquired_semaphores[self.current_index], Fence::null());
+            if let Err(e) = result {
+                log::error!("Error acquiring swapchain image: {}", e.to_string());
+                return 0;
+            }
+            let (image_index, _is_suboptimal) = result.unwrap();
+            self.begin_draw(self.frame_buffers[image_index as usize]);
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
             let submit_info = SubmitInfo::builder()
-                .command_buffers(&[self.command_buffers[index]])
-                .signal_semaphores(&[self.complete_semaphores[index]])
+                .command_buffers(&[self.command_buffers[0]])
+                .signal_semaphores(&[self.complete_semaphores[self.current_index]])
                 .wait_dst_stage_mask(wait_stages.as_slice())
-                .wait_semaphores(&[self.acquired_semaphores[index]])
+                .wait_semaphores(&[self.acquired_semaphores[self.current_index]])
                 .build();
 
-            self.logical_device.reset_fences(&[self.fences[index]])
+            self.logical_device.reset_fences(&[self.fences[self.current_index]])
                 .expect("Failed to reset fences.");
-            self.logical_device.queue_submit(self.graphics_queue, &[submit_info], self.fences[index])
+            self.logical_device.queue_submit(*self.graphics_queue.lock(), &[submit_info], self.fences[self.current_index])
                 .expect("Failed to submit the queue.");
 
             let present_info = PresentInfoKHR::builder()
-                .wait_semaphores(&[self.complete_semaphores[index]])
-                .image_indices(&[result.0])
+                .wait_semaphores(&[self.complete_semaphores[self.current_index]])
+                .image_indices(&[image_index])
                 .swapchains(&[self.swapchain.swapchain])
                 .build();
 
             swapchain_loader
-                .queue_present(self.present_queue, &present_info)
+                .queue_present(*self.present_queue.lock(), &present_info)
                 .expect("Failed to present with the swapchain.");
-            self.logical_device.wait_for_fences(&[self.fences[index]], true, u64::MAX)
+            self.logical_device.wait_for_fences(&[self.fences[self.current_index]], true, u64::MAX)
                 .expect("Failed to wait for fences.");
-            let current_index = ((index as u32) + 1) % (image_count as u32);
-            current_index
+            image_index
         }
     }
 
@@ -1028,7 +1033,7 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
             MemoryPropertyFlags::DEVICE_LOCAL,
             Arc::downgrade(&self.allocator)
         );
-        buffer.copy_buffer(&staging, buffer_size, self.command_pool, self.graphics_queue, command_buffer);
+        buffer.copy_buffer(&staging, buffer_size, self.command_pool, *self.graphics_queue.lock(), command_buffer);
         drop(staging);
         buffer
     }
@@ -1052,7 +1057,7 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
             MemoryPropertyFlags::DEVICE_LOCAL,
             Arc::downgrade(&self.allocator)
         );
-        buffer.copy_buffer(&staging, buffer_size, self.command_pool, self.graphics_queue, command_buffer);
+        buffer.copy_buffer(&staging, buffer_size, self.command_pool, *self.graphics_queue.lock(), command_buffer);
         drop(staging);
         buffer
     }
@@ -1092,9 +1097,9 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
                 ImageType::TYPE_2D, mip_levels, ImageAspectFlags::COLOR, Arc::downgrade(&self.allocator)
             );
             image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::TRANSFER_DST_OPTIMAL,
-            self.command_pool, self.graphics_queue, ImageAspectFlags::COLOR, mip_levels);
-            image.copy_buffer_to_image(staging.buffer, width, height, self.command_pool, self.graphics_queue);
-            image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, self.command_pool, self.graphics_queue);
+            self.command_pool, *self.graphics_queue.lock(), ImageAspectFlags::COLOR, mip_levels, None);
+            image.copy_buffer_to_image(staging.buffer, width, height, self.command_pool, *self.graphics_queue.lock(), None);
+            image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, self.command_pool, *self.graphics_queue.lock(), None);
             image.create_sampler(mip_levels);
             image
         }
@@ -1119,6 +1124,9 @@ impl Drop for Graphics {
             }
             for fence in self.fences.iter() {
                 self.logical_device.destroy_fence(*fence, None);
+            }
+            for thread in self.thread_pool.threads.iter() {
+                self.logical_device.destroy_command_pool(*thread.command_pool.lock(), None);
             }
             self.logical_device.destroy_command_pool(self.command_pool, None);
             self.logical_device.destroy_descriptor_set_layout(self.sampler_descriptor_set_layout, None);

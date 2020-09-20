@@ -25,6 +25,9 @@ pub struct Image {
     allocation_info: Option<AllocationInfo>
 }
 
+unsafe impl Send for Image {}
+unsafe impl Sync for Image {}
+
 impl Image {
     pub fn new(device: Weak<ash::Device>,
                usage_flag: ImageUsageFlags,
@@ -112,7 +115,7 @@ impl Image {
 
     pub fn transition_layout(&mut self, old_layout: ImageLayout, new_layout: ImageLayout,
                              command_pool: CommandPool, graphics_queue: Queue,
-                             aspect_flags: ImageAspectFlags, mip_levels: u32) {
+                             aspect_flags: ImageAspectFlags, mip_levels: u32, command_buffer: Option<CommandBuffer>) {
         let mut barrier = ImageMemoryBarrier::builder()
             .image(self.image)
             .subresource_range(ImageSubresourceRange::builder()
@@ -151,12 +154,18 @@ impl Image {
 
         unsafe {
             let device = self.logical_device.upgrade().unwrap();
-            let cmd_buffer = get_single_time_command_buffer(device.as_ref(), command_pool);
+            let cmd_buffer = if let Some(buffer) = command_buffer {
+                buffer
+            } else {
+                get_single_time_command_buffer(device.as_ref(), command_pool)
+            };
             device
                 .cmd_pipeline_barrier(cmd_buffer, old_stage,
                                       new_stage, DependencyFlags::empty(),
                                       &[], &[], &[barrier.build()]);
-            end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
+            if command_buffer.is_none() {
+                end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
+            }
         }
     }
 
@@ -184,11 +193,11 @@ impl Image {
                  .unwrap()
                  .create_sampler(&create_info, None)
                  .expect("Failed to create sampler.");
-             log::info!("Successfully loaded texture.");
+             log::info!("Successfully created sampler.");
          }
     }
 
-    pub fn copy_buffer_to_image(&self, source_buffer: Buffer, width: u32, height: u32, command_pool: CommandPool, graphics_queue: Queue) {
+    pub fn copy_buffer_to_image(&self, source_buffer: Buffer, width: u32, height: u32, command_pool: CommandPool, graphics_queue: Queue, command_buffer: Option<CommandBuffer>) {
         let extent = Extent3D::builder()
             .height(height)
             .width(width)
@@ -206,12 +215,18 @@ impl Image {
             .build();
 
         let device = self.logical_device.upgrade().unwrap();
-        let cmd_buffer = get_single_time_command_buffer(device.as_ref(), command_pool);
+        let cmd_buffer = if let Some(buffer) = command_buffer {
+            buffer
+        } else {
+            get_single_time_command_buffer(device.as_ref(), command_pool)
+        };
         unsafe {
             device
                 .cmd_copy_buffer_to_image(cmd_buffer, source_buffer, self.image, ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_info]);
         }
-        end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
+        if command_buffer.is_none() {
+            end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
+        }
     }
 
     fn create_image_view(&mut self, device: &ash::Device, format: Format, aspect_flags: ImageAspectFlags, mip_levels: u32) {
@@ -241,7 +256,7 @@ impl Image {
         }
     }
 
-    pub unsafe fn generate_mipmap(&mut self, aspect_flags: ImageAspectFlags, mip_levels: u32, command_pool: CommandPool, graphics_queue: Queue) {
+    pub unsafe fn generate_mipmap(&mut self, aspect_flags: ImageAspectFlags, mip_levels: u32, command_pool: CommandPool, graphics_queue: Queue, command_buffer: Option<CommandBuffer>) {
         let mut barrier = ImageMemoryBarrier::builder()
             .src_queue_family_index(QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
@@ -255,8 +270,11 @@ impl Image {
             .build();
 
         let device = self.logical_device.upgrade().unwrap();
-        let cmd_buffer = get_single_time_command_buffer(
-            device.as_ref(), command_pool);
+        let cmd_buffer = if let Some(buffer) = command_buffer {
+            buffer
+        } else {
+            get_single_time_command_buffer(device.as_ref(), command_pool)
+        };
 
         let mut width = i32::try_from(self.width).unwrap();
         let mut height = i32::try_from(self.height).unwrap();
@@ -339,7 +357,9 @@ impl Image {
         device.cmd_pipeline_barrier(cmd_buffer, PipelineStageFlags::TRANSFER,
                                         PipelineStageFlags::FRAGMENT_SHADER, DependencyFlags::empty(),
                                         &[], &[], &[barrier]);
-        end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
+        if command_buffer.is_none() {
+            end_one_time_command_buffer(cmd_buffer, device.as_ref(), command_pool, graphics_queue);
+        }
     }
 }
 

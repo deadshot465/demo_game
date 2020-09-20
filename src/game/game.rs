@@ -1,5 +1,5 @@
 use std::sync::{Arc, RwLock, atomic::{
-    AtomicU32, Ordering
+    AtomicU32
 }};
 use crossbeam::sync::ShardedLock;
 use winit::{
@@ -17,7 +17,11 @@ use crate::game::graphics::dx12 as DX12;
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use wio::com::ComPtr;
 
-pub struct Game<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
+pub struct Game<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
     pub window: Arc<RwLock<winit::window::Window>>,
     pub resource_manager: Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     pub camera: Arc<RwLock<Camera>>,
@@ -66,11 +70,6 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         let lock = self.resource_manager.read().unwrap();
         lock.create_sampler_resource();
         drop(lock);
-        let lock = self.graphics.read().unwrap();
-        lock.begin_draw();
-        self.scene_manager.render(0);
-        lock.end_draw();
-        drop(lock);
     }
 
     pub fn update(&self) {
@@ -80,10 +79,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);*/
     }
 
-    pub fn render(&self) {
+    pub fn render(&mut self) {
         let lock = self.graphics.read().unwrap();
-        let index = lock.render(self.current_index.load(Ordering::SeqCst));
-        self.current_index.store(index, Ordering::SeqCst);
+        self.current_index.store(lock.render(), std::sync::atomic::Ordering::SeqCst);
         drop(lock);
     }
 }
@@ -125,7 +123,11 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
     }
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> Drop for Game<GraphicsType, BufferType, CommandType, TextureType> {
+impl<GraphicsType, BufferType, CommandType, TextureType> Drop for Game<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
     fn drop(&mut self) {
         log::info!("Dropping game...");
     }

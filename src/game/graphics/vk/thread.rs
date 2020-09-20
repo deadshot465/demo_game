@@ -1,25 +1,26 @@
 use parking_lot::Mutex;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::task::JoinHandle;
 use tokio::sync::broadcast::*;
 use ash::vk::CommandPoolCreateFlags;
 use ash::version::DeviceV1_0;
+use crossbeam::queue::ArrayQueue;
+use crossbeam::utils::Backoff;
 
 #[allow(dead_code)]
-pub struct Thread<F: 'static + FnOnce() + Send> {
-    pub command_pool: ash::vk::CommandPool,
+pub struct Thread {
+    pub command_pool: Arc<Mutex<ash::vk::CommandPool>>,
     destroying: Arc<AtomicBool>,
     worker: JoinHandle<()>,
-    task_queue: Arc<Mutex<VecDeque<F>>>,
+    task_queue: Arc<ArrayQueue<Box<dyn FnOnce() + Send + 'static>>>,
     sender: Sender<()>,
     receiver: Receiver<()>,
 }
 
-impl<F: 'static + FnOnce() + Send> Thread<F> {
+impl Thread {
     pub fn new(device: &ash::Device, queue_index: u32) -> Self {
-        let task_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let task_queue = Arc::new(ArrayQueue::new(20));
         let queue = task_queue.clone();
         let (sender, receiver) = channel::<()>(50);
         let s1 = sender.clone();
@@ -40,15 +41,13 @@ impl<F: 'static + FnOnce() + Send> Thread<F> {
                     let mut r1 = r1;
                     let d1 = d1;
                     'outer: loop {
-                        let mut work: Option<F>;
+                        let mut work: Result<Box<dyn FnOnce() + Send>, crossbeam::queue::PopError>;
                         while let Ok(_) = r1.recv().await {
                             if d1.load(Ordering::SeqCst) {
                                 break 'outer;
                             }
-                            let mut lock = queue.lock();
-                            work = lock.pop_front();
-                            drop(lock);
-                            if let Some(job) = work {
+                            work = queue.pop();
+                            if let Ok(job) = work {
                                 job();
                                 s1.send(()).unwrap();
                             }
@@ -62,28 +61,24 @@ impl<F: 'static + FnOnce() + Send> Thread<F> {
                 task_queue: task_queue.clone(),
                 sender,
                 receiver,
-                command_pool,
+                command_pool: Arc::new(Mutex::new(command_pool)),
             }
         }
     }
 
-    pub fn add_job(&mut self, work: F) {
-        let mut lock = self.task_queue.lock();
-        lock.push_back(work);
-        drop(lock);
+    pub fn add_job(&self, work: impl FnOnce() + Send + 'static) {
+        let result = self.task_queue.push(Box::new(work));
+        if let Err(e) = result {
+            log::error!("Error pushing new job into the queue: {}", e.to_string());
+            return;
+        }
         self.sender.send(()).unwrap();
     }
 
-    pub async fn wait(&self) {
-        loop {
-            let lock = self.task_queue.lock();
-            if lock.is_empty() {
-                break;
-            }
-            else {
-                drop(lock);
-                self.sender.send(()).unwrap();
-            }
+    pub fn wait(&self) {
+        let backoff = Backoff::new();
+        while !self.task_queue.is_empty() {
+            backoff.snooze();
         }
     }
 
@@ -96,12 +91,12 @@ impl<F: 'static + FnOnce() + Send> Thread<F> {
     }
 }
 
-pub struct ThreadPool<F: 'static + FnOnce() + Send> {
-    pub threads: Vec<Thread<F>>,
+pub struct ThreadPool {
+    pub threads: Vec<Thread>,
     pub thread_count: usize,
 }
 
-impl<F: 'static + FnOnce() + Send> ThreadPool<F> {
+impl ThreadPool {
     pub fn new(thread_count: usize, device: &ash::Device, queue_index: u32) -> Self {
         let mut threads = vec![];
         for _ in 0..thread_count {
@@ -120,14 +115,14 @@ impl<F: 'static + FnOnce() + Send> ThreadPool<F> {
         }
     }
 
-    pub async fn wait(&self) {
+    pub fn wait(&self) {
         for thread in self.threads.iter() {
-            thread.wait().await;
+            thread.wait();
         }
     }
 }
 
-impl<F: 'static + FnOnce() + Send> Drop for ThreadPool<F> {
+impl Drop for ThreadPool {
     fn drop(&mut self) {
         self.threads.clear();
     }

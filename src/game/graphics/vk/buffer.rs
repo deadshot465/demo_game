@@ -35,6 +35,9 @@ pub struct Buffer {
     allocation_info: Option<AllocationInfo>,
 }
 
+unsafe impl Send for Buffer {}
+unsafe impl Sync for Buffer {}
+
 impl Buffer {
     pub fn new(device: Weak<Device>,
                buffer_size: DeviceSize,
