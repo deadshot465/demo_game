@@ -1,5 +1,5 @@
-use glam::Vec4;
 use bytemuck::{Pod, Zeroable};
+use glam::Vec4;
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug)]

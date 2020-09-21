@@ -1,11 +1,11 @@
 use demo_game_rs::game::Game;
-use env_logger::Builder;
-use log::LevelFilter;
-use winit::event_loop::{EventLoop, ControlFlow};
-use winit::event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode};
 use demo_game_rs::game::graphics::vk as VK;
 use demo_game_rs::game::graphics::dx12 as DX12;
+use env_logger::Builder;
+use log::LevelFilter;
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
+use winit::event_loop::{EventLoop, ControlFlow};
+use winit::event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode};
 use wio::com::ComPtr;
 
 #[tokio::main]

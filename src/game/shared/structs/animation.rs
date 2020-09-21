@@ -1,5 +1,5 @@
-use gltf::animation::Interpolation;
 use glam::{Quat, Vec3A};
+use gltf::animation::Interpolation;
 
 #[derive(Clone, Debug)]
 pub enum ChannelOutputs {

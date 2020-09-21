@@ -1,5 +1,5 @@
-use crate::game::shared::traits::Disposable;
 use std::mem::ManuallyDrop;
+use crate::game::shared::traits::Disposable;
 
 pub struct UniformBuffers {
     pub is_disposed: bool,

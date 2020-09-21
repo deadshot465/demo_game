@@ -1,12 +1,12 @@
+use ash::version::DeviceV1_0;
+use ash::vk::CommandPoolCreateFlags;
+use crossbeam::queue::ArrayQueue;
+use crossbeam::utils::Backoff;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::task::JoinHandle;
 use tokio::sync::broadcast::*;
-use ash::vk::CommandPoolCreateFlags;
-use ash::version::DeviceV1_0;
-use crossbeam::queue::ArrayQueue;
-use crossbeam::utils::Backoff;
+use tokio::task::JoinHandle;
 
 #[allow(dead_code)]
 pub struct Thread {

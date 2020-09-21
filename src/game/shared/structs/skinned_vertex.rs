@@ -1,5 +1,5 @@
-use crate::game::structs::Vertex;
 use glam::{Vec2, Vec3A, Vec4};
+use crate::game::structs::Vertex;
 
 #[derive(Copy, Clone, Debug)]
 pub struct SkinnedVertex {

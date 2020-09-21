@@ -1,9 +1,9 @@
 use ash::Device;
-use ash::vk::{CommandPool, CommandBuffer, CommandBufferAllocateInfo, CommandBufferLevel, CommandBufferBeginInfo, CommandBufferUsageFlags, Queue, SubmitInfo, Fence};
 use ash::version::DeviceV1_0;
+use ash::vk::{CommandPool, CommandBuffer, CommandBufferAllocateInfo, CommandBufferLevel, CommandBufferBeginInfo, CommandBufferUsageFlags, Queue, SubmitInfo, Fence};
 use rand::prelude::*;
-use winapi::shared::winerror::{HRESULT, FAILED};
 use winapi::ctypes::c_void;
+use winapi::shared::winerror::{HRESULT, FAILED};
 
 const ALPHANUMERICS: &'static str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 

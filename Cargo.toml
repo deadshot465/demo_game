@@ -24,6 +24,7 @@ memoffset = "0.5.5"
 num_cpus = "1.13.0"
 parking_lot = "0.11.0"
 rand = "0.7.3"
+rayon = "1.4.0"
 tokio = { version = "0.2.22", features = ["full", "parking_lot"] }
 vk-mem = "0.2.2"
 winit = "0.22.2"

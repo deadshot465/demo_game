@@ -4,6 +4,7 @@ use ash::{
         BufferCopy,
         BufferCreateInfo,
         BufferUsageFlags,
+        CommandBuffer,
         CommandPool,
         DeviceMemory,
         DeviceSize,
@@ -12,15 +13,15 @@ use ash::{
         SharingMode,
     },
 };
+use ash::version::DeviceV1_0;
+use crossbeam::sync::ShardedLock;
 use std::ffi::c_void;
 use std::sync::Weak;
-use ash::version::DeviceV1_0;
-use crate::game::shared::traits::mappable::Mappable;
-use crate::game::shared::traits::disposable::Disposable;
-use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buffer};
 use vk_mem::*;
-use crossbeam::sync::ShardedLock;
-use ash::vk::CommandBuffer;
+
+use crate::game::shared::traits::disposable::Disposable;
+use crate::game::shared::traits::mappable::Mappable;
+use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buffer};
 
 #[derive(Clone)]
 pub struct Buffer {

@@ -1,13 +1,14 @@
-use ash::vk::*;
 use ash::version::DeviceV1_0;
+use ash::vk::*;
+use crossbeam::sync::ShardedLock;
 use std::ffi::c_void;
 use std::sync::Weak;
 use std::convert::TryFrom;
+use vk_mem::{Allocator, AllocationCreateInfo, MemoryUsage, AllocationCreateFlags, AllocationInfo, Allocation};
+
 use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buffer};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::mappable::Mappable;
-use vk_mem::{Allocator, AllocationCreateInfo, MemoryUsage, AllocationCreateFlags, AllocationInfo, Allocation};
-use crossbeam::sync::ShardedLock;
 
 #[derive(Clone)]
 pub struct Image {

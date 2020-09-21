@@ -2,7 +2,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::structs::Model;
+use crate::game::shared::structs::{Model, SkinnedModel};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::traits::GraphicsBase;
@@ -13,6 +13,7 @@ pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
     pub models: Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>,
+    pub skinned_models: Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -36,6 +37,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
         ResourceManager {
             resource: vec![],
             models: vec![],
+            skinned_models: vec![],
         }
     }
 
@@ -65,8 +67,21 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
         self.models.push(model);
     }
 
+    pub fn add_skinned_model(&mut self, model: SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>) {
+        let name = model.model_name.clone();
+        let model = Arc::new(Mutex::new(model));
+        let mut model_lock = model.lock();
+        model_lock.model_index = self.models.len();
+        model_lock.model_name = name;
+        drop(model_lock);
+        self.skinned_models.push(model);
+    }
+
     pub fn get_model_count(&self) -> usize {
         self.models.len()
+    }
+    pub fn get_skinned_model_count(&self) -> usize {
+        self.skinned_models.len()
     }
 
     pub fn get_resource<U>(&self, resource_name: &str) -> *const U
@@ -114,6 +129,13 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Drop for ResourceManage
           TextureType: 'static + Clone + Disposable {
     fn drop(&mut self) {
         log::info!("Dropping Resource Manager...");
+        for model in self.skinned_models.iter() {
+            let mut model_lock = model.lock();
+            if model_lock.is_disposed() {
+                continue;
+            }
+            model_lock.dispose();
+        }
         for model in self.models.iter() {
             let mut model_lock = model.lock();
             if model_lock.is_disposed() {
@@ -121,7 +143,6 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Drop for ResourceManage
             }
             model_lock.dispose();
         }
-
         for resource in self.resource.iter() {
             let mut resource_lock = resource.lock();
             if resource_lock.is_disposed() {

@@ -1,34 +1,46 @@
-use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel};
-use glam::{Quat, Vec2, Vec3, Vec3A, Vec4, Mat4};
-use crate::game::traits::{Disposable, GraphicsBase};
-use std::sync::{Weak};
-use std::marker::PhantomData;
+use ash::vk::{CommandBuffer, CommandPool};
 use crossbeam::sync::ShardedLock;
-use std::collections::HashMap;
-use image::ImageFormat;
+use glam::{Quat, Vec2, Vec3, Vec3A, Vec4, Mat4};
 use gltf::{Node, Scene, scene::Transform};
-use crate::game::structs::Joint;
-use std::mem::ManuallyDrop;
 use gltf::animation::util::ReadOutputs;
+use image::{ImageFormat, ImageDecoder};
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::mem::ManuallyDrop;
+use std::sync::{Arc, Weak};
+use tokio::task::JoinHandle;
+
+use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel};
+use crate::game::structs::Joint;
+use crate::game::traits::{Disposable, GraphicsBase};
+use image::jpeg::JpegDecoder;
+use image::png::PngDecoder;
 
 #[allow(dead_code)]
-pub struct SkinnedModel<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> {
+pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
     pub position: Vec3A,
     pub scale: Vec3A,
     pub rotation: Vec3A,
     pub color: Vec4,
-    pub skinned_meshes: Vec<SkinnedMesh<BufferType, TextureType>>,
+    pub skinned_meshes: Vec<SkinnedMesh<BufferType, CommandType, TextureType>>,
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
     pub animations: HashMap<String, Animation>,
     graphics: Weak<ShardedLock<GraphicsType>>,
-    phantom: PhantomData<&'static CommandType>,
 }
 
-impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>, BufferType: 'static + Disposable + Clone, CommandType: 'static + Clone, TextureType: 'static + Clone + Disposable> SkinnedModel<GraphicsType, BufferType, CommandType, TextureType> {
-    pub fn load_skinned_mesh(file_name: &str, graphics: Weak<ShardedLock<GraphicsType>>,
-                             position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
+impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
+    fn read_raw_data(file_name: &str) -> gltf::Gltf {
         let raw_data = match std::fs::read(file_name) {
             Ok(d) => d,
             Err(e) => {
@@ -40,60 +52,13 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
             panic!("Raw data is empty. Abort.");
         }
         let gltf = gltf::Gltf::from_slice(raw_data.as_slice()).unwrap();
-        let blob = gltf.blob.as_ref().unwrap();
+        gltf
+    }
 
-        let mut textures = vec![];
-        for texture in gltf.textures() {
-            match texture.source().source() {
-                gltf::image::Source::View {
-                    view, mime_type
-                } => {
-                    let slice = &blob[view.offset()..view.offset() + view.length() - 1];
-                    let png = image::load_from_memory_with_format(slice, if mime_type == "image/jpeg" {
-                        ImageFormat::Jpeg
-                    } else {
-                        ImageFormat::Png
-                    });
-                    let png = match png {
-                        Ok(d) => Some(d),
-                        Err(e) => {
-                            log::error!("Failed to load image from the memory. Error: {}", e.to_string());
-                            None
-                        }
-                    };
-                    let png = png.unwrap();
-                    let image = match png.as_bgra8() {
-                        Some(d) => d,
-                        None => {
-                            panic!("Cannot convert the image to BGRA8 format.");
-                        }
-                    };
-                    let buffer_size = image.height() * image.width() * 4;
-                    let data = image.to_vec();
-                    let _graphics = graphics.upgrade();
-                    if let Some(g) = _graphics {
-                        let lock = g.read().unwrap();
-                        let img = lock.create_image(data.as_slice(), buffer_size as u64, image.width(), image.height(), gltf::image::Format::B8G8R8A8);
-                        textures.push(img);
-                    }
-                },
-                _ => {
-                    log::error!("The format has to be a binary GLTF.");
-                }
-            }
-        }
-
-        let scene = gltf.default_scene();
-        let meshes: Vec<SkinnedMesh<BufferType, TextureType>>;
-        if let Some(root_scene) = scene {
-            meshes = Self::process_root_nodes(root_scene, blob, &textures);
-        }
-        else {
-            meshes = Self::process_root_nodes(gltf.scenes().nth(0).unwrap(), blob, &textures);
-        }
-
+    fn process_animation(gltf_data: &gltf::Gltf) -> HashMap<String, Animation> {
+        let blob = gltf_data.blob.as_ref().unwrap();
         let mut animations = HashMap::new();
-        for animation in gltf.animations() {
+        for animation in gltf_data.animations() {
             if let Some(name) = animation.name() {
                 let mut channels = vec![];
                 for channel in animation.channels() {
@@ -145,7 +110,24 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
                 log::error!("glTF animation cannot be loaded as it has no name.");
             }
         }
+        println!("Animations: {:?}", &animations);
+        animations
+    }
 
+    fn create_skinned_model(file_name: &str, gltf_data: &gltf::Gltf,
+                                graphics: Arc<ShardedLock<GraphicsType>>,
+                                textures: &Vec<TextureType>,
+                                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
+        let blob = gltf_data.blob.as_ref().unwrap();
+        let scene = gltf_data.default_scene();
+        let meshes: Vec<SkinnedMesh<BufferType, CommandType, TextureType>>;
+        if let Some(root_scene) = scene {
+            meshes = Self::process_root_nodes(root_scene, blob, &textures);
+        }
+        else {
+            meshes = Self::process_root_nodes(gltf_data.scenes().nth(0).unwrap(), blob, &textures);
+        }
+        let animations = Self::process_animation(gltf_data);
         let model = SkinnedModel {
             position,
             scale,
@@ -155,23 +137,23 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
             model_name: file_name.to_string(),
             model_index: 0,
             animations,
-            graphics,
-            phantom: PhantomData,
+            graphics: Arc::downgrade(&graphics),
             skinned_meshes: meshes
         };
         model
     }
 
-    fn process_root_nodes(scene: Scene, buffer_data: &Vec<u8>, textures: &Vec<TextureType>) -> Vec<SkinnedMesh<BufferType, TextureType>> {
+    fn process_root_nodes(scene: Scene, buffer_data: &Vec<u8>, textures: &Vec<TextureType>) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = vec![];
         for node in scene.nodes() {
             let mut sub_meshes = Self::process_node(node, &buffer_data, textures, Mat4::identity());
             meshes.append(&mut sub_meshes);
         }
+        println!("Skinned mesh count: {:?}", meshes.len());
         meshes
     }
 
-    fn process_node(node: Node, buffer_data: &Vec<u8>, textures: &Vec<TextureType>, local_transform: Mat4) -> Vec<SkinnedMesh<BufferType, TextureType>> {
+    fn process_node(node: Node, buffer_data: &Vec<u8>, textures: &Vec<TextureType>, local_transform: Mat4) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = vec![];
         let (t, r, s) = node.transform().decomposed();
         let transform = Mat4::from_scale_rotation_translation(
@@ -190,7 +172,7 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
         meshes
     }
 
-    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffer_data: &Vec<u8>, local_transform: Mat4, textures: &Vec<TextureType>) -> SkinnedMesh<BufferType, TextureType> {
+    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffer_data: &Vec<u8>, local_transform: Mat4, textures: &Vec<TextureType>) -> SkinnedMesh<BufferType, CommandType, TextureType> {
         let mut root_joint = None;
         if let Some(skin) = node.skin() {
             let joints: Vec<_> = skin.joints().collect();
@@ -278,11 +260,15 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
                 vertex_buffer: None::<ManuallyDrop<BufferType>>,
                 index_buffer: None::<ManuallyDrop<BufferType>>,
                 texture: texture.map(|t| ManuallyDrop::new(t)),
-                is_disposed: false
+                is_disposed: false,
+                command_pool: None,
+                command_buffer: None
             };
             skinned_primitives.push(_primitive);
         }
 
+        println!("Skinned primitive count: {:?}", skinned_primitives.len());
+        println!("Root joint: {:?}", &root_joint);
         SkinnedMesh {
             primitives: skinned_primitives,
             is_disposed: false,
@@ -336,5 +322,210 @@ impl<GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
             rotation: r,
             scale: Vec3A::from(s),
         }
+    }
+}
+
+impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
+    pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
+               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> JoinHandle<Self> {
+        log::info!("Loading skinned model {}...", file_name);
+        let graphics_arc = graphics.upgrade().unwrap();
+        let model = tokio::spawn(async move {
+            let graphics = graphics_arc;
+            let thread_count: usize;
+            let command_pool: Arc<Mutex<CommandPool>>;
+            {
+                let graphics_lock = graphics.read().unwrap();
+                thread_count = graphics_lock.thread_pool.thread_count;
+                command_pool = graphics_lock
+                    .thread_pool
+                    .threads[model_index % thread_count]
+                    .command_pool
+                    .clone();
+            }
+            log::info!("Skinned model index: {}, Command pool: {:?}", model_index, command_pool);
+            let data = Self::read_raw_data(file_name);
+            let textures = Self::create_texture(&data, graphics.clone(), command_pool.clone());
+            let mut loaded_model = Self::create_skinned_model(file_name, &data, graphics.clone(), &textures, position, scale, rotation, color);
+            {
+                let graphics_lock = graphics.read().unwrap();
+                for mesh in loaded_model.skinned_meshes.iter_mut() {
+                    for primitive in mesh.primitives.iter_mut() {
+                        primitive.command_pool = Some(command_pool.clone());
+                        let command_buffer = graphics_lock
+                            .create_secondary_command_buffer(command_pool.clone());
+                        primitive.command_buffer = Some(command_buffer);
+                    }
+                }
+            }
+            loaded_model.create_buffers(graphics.clone(), command_pool.clone()).await;
+            loaded_model
+        });
+        model
+    }
+
+    async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) {
+        let mut handles = HashMap::new();
+        for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
+            handles.insert(index, vec![]);
+            for primitive in mesh.primitives.iter_mut() {
+                let graphics_clone = graphics.clone();
+                let vertices = primitive.vertices.clone();
+                let indices = primitive.indices.clone();
+                let cmd_pool = command_pool.clone();
+                let handle = tokio::spawn(async move {
+                    Graphics::create_buffer(
+                        graphics_clone, vertices,
+                        indices, cmd_pool
+                    ).await
+                });
+                let entry = handles.entry(index).or_insert(vec![]);
+                (*entry).push(handle);
+            }
+        }
+        for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
+            let mesh_handles = handles.get_mut(&index).unwrap();
+            let zipped = mesh.primitives.iter_mut()
+                .zip(mesh_handles.iter_mut())
+                .collect::<Vec<_>>();
+            for (primitive, handle) in zipped {
+                let (vertex_buffer, index_buffer) = handle.await.unwrap();
+                primitive.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
+                primitive.index_buffer = Some(ManuallyDrop::new(index_buffer));
+            }
+        }
+    }
+
+    fn create_texture(gltf_data: &gltf::Gltf, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> Vec<Image> {
+        let blob = gltf_data.blob.as_ref().unwrap();
+        let mut textures = vec![];
+        for texture in gltf_data.textures() {
+            match texture.source().source() {
+                gltf::image::Source::View {
+                    view, mime_type
+                } => {
+                    println!("Mime type: {}", mime_type);
+                    let slice = &blob[view.offset()..view.offset() + view.length() - 1];
+                    let width: u32;
+                    let height: u32;
+                    match mime_type {
+                        "image/jpeg" => {
+                            let decoder = match JpegDecoder::new(slice) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    log::error!("Error creating JPEG decoder: {:?}", e);
+                                    panic!("Fail to create JPEG decoder.");
+                                }
+                            };
+                            let (w, h) = decoder.dimensions();
+                            width = w;
+                            height = h;
+                            let mut buffer: Vec<u8> = vec![0; ]
+                        },
+                        "image/png" => {
+                            let decoder = match PngDecoder::new(slice) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    log::error!("Error creating PNG decoder: {:?}", e);
+                                    panic!("Fail to create PNG decoder.");
+                                }
+                            };
+                            let (w, h) = decoder.dimensions();
+                            width = w;
+                            height = h;
+                        },
+                        _ => {
+                            panic!("Unsupported image format.");
+                        }
+                    }
+                    let buffer_size = width * height * 4;
+                    let data = image.to_vec();
+                    let img = Graphics::create_image(
+                        data, buffer_size as u64, width,
+                        height, gltf::image::Format::B8G8R8A8,
+                        graphics.clone(), command_pool.clone()
+                    );
+                    textures.push(img);
+                },
+                _ => {
+                    log::error!("The format has to be a binary GLTF.");
+                }
+            }
+        }
+        textures
+    }
+}
+
+impl<GraphicsType, BufferType, CommandType, TextureType> From<&SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>> for SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
+    fn from(model: &SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>) -> Self {
+        loop {
+            if model.skinned_meshes.iter()
+                .all(|mesh| mesh.primitives.iter()
+                    .all(|primitive| {
+                        primitive.vertex_buffer.is_some() && primitive.index_buffer.is_some()
+                    })) {
+                break;
+            }
+        }
+        SkinnedModel {
+            position: model.position,
+            scale: model.scale,
+            rotation: model.rotation,
+            color: model.color,
+            skinned_meshes: model.skinned_meshes.to_vec(),
+            is_disposed: true,
+            model_name: model.model_name.clone(),
+            model_index: 0,
+            animations: model.animations.clone(),
+            graphics: model.graphics.clone()
+        }
+    }
+}
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Drop for SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
+    fn drop(&mut self) {
+        if !self.is_disposed {
+            self.dispose();
+            log::info!("Successfully dropped skinned model.");
+        }
+        else {
+            log::warn!("Skinned model is already dropped.");
+        }
+    }
+}
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Disposable for SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
+    fn dispose(&mut self) {
+        log::info!("Disposing skinned model...Skinned model: {}, Model index: {}", self.model_name.as_str(), self.model_index);
+        for mesh in self.skinned_meshes.iter_mut() {
+            mesh.dispose();
+        }
+        self.is_disposed = true;
+        log::info!("Successfully disposed skinned model.");
+    }
+
+    fn is_disposed(&self) -> bool {
+        self.is_disposed
+    }
+
+    fn get_name(&self) -> &str {
+        self.model_name.as_str()
+    }
+
+    fn set_name(&mut self, name: String) -> &str {
+        self.model_name = name;
+        self.model_name.as_str()
     }
 }

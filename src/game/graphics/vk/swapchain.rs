@@ -2,10 +2,11 @@ use ash::{
     extensions::khr::Surface,
     vk::*
 };
-use super::physical_device::QueueIndices;
+use crossbeam::sync::ShardedLock;
 use std::sync::Weak;
 use vk_mem::Allocator;
-use crossbeam::sync::ShardedLock;
+
+use super::physical_device::QueueIndices;
 
 pub struct Swapchain {
     pub swapchain: SwapchainKHR,

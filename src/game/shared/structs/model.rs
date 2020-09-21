@@ -1,21 +1,22 @@
+use ash::vk::{CommandBuffer, PipelineBindPoint, ShaderStageFlags, IndexType, CommandBufferInheritanceInfo, CommandBufferBeginInfo, CommandBufferUsageFlags};
+use ash::version::DeviceV1_0;
+use crossbeam::sync::ShardedLock;
 use glam::{Vec2, Vec3, Vec3A, Vec4, Mat4, Quat};
-use crate::game::shared::traits::disposable::Disposable;
+use gltf::{Node, Scene};
+use std::convert::TryFrom;
+use std::mem::ManuallyDrop;
 use std::sync::{
     Arc, Weak, atomic::{
         AtomicPtr, Ordering
     }
 };
-use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Primitive, SamplerResource};
-use crate::game::graphics::vk::{Graphics, Buffer, Image};
-use gltf::{Node, Scene};
-use crate::game::traits::GraphicsBase;
-use std::mem::ManuallyDrop;
-use ash::vk::{CommandBuffer, PipelineBindPoint, ShaderStageFlags, IndexType, CommandBufferInheritanceInfo, CommandBufferBeginInfo, CommandBufferUsageFlags};
-use std::convert::TryFrom;
-use ash::version::DeviceV1_0;
-use crate::game::shared::enums::ShaderType;
-use crossbeam::sync::ShardedLock;
 use tokio::task::JoinHandle;
+
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
+use crate::game::shared::enums::ShaderType;
+use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Primitive, SamplerResource};
+use crate::game::shared::traits::disposable::Disposable;
+use crate::game::traits::GraphicsBase;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -236,7 +237,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let pool = cmd_pool.clone();
             let g = graphics.clone();
             let buffer_result = tokio::spawn(async move {
-                Mesh::create_buffer(g, vertices, indices, pool).await
+                Graphics::create_buffer(g, vertices, indices, pool).await
             });
 
             let mut texture_indices = mesh.primitives.iter()
@@ -273,7 +274,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                         }
                         let g = graphics.clone();
                         texture = tokio::spawn(async move {
-                            Mesh::create_image(
+                            Graphics::create_image(
                                 rgba_pixels, buffer_size as u64,
                                 img.width, img.height, match img.format {
                                     Format::B8G8R8 => Format::B8G8R8A8,
@@ -287,7 +288,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                         let pixels = img.pixels.clone();
                         let g = graphics.clone();
                         texture = tokio::spawn(async move {
-                            Mesh::create_image(
+                            Graphics::create_image(
                                 pixels, buffer_size as u64,
                                 img.width, img.height, img.format, g, pool
                             )
@@ -488,7 +489,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Disposable for Model<Gr
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
     fn dispose(&mut self) {
-        log::info!("Disposing model...Model: {}, Model Index: {}", self.model_name.as_str(), self.model_index);
+        log::info!("Disposing model...Model: {}, Model index: {}", self.model_name.as_str(), self.model_index);
         for mesh in self.meshes.iter_mut() {
             mesh.dispose();
         }

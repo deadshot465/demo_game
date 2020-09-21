@@ -8,10 +8,11 @@ use ash::{
         ShaderStageFlags,
     }
 };
+use ash::version::DeviceV1_0;
 use std::ffi::CString;
 use std::sync::Arc;
+
 use crate::game::traits::disposable::Disposable;
-use ash::version::DeviceV1_0;
 
 pub struct Shader {
     logical_device: Arc<Device>,

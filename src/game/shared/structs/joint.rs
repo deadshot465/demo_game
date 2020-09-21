@@ -11,3 +11,6 @@ pub struct Joint {
     pub rotation: Quat,
     pub scale: Vec3A,
 }
+
+unsafe impl Send for Joint {}
+unsafe impl Sync for Joint {}
