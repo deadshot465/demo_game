@@ -12,6 +12,18 @@ shutil.copyfile('./shaders/vert.spv', './target/debug/shaders/vert.spv')
 shutil.copyfile('./shaders/basicShader_mesh.spv', './target/debug/shaders/basicShader_mesh.spv')
 shutil.copyfile('./shaders/basicShader_noTexture.spv', './target/debug/shaders/basicShader_noTexture.spv')
 shutil.copyfile('./shaders/frag.spv', './target/debug/shaders/frag.spv')
+shutil.copyfile('./.env', './target/debug/.env')
+shutil.rmtree('./target/debug/models')
+shutil.copytree('./models', './target/debug/models')
+
+
+shutil.copyfile('./shaders/vert.spv', './target/release/shaders/vert.spv')
+shutil.copyfile('./shaders/basicShader_mesh.spv', './target/release/shaders/basicShader_mesh.spv')
+shutil.copyfile('./shaders/basicShader_noTexture.spv', './target/release/shaders/basicShader_noTexture.spv')
+shutil.copyfile('./shaders/frag.spv', './target/release/shaders/frag.spv')
+shutil.copyfile('./.env', './target/release/.env')
+shutil.rmtree('./target/release/models')
+shutil.copytree('./models', './target/release/models')
 
 if os.path.isdir('cmake-build-debug'):
     shutil.copyfile('./shaders/vert.spv', 'cmake-build-debug/GLVK/VK/Shaders/vert.spv')

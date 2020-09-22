@@ -1,9 +1,13 @@
+use anyhow::Context;
 use ash::vk::{CommandBuffer, CommandPool};
 use crossbeam::sync::ShardedLock;
 use glam::{Quat, Vec2, Vec3, Vec3A, Vec4, Mat4};
 use gltf::{Node, Scene, scene::Transform};
 use gltf::animation::util::ReadOutputs;
-use image::{ImageFormat, ImageDecoder};
+use image::{ImageFormat, ImageDecoder, EncodableLayout, GenericImageView};
+use image::ColorType;
+use image::jpeg::JpegDecoder;
+use image::png::PngDecoder;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -14,8 +18,8 @@ use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel};
 use crate::game::structs::Joint;
 use crate::game::traits::{Disposable, GraphicsBase};
-use image::jpeg::JpegDecoder;
-use image::png::PngDecoder;
+use crate::game::shared::util::handle_rgb_bgr;
+use rand::AsByteSliceMut;
 
 #[allow(dead_code)]
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
@@ -345,7 +349,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             }
             log::info!("Skinned model index: {}, Command pool: {:?}", model_index, command_pool);
             let data = Self::read_raw_data(file_name);
-            let textures = Self::create_texture(&data, graphics.clone(), command_pool.clone());
+            let textures = Self::create_texture(&data, graphics.clone(), command_pool.clone()).unwrap();
             let mut loaded_model = Self::create_skinned_model(file_name, &data, graphics.clone(), &textures, position, scale, rotation, color);
             {
                 let graphics_lock = graphics.read().unwrap();
@@ -396,7 +400,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    fn create_texture(gltf_data: &gltf::Gltf, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> Vec<Image> {
+    fn create_texture(gltf_data: &gltf::Gltf, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Vec<Image>> {
         let blob = gltf_data.blob.as_ref().unwrap();
         let mut textures = vec![];
         for texture in gltf_data.textures() {
@@ -408,41 +412,52 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     let slice = &blob[view.offset()..view.offset() + view.length() - 1];
                     let width: u32;
                     let height: u32;
+                    let data: Vec<u8>;
+                    let color_type: image::ColorType;
                     match mime_type {
                         "image/jpeg" => {
-                            let decoder = match JpegDecoder::new(slice) {
-                                Ok(d) => d,
-                                Err(e) => {
-                                    log::error!("Error creating JPEG decoder: {:?}", e);
-                                    panic!("Fail to create JPEG decoder.");
-                                }
-                            };
+                            let decoder = JpegDecoder::new(slice)
+                                .with_context(|| "Error creating JPEG decoder.")?;
                             let (w, h) = decoder.dimensions();
                             width = w;
                             height = h;
-                            let mut buffer: Vec<u8> = vec![0; ]
+                            let decode_type = decoder.color_type();
+                            let mut buffer: Vec<u8> = vec![];
+                            buffer.resize(decoder.total_bytes() as usize, 0);
+                            decoder.read_image(&mut *buffer)
+                                .with_context(|| "Error reading JPEG image into the buffer.")?;
+                            let (result, new_color_type) = handle_rgb_bgr(decode_type, buffer, (w * h * 4) as usize, w, h);
+                            data = result;
+                            color_type = new_color_type;
                         },
                         "image/png" => {
-                            let decoder = match PngDecoder::new(slice) {
-                                Ok(d) => d,
-                                Err(e) => {
-                                    log::error!("Error creating PNG decoder: {:?}", e);
-                                    panic!("Fail to create PNG decoder.");
-                                }
-                            };
+                            let decoder = PngDecoder::new(slice)
+                                .with_context(|| "Error creating PNG decoder.")?;
                             let (w, h) = decoder.dimensions();
                             width = w;
                             height = h;
+                            let mut buffer: Vec<u8> = vec![];
+                            buffer.resize(decoder.total_bytes() as usize, 0);
+                            let decode_type = decoder.color_type();
+                            decoder.read_image(&mut *buffer)
+                                .with_context(|| "Error reading PNG image into the buffer.")?;
+                            let (result, new_color_type) = handle_rgb_bgr(decode_type, buffer, (w * h * 4) as usize, w, h);
+                            data = result;
+                            color_type = new_color_type;
                         },
                         _ => {
                             panic!("Unsupported image format.");
                         }
                     }
+                    let gltf_format = match color_type {
+                        ColorType::Bgra8 => gltf::image::Format::B8G8R8A8,
+                        ColorType::Rgba8 => gltf::image::Format::R8G8B8A8,
+                        _ => panic!("Unsupported GLTF image format.")
+                    };
                     let buffer_size = width * height * 4;
-                    let data = image.to_vec();
                     let img = Graphics::create_image(
                         data, buffer_size as u64, width,
-                        height, gltf::image::Format::B8G8R8A8,
+                        height, gltf_format,
                         graphics.clone(), command_pool.clone()
                     );
                     textures.push(img);
@@ -452,7 +467,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
         }
-        textures
+        Ok(textures)
     }
 }
 

@@ -55,6 +55,38 @@ pub fn end_one_time_command_buffer(cmd_buffer: CommandBuffer, device: &Device,
     }
 }
 
+pub fn handle_rgb_bgr(color_type: image::ColorType, data: Vec<u8>, data_size: usize, width: u32, height: u32) -> (Vec<u8>, image::ColorType) {
+    let pixels = data;
+    match color_type {
+        image::ColorType::Bgr8 | image::ColorType::Rgb8 => {
+            let mut rgba_pixels: Vec<u8> = vec![];
+            let mut rgba_index = 0;
+            let mut rgb_index = 0;
+            rgba_pixels.resize(data_size, 0);
+            for _ in 0..(width * height) {
+                rgba_pixels[rgba_index] = pixels[rgb_index];
+                rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
+                rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
+                rgba_pixels[rgba_index + 3] = 255;
+                rgba_index += 4;
+                rgb_index += 3;
+            }
+            let new_color_type = if color_type == image::ColorType::Bgr8 {
+                image::ColorType::Bgra8
+            } else {
+                image::ColorType::Rgba8
+            };
+            (rgba_pixels, new_color_type)
+        },
+        image::ColorType::Rgba8 | image::ColorType::Bgra8 => {
+            (pixels, color_type)
+        }
+        _ => {
+            panic!("Unsupported color type: {:?}", color_type);
+        }
+    }
+}
+
 pub fn get_nullptr() -> *mut c_void {
     std::ptr::null_mut() as *mut c_void
 }
