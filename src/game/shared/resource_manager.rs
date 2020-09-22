@@ -1,3 +1,4 @@
+use crossbeam::sync::ShardedLock;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
           TextureType: 'static + Clone + Disposable {
     pub models: Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>,
     pub skinned_models: Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>,
+    pub textures: Vec<Arc<ShardedLock<TextureType>>>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -38,6 +40,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
             resource: vec![],
             models: vec![],
             skinned_models: vec![],
+            textures: vec![],
         }
     }
 
@@ -75,6 +78,12 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
         model_lock.model_name = name;
         drop(model_lock);
         self.skinned_models.push(model);
+    }
+
+    pub fn add_texture(&mut self, texture: TextureType) -> Arc<ShardedLock<TextureType>> {
+        let texture_wrapped = Arc::new(ShardedLock::new(texture));
+        self.textures.push(texture_wrapped.clone());
+        texture_wrapped
     }
 
     pub fn get_model_count(&self) -> usize {
@@ -129,6 +138,14 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Drop for ResourceManage
           TextureType: 'static + Clone + Disposable {
     fn drop(&mut self) {
         log::info!("Dropping Resource Manager...");
+        for texture in self.textures.iter() {
+            let mut texture_lock = texture.write().unwrap();
+            if texture_lock.is_disposed() {
+                continue;
+            }
+            texture_lock.dispose();
+        }
+
         for model in self.skinned_models.iter() {
             let mut model_lock = model.lock();
             if model_lock.is_disposed() {

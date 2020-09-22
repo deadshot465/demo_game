@@ -46,9 +46,6 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
         else {
             Self::process_root_nodes(document.scenes().nth(0).unwrap(), buffer)
         };
-        for (index, mesh) in meshes.iter().enumerate() {
-            log::info!("Mesh {} primitive count: {}", index, mesh.primitives.len());
-        }
         meshes
     }
 

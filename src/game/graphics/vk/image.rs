@@ -383,7 +383,7 @@ impl Disposable for Image {
                 self.unmap_memory();
             }
             if self.sampler != Sampler::null() {
-                device.destroy_sampler(self.sampler, None)
+                device.destroy_sampler(self.sampler, None);
             }
             if self.image_view != ImageView::null() {
                 device.destroy_image_view(self.image_view, None);

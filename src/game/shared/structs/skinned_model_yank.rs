@@ -4,6 +4,10 @@ use crossbeam::sync::ShardedLock;
 use glam::{Quat, Vec2, Vec3, Vec3A, Vec4, Mat4};
 use gltf::{Node, Scene, scene::Transform};
 use gltf::animation::util::ReadOutputs;
+use image::{ImageFormat, ImageDecoder, EncodableLayout, GenericImageView};
+use image::ColorType;
+use image::jpeg::JpegDecoder;
+use image::png::PngDecoder;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -14,6 +18,8 @@ use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel};
 use crate::game::structs::Joint;
 use crate::game::traits::{Disposable, GraphicsBase};
+use crate::game::shared::util::handle_rgb_bgr;
+use rand::AsByteSliceMut;
 
 #[allow(dead_code)]
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
@@ -38,52 +44,120 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
           BufferType: 'static + Disposable + Clone,
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
-    fn read_raw_data(file_name: &str) -> anyhow::Result<(gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>)> {
-        let (document, buffers, images) = gltf::import(file_name)
-            .with_context(|| "Failed to import skinned model from glTF.")?;
-        Ok((document, buffers, images))
+    fn read_raw_data(file_name: &str) -> gltf::Gltf {
+        let raw_data = match std::fs::read(file_name) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("Error reading the model: {}", e.to_string());
+                vec![]
+            }
+        };
+        if raw_data.is_empty() {
+            panic!("Raw data is empty. Abort.");
+        }
+        let gltf = gltf::Gltf::from_slice(raw_data.as_slice()).unwrap();
+        gltf
     }
 
-    fn create_model(file_name: &str, document: gltf::Document, buffers: Vec<gltf::buffer::Data>,
-                    images: Vec<Arc<ShardedLock<TextureType>>>,
-                    graphics: Weak<ShardedLock<GraphicsType>>,
-                    position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
-        let meshes = Self::process_model(&document, &buffers, images);
-        let animations = Self::process_animation(&document, &buffers);
-        SkinnedModel {
+    fn process_animation(gltf_data: &gltf::Gltf) -> HashMap<String, Animation> {
+        let blob = gltf_data.blob.as_ref().unwrap();
+        let mut animations = HashMap::new();
+        for animation in gltf_data.animations() {
+            if let Some(name) = animation.name() {
+                let mut channels = vec![];
+                for channel in animation.channels() {
+                    let target = channel.target();
+                    let target_node_index = target.node().index();
+                    let sampler = channel.sampler();
+                    let interpolation = sampler.interpolation();
+                    let reader = channel.reader(|buffer| {
+                        match buffer.source() {
+                            gltf::buffer::Source::Bin => (),
+                            _ => {
+                                unimplemented!("The format has to be a binary GLTF.");
+                            }
+                        }
+                        Some(&blob)
+                    });
+                    let inputs = reader.read_inputs()
+                        .unwrap()
+                        .collect::<Vec<_>>();
+                    let outputs = match reader.read_outputs().unwrap() {
+                        ReadOutputs::Translations(translations) => {
+                            ChannelOutputs::Translations(translations.map(|x| Vec3A::from(x)).collect())
+                        },
+                        ReadOutputs::Rotations(rotations) => {
+                            ChannelOutputs::Rotations(rotations.into_f32()
+                                .map(|r| Quat::from(r))
+                                .collect())
+                        },
+                        ReadOutputs::Scales(scales) => {
+                            ChannelOutputs::Scales(scales.map(|s| Vec3A::from(s))
+                                .collect())
+                        },
+                        ReadOutputs::MorphTargetWeights(_) => {
+                            unimplemented!("glTF property::MorphTargetWeights is unimplemented.")
+                        }
+                    };
+                    channels.push(Channel {
+                        target_node_index,
+                        inputs,
+                        outputs,
+                        interpolation
+                    });
+                }
+                animations.insert(name.to_string(), Animation {
+                    channels
+                });
+            }
+            else {
+                log::error!("glTF animation cannot be loaded as it has no name.");
+            }
+        }
+        println!("Animations: {:?}", &animations);
+        animations
+    }
+
+    fn create_skinned_model(file_name: &str, gltf_data: &gltf::Gltf,
+                                graphics: Arc<ShardedLock<GraphicsType>>,
+                                textures: &Vec<TextureType>,
+                                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
+        let blob = gltf_data.blob.as_ref().unwrap();
+        let scene = gltf_data.default_scene();
+        let meshes: Vec<SkinnedMesh<BufferType, CommandType, TextureType>>;
+        if let Some(root_scene) = scene {
+            meshes = Self::process_root_nodes(root_scene, blob, &textures);
+        }
+        else {
+            meshes = Self::process_root_nodes(gltf_data.scenes().nth(0).unwrap(), blob, &textures);
+        }
+        let animations = Self::process_animation(gltf_data);
+        let model = SkinnedModel {
             position,
             scale,
             rotation,
             color,
-            skinned_meshes: meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
             model_index: 0,
             animations,
-            graphics,
-        }
-    }
-
-    fn process_model(document: &gltf::Document, buffers: &Vec<gltf::buffer::Data>, images: Vec<Arc<ShardedLock<TextureType>>>) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
-        let meshes = if let Some(scene) = document.default_scene() {
-            Self::process_root_nodes(scene, buffers, images)
-        } else {
-            Self::process_root_nodes(document.scenes().nth(0).unwrap(), buffers, images)
+            graphics: Arc::downgrade(&graphics),
+            skinned_meshes: meshes
         };
-        log::info!("Skinned model mesh count: {}", meshes.len());
-        meshes
+        model
     }
 
-    fn process_root_nodes(scene: Scene, buffers: &Vec<gltf::buffer::Data>, images: Vec<Arc<ShardedLock<TextureType>>>) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
+    fn process_root_nodes(scene: Scene, buffer_data: &Vec<u8>, textures: &Vec<TextureType>) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = vec![];
         for node in scene.nodes() {
-            let mut sub_meshes = Self::process_node(node, &buffers, &images, Mat4::identity());
+            let mut sub_meshes = Self::process_node(node, &buffer_data, textures, Mat4::identity());
             meshes.append(&mut sub_meshes);
         }
+        println!("Skinned mesh count: {:?}", meshes.len());
         meshes
     }
 
-    fn process_node(node: Node, buffers: &Vec<gltf::buffer::Data>, images: &Vec<Arc<ShardedLock<TextureType>>>, local_transform: Mat4) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
+    fn process_node(node: Node, buffer_data: &Vec<u8>, textures: &Vec<TextureType>, local_transform: Mat4) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = vec![];
         let (t, r, s) = node.transform().decomposed();
         let transform = Mat4::from_scale_rotation_translation(
@@ -93,28 +167,36 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
         );
         let transform = local_transform * transform;
         if let Some(mesh) = node.mesh() {
-            meshes.push(Self::process_skinned_mesh(&node, mesh, buffers, transform.clone(), images));
+            meshes.push(Self::process_skinned_mesh(&node, mesh, &buffer_data, transform.clone(), textures));
         }
         for _node in node.children() {
-            let mut sub_meshes = Self::process_node(_node, buffers, images, transform.clone());
+            let mut sub_meshes = Self::process_node(_node, &buffer_data, textures, transform.clone());
             meshes.append(&mut sub_meshes);
         }
         meshes
     }
 
-    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffers: &Vec<gltf::buffer::Data>, local_transform: Mat4, images: &Vec<Arc<ShardedLock<TextureType>>>) -> SkinnedMesh<BufferType, CommandType, TextureType> {
+    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffer_data: &Vec<u8>, local_transform: Mat4, textures: &Vec<TextureType>) -> SkinnedMesh<BufferType, CommandType, TextureType> {
         let mut root_joint = None;
         if let Some(skin) = node.skin() {
             let joints: Vec<_> = skin.joints().collect();
             if !joints.is_empty() {
-                let reader = skin.reader(|buffer| Some(&buffers[buffer.index()]));
+                let reader = skin.reader(|buffer| {
+                    match buffer.source() {
+                        gltf::buffer::Source::Bin => (),
+                        gltf::buffer::Source::Uri(_) => {
+                            log::error!("URI-based skins are not supported.");
+                        }
+                    }
+                    Some(&buffer_data)
+                });
                 let ibm: Vec<Mat4> = reader.read_inverse_bind_matrices()
                     .unwrap()
                     .map(|r| Mat4::from_cols_array_2d(&r))
                     .collect();
                 let node_to_joints_lookup: Vec<_> = joints.iter().map(|n| n.index()).collect();
                 root_joint = Some(Self::process_skeleton(
-                    &joints[0], &node_to_joints_lookup, ibm.as_slice(), Mat4::identity()
+                    node, buffer_data, &node_to_joints_lookup, ibm.as_slice(), Mat4::identity()
                 ));
             }
         }
@@ -127,7 +209,15 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                     log::error!("The primitive topology has to be triangles.");
                 }
             }
-            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            let reader = primitive.reader(|buffer| {
+                match buffer.source() {
+                    gltf::buffer::Source::Bin => (),
+                    _ => {
+                        log::error!("The format has to be a binary GLTF.");
+                    }
+                }
+                Some(&buffer_data)
+            });
             let indices = reader.read_indices()
                 .unwrap()
                 .into_u32()
@@ -166,15 +256,14 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                 .pbr_metallic_roughness()
                 .base_color_texture()
                 .map(|x| x.texture().index());
-            let texture = texture_index
-                .and_then(|x| images.get(x).cloned());
+            let texture = texture_index.and_then(|x| textures.get(x).cloned());
 
             let _primitive = SkinnedPrimitive {
                 vertices: skinned_vertices,
                 indices,
                 vertex_buffer: None::<ManuallyDrop<BufferType>>,
                 index_buffer: None::<ManuallyDrop<BufferType>>,
-                texture,
+                texture: texture.map(|t| ManuallyDrop::new(t)),
                 is_disposed: false,
                 command_pool: None,
                 command_buffer: None
@@ -182,6 +271,8 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
             skinned_primitives.push(_primitive);
         }
 
+        println!("Skinned primitive count: {:?}", skinned_primitives.len());
+        println!("Root joint: {:?}", &root_joint);
         SkinnedMesh {
             primitives: skinned_primitives,
             is_disposed: false,
@@ -190,13 +281,14 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
         }
     }
 
-    fn process_skeleton(node: &Node, node_to_joints_lookup: &[usize], inverse_bind_matrices: &[Mat4], local_transform: Mat4) -> Joint {
+    fn process_skeleton(node: &Node, buffer_data: &[u8], node_to_joints_lookup: &[usize], inverse_bind_matrices: &[Mat4], local_transform: Mat4) -> Joint {
         let mut children = vec![];
         let node_index = node.index();
         let index = node_to_joints_lookup.iter()
             .enumerate()
-            .find(|(_, x)| **x == node_index);
-        let index = index.unwrap().0;
+            .find(|(_, x)| **x == node_index)
+            .unwrap()
+            .0;
         let name = node.name().unwrap_or("");
         let ibm = inverse_bind_matrices[index];
         let (t, r, s) = node.transform().decomposed();
@@ -207,8 +299,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
         );
         let pose_transform = local_transform * node_transform;
         for child in node.children() {
-            let skeleton = Self::process_skeleton(&child, node_to_joints_lookup, inverse_bind_matrices, pose_transform.clone());
-            children.push(skeleton);
+            children.push(Self::process_skeleton(&child, buffer_data, node_to_joints_lookup, inverse_bind_matrices, pose_transform.clone()));
         }
         let ibm = ibm.clone();
         let (t, r, s) = match node.transform() {
@@ -229,79 +320,26 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
             name: name.to_string(),
             node_index,
             index,
+            children,
             inverse_bind_matrices: ibm,
             translation: Vec3A::from(t),
             rotation: r,
             scale: Vec3A::from(s),
-            children
         }
     }
-
-    fn process_animation(document: &gltf::Document, buffers: &Vec<gltf::buffer::Data>) -> HashMap<String, Animation> {
-        let mut animations = HashMap::new();
-        for (index, animation) in document.animations().enumerate() {
-            let name = if let Some(n) = animation.name() {
-                n.to_string()
-            } else {
-                format!("default{}", index)
-            };
-            let mut channels = vec![];
-            for channel in animation.channels() {
-                let target = channel.target();
-                let target_node_index = target.node().index();
-                let sampler = channel.sampler();
-                let interpolation = sampler.interpolation();
-                let reader = channel.reader(|buffer| {
-                    Some(&buffers[buffer.index()])
-                });
-                let inputs = reader.read_inputs()
-                    .unwrap()
-                    .collect::<Vec<_>>();
-                let outputs = match reader.read_outputs().unwrap() {
-                    ReadOutputs::Translations(translations) => {
-                        ChannelOutputs::Translations(translations.map(|x| Vec3A::from(x)).collect())
-                    },
-                    ReadOutputs::Rotations(rotations) => {
-                        ChannelOutputs::Rotations(rotations.into_f32()
-                            .map(|r| Quat::from(r))
-                            .collect())
-                    },
-                    ReadOutputs::Scales(scales) => {
-                        ChannelOutputs::Scales(scales.map(|s| Vec3A::from(s))
-                            .collect())
-                    },
-                    ReadOutputs::MorphTargetWeights(_) => {
-                        unimplemented!("glTF property::MorphTargetWeights is unimplemented.")
-                    }
-                };
-                channels.push(Channel {
-                    target_node_index,
-                    inputs,
-                    outputs,
-                    interpolation
-                });
-            }
-            animations.insert(name, Animation {
-                channels
-            });
-        }
-        log::info!("Animation count: {}", animations.len());
-        animations
-    }
-
 }
 
 impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
                position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> JoinHandle<Self> {
-        log::info!("Loading skinned model from glTF {}...", file_name);
+        log::info!("Loading skinned model {}...", file_name);
         let graphics_arc = graphics.upgrade().unwrap();
         let model = tokio::spawn(async move {
-            let graphics_clone = graphics_arc;
+            let graphics = graphics_arc;
             let thread_count: usize;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_lock = graphics_clone.read().unwrap();
+                let graphics_lock = graphics.read().unwrap();
                 thread_count = graphics_lock.thread_pool.thread_count;
                 command_pool = graphics_lock
                     .thread_pool
@@ -310,11 +348,11 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     .clone();
             }
             log::info!("Skinned model index: {}, Command pool: {:?}", model_index, command_pool);
-            let (document, buffers, images) = Self::read_raw_data(file_name).unwrap();
-            let textures = Self::create_texture(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
-            let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color);
+            let data = Self::read_raw_data(file_name);
+            let textures = Self::create_texture(&data, graphics.clone(), command_pool.clone()).unwrap();
+            let mut loaded_model = Self::create_skinned_model(file_name, &data, graphics.clone(), &textures, position, scale, rotation, color);
             {
-                let graphics_lock = graphics_clone.read().unwrap();
+                let graphics_lock = graphics.read().unwrap();
                 for mesh in loaded_model.skinned_meshes.iter_mut() {
                     for primitive in mesh.primitives.iter_mut() {
                         primitive.command_pool = Some(command_pool.clone());
@@ -324,7 +362,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     }
                 }
             }
-            loaded_model.create_buffers(graphics_clone.clone(), command_pool.clone()).await;
+            loaded_model.create_buffers(graphics.clone(), command_pool.clone()).await;
             loaded_model
         });
         model
@@ -362,72 +400,73 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    async fn create_texture(images: Vec<gltf::image::Data>, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Vec<Arc<ShardedLock<Image>>>> {
+    fn create_texture(gltf_data: &gltf::Gltf, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Vec<Image>> {
+        let blob = gltf_data.blob.as_ref().unwrap();
         let mut textures = vec![];
-        let mut texture_handles = vec![];
-        use gltf::image::Format;
-        for image in images.iter() {
-            let buffer_size = image.width * image.height * 4;
-            let texture: JoinHandle<Image>;
-            let pool = command_pool.clone();
-            match image.format {
-                Format::R8G8B8 | Format::B8G8R8 => {
-                    let pixels = &image.pixels;
-                    let mut rgba_pixels: Vec<u8> = vec![];
-                    let mut rgba_index = 0;
-                    let mut rgb_index = 0;
-                    rgba_pixels.resize(buffer_size as usize, 0);
-                    for _ in 0..(image.width * image.height) {
-                        rgba_pixels[rgba_index] = pixels[rgb_index];
-                        rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
-                        rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
-                        rgba_pixels[rgba_index + 3] = 255;
-                        rgba_index += 4;
-                        rgb_index += 3;
+        for texture in gltf_data.textures() {
+            match texture.source().source() {
+                gltf::image::Source::View {
+                    view, mime_type
+                } => {
+                    println!("Mime type: {}", mime_type);
+                    let slice = &blob[view.offset()..view.offset() + view.length() - 1];
+                    let width: u32;
+                    let height: u32;
+                    let data: Vec<u8>;
+                    let color_type: image::ColorType;
+                    match mime_type {
+                        "image/jpeg" => {
+                            let decoder = JpegDecoder::new(slice)
+                                .with_context(|| "Error creating JPEG decoder.")?;
+                            let (w, h) = decoder.dimensions();
+                            width = w;
+                            height = h;
+                            let decode_type = decoder.color_type();
+                            let mut buffer: Vec<u8> = vec![];
+                            buffer.resize(decoder.total_bytes() as usize, 0);
+                            decoder.read_image(&mut *buffer)
+                                .with_context(|| "Error reading JPEG image into the buffer.")?;
+                            let (result, new_color_type) = handle_rgb_bgr(decode_type, buffer, (w * h * 4) as usize, w, h);
+                            data = result;
+                            color_type = new_color_type;
+                        },
+                        "image/png" => {
+                            let decoder = PngDecoder::new(slice)
+                                .with_context(|| "Error creating PNG decoder.")?;
+                            let (w, h) = decoder.dimensions();
+                            width = w;
+                            height = h;
+                            let mut buffer: Vec<u8> = vec![];
+                            buffer.resize(decoder.total_bytes() as usize, 0);
+                            let decode_type = decoder.color_type();
+                            decoder.read_image(&mut *buffer)
+                                .with_context(|| "Error reading PNG image into the buffer.")?;
+                            let (result, new_color_type) = handle_rgb_bgr(decode_type, buffer, (w * h * 4) as usize, w, h);
+                            data = result;
+                            color_type = new_color_type;
+                        },
+                        _ => {
+                            panic!("Unsupported image format.");
+                        }
                     }
-                    let g = graphics.clone();
-                    let image_clone = image.clone();
-                    texture = tokio::spawn(async move {
-                        Graphics::create_image(
-                            rgba_pixels, buffer_size as u64,
-                            image_clone.width, image_clone.height, match image_clone.format {
-                                Format::B8G8R8 => Format::B8G8R8A8,
-                                Format::R8G8B8 => Format::R8G8B8A8,
-                                _ => image_clone.format
-                            }, g, pool
-                        )
-                    });
-                },
-                Format::R8G8B8A8 | Format::B8G8R8A8 => {
-                    let pixels = image.pixels.clone();
-                    let g = graphics.clone();
-                    let image_clone = image.clone();
-                    texture = tokio::spawn(async move {
-                        Graphics::create_image(
-                            pixels, buffer_size as u64,
-                            image_clone.width, image_clone.height, image_clone.format, g, pool
-                        )
-                    });
+                    let gltf_format = match color_type {
+                        ColorType::Bgra8 => gltf::image::Format::B8G8R8A8,
+                        ColorType::Rgba8 => gltf::image::Format::R8G8B8A8,
+                        _ => panic!("Unsupported GLTF image format.")
+                    };
+                    let buffer_size = width * height * 4;
+                    let img = Graphics::create_image(
+                        data, buffer_size as u64, width,
+                        height, gltf_format,
+                        graphics.clone(), command_pool.clone()
+                    );
+                    textures.push(img);
                 },
                 _ => {
-                    unimplemented!("Unsupported image format: {:?}", image.format);
+                    log::error!("The format has to be a binary GLTF.");
                 }
             }
-            texture_handles.push(texture);
         }
-        for handle in texture_handles.into_iter() {
-            textures.push(handle.await.unwrap());
-        }
-        let graphics_lock = graphics.read().unwrap();
-        let rm_weak = graphics_lock.resource_manager.clone();
-        drop(graphics_lock);
-        let rm = rm_weak.upgrade().unwrap();
-        drop(rm_weak);
-        let mut rm_lock = rm.write().unwrap();
-        let textures = textures.into_iter()
-            .map(|img| rm_lock.add_texture(img))
-            .collect::<Vec<_>>();
-        log::info!("Skinned model texture count: {}", textures.len());
         Ok(textures)
     }
 }

@@ -1,3 +1,4 @@
+use crossbeam::sync::ShardedLock;
 use glam::{Mat4};
 use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
@@ -15,7 +16,7 @@ pub struct SkinnedPrimitive<BufferType, CommandType, TextureType>
     pub indices: Vec<u32>,
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
-    pub texture: Option<ManuallyDrop<TextureType>>,
+    pub texture: Option<Arc<ShardedLock<TextureType>>>,
     pub is_disposed: bool,
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
     pub command_buffer: Option<CommandType>,
@@ -52,9 +53,6 @@ impl<BufferType, CommandType, TextureType> Disposable for SkinnedPrimitive<Buffe
             }
             if let Some(buffer) = self.index_buffer.as_mut() {
                 ManuallyDrop::drop(buffer);
-            }
-            if let Some(texture) = self.texture.as_mut() {
-                ManuallyDrop::drop(texture);
             }
         }
         self.is_disposed = true;
