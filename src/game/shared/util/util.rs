@@ -1,9 +1,16 @@
+use anyhow::Context;
 use ash::Device;
 use ash::version::DeviceV1_0;
 use ash::vk::{CommandPool, CommandBuffer, CommandBufferAllocateInfo, CommandBufferLevel, CommandBufferBeginInfo, CommandBufferUsageFlags, Queue, SubmitInfo, Fence};
+use crossbeam::sync::ShardedLock;
+use parking_lot::Mutex;
 use rand::prelude::*;
+use std::sync::{Arc};
+use tokio::task::JoinHandle;
 use winapi::ctypes::c_void;
 use winapi::shared::winerror::{HRESULT, FAILED};
+
+use crate::game::graphics::vk::{Graphics, Image};
 
 const ALPHANUMERICS: &'static str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -55,36 +62,79 @@ pub fn end_one_time_command_buffer(cmd_buffer: CommandBuffer, device: &Device,
     }
 }
 
-pub fn handle_rgb_bgr(color_type: image::ColorType, data: Vec<u8>, data_size: usize, width: u32, height: u32) -> (Vec<u8>, image::ColorType) {
-    let pixels = data;
-    match color_type {
-        image::ColorType::Bgr8 | image::ColorType::Rgb8 => {
-            let mut rgba_pixels: Vec<u8> = vec![];
-            let mut rgba_index = 0;
-            let mut rgb_index = 0;
-            rgba_pixels.resize(data_size, 0);
-            for _ in 0..(width * height) {
-                rgba_pixels[rgba_index] = pixels[rgb_index];
-                rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
-                rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
-                rgba_pixels[rgba_index + 3] = 255;
-                rgba_index += 4;
-                rgb_index += 3;
+pub fn read_raw_data(file_name: &str) -> anyhow::Result<(gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>)> {
+    let (document, buffers, images) = gltf::import(file_name)
+        .with_context(|| "Failed to import skinned model from glTF.")?;
+    Ok((document, buffers, images))
+}
+
+pub async fn create_texture(images: Vec<gltf::image::Data>, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Vec<Arc<ShardedLock<Image>>>> {
+    let mut textures = vec![];
+    let mut texture_handles = vec![];
+    use gltf::image::Format;
+    for image in images.iter() {
+        let buffer_size = image.width * image.height * 4;
+        let texture: JoinHandle<Image>;
+        let pool = command_pool.clone();
+        match image.format {
+            Format::R8G8B8 | Format::B8G8R8 => {
+                let pixels = &image.pixels;
+                let mut rgba_pixels: Vec<u8> = vec![];
+                let mut rgba_index = 0;
+                let mut rgb_index = 0;
+                rgba_pixels.resize(buffer_size as usize, 0);
+                for _ in 0..(image.width * image.height) {
+                    rgba_pixels[rgba_index] = pixels[rgb_index];
+                    rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
+                    rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
+                    rgba_pixels[rgba_index + 3] = 255;
+                    rgba_index += 4;
+                    rgb_index += 3;
+                }
+                let g = graphics.clone();
+                let image_clone = image.clone();
+                texture = tokio::spawn(async move {
+                    Graphics::create_image(
+                        rgba_pixels, buffer_size as u64,
+                        image_clone.width, image_clone.height, match image_clone.format {
+                            Format::B8G8R8 => Format::B8G8R8A8,
+                            Format::R8G8B8 => Format::R8G8B8A8,
+                            _ => image_clone.format
+                        }, g, pool
+                    )
+                });
+            },
+            Format::R8G8B8A8 | Format::B8G8R8A8 => {
+                let pixels = image.pixels.clone();
+                let g = graphics.clone();
+                let image_clone = image.clone();
+                texture = tokio::spawn(async move {
+                    Graphics::create_image(
+                        pixels, buffer_size as u64,
+                        image_clone.width, image_clone.height, image_clone.format, g, pool
+                    )
+                });
+            },
+            _ => {
+                unimplemented!("Unsupported image format: {:?}", image.format);
             }
-            let new_color_type = if color_type == image::ColorType::Bgr8 {
-                image::ColorType::Bgra8
-            } else {
-                image::ColorType::Rgba8
-            };
-            (rgba_pixels, new_color_type)
-        },
-        image::ColorType::Rgba8 | image::ColorType::Bgra8 => {
-            (pixels, color_type)
         }
-        _ => {
-            panic!("Unsupported color type: {:?}", color_type);
-        }
+        texture_handles.push(texture);
     }
+    for handle in texture_handles.into_iter() {
+        textures.push(handle.await.unwrap());
+    }
+    let graphics_lock = graphics.read().unwrap();
+    let rm_weak = graphics_lock.resource_manager.clone();
+    drop(graphics_lock);
+    let rm = rm_weak.upgrade().unwrap();
+    drop(rm_weak);
+    let mut rm_lock = rm.write().unwrap();
+    let textures = textures.into_iter()
+        .map(|img| rm_lock.add_texture(img))
+        .collect::<Vec<_>>();
+    log::info!("Skinned model texture count: {}", textures.len());
+    Ok(textures)
 }
 
 pub fn get_nullptr() -> *mut c_void {

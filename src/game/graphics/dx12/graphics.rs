@@ -14,7 +14,6 @@ use winapi::um::d3d12::{D3D12CreateDevice, ID3D12Device2, D3D12GetDebugInterface
 use winapi::um::d3dcommon::D3D_FEATURE_LEVEL_12_1;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::graphics::dx12::{Resource, SwapChain, DescriptorHeap, CommandQueue, Pipeline};
-use crate::game::shared::structs::Vertex;
 use std::sync::{Arc, Weak};
 use crate::game::{Camera, ResourceManager};
 use winapi::um::d3d12sdklayers::*;
@@ -203,19 +202,7 @@ impl Graphics {
 }
 
 impl GraphicsBase<Resource, ComPtr<ID3D12GraphicsCommandList>, Resource> for Graphics {
-    fn create_vertex_buffer(&self, _vertices: &[Vertex], _command_buffer: Option<ComPtr<ID3D12GraphicsCommandList>>) -> Resource {
-        unimplemented!()
-    }
-
-    fn create_index_buffer(&self, _indices: &[u32], _command_buffer: Option<ComPtr<ID3D12GraphicsCommandList>>) -> Resource {
-        unimplemented!()
-    }
-
     fn get_commands(&self) -> &Vec<ComPtr<ID3D12GraphicsCommandList>> {
-        unimplemented!()
-    }
-
-    fn create_image(&self, _image_data: &[u8], _buffer_size: u64, _width: u32, _height: u32, _format: gltf::image::Format) -> Resource {
         unimplemented!()
     }
 }

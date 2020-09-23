@@ -1,5 +1,6 @@
 use ash::vk::*;
 use ash::version::DeviceV1_0;
+use crossbeam::sync::ShardedLock;
 use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
@@ -29,7 +30,7 @@ pub struct Mesh<BufferType, CommandType, TextureType>
     pub primitives: Vec<Primitive>,
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
-    pub texture: Vec<ManuallyDrop<TextureType>>,
+    pub texture: Vec<Arc<ShardedLock<TextureType>>>,
     pub sampler_resource: Option<SamplerResource>,
     pub is_disposed: bool,
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
@@ -89,9 +90,10 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
             self.sampler_resource = Some(SamplerResource::DescriptorSet(descriptor_set[0]));
             log::info!("Successfully allocate descriptor set for texture.");
 
+            let texture_lock = self.texture[0].read().unwrap();
             let image_info = DescriptorImageInfo::builder()
-                .sampler(self.texture[0].sampler)
-                .image_view(self.texture[0].image_view)
+                .sampler(texture_lock.sampler)
+                .image_view(texture_lock.image_view)
                 .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .build();
             let write_descriptor = WriteDescriptorSet::builder()
@@ -133,12 +135,6 @@ impl<BufferType, CommandType, TextureType> Disposable for Mesh<BufferType, Comma
           TextureType: 'static + Clone + Disposable {
     fn dispose(&mut self) {
         unsafe {
-            let has_texture = !self.texture.is_empty();
-            if has_texture {
-                for texture in self.texture.iter_mut() {
-                    ManuallyDrop::drop(texture);
-                }
-            }
             if let Some(buffer) = self.index_buffer.as_mut() {
                 ManuallyDrop::drop(buffer);
             }

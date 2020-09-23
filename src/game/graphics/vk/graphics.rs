@@ -35,7 +35,7 @@ use vk_mem::*;
 use crate::game::{Camera, ResourceManager};
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel, ThreadPool};
-use crate::game::shared::structs::{ViewProjection, Directional, Vertex, PushConstant};
+use crate::game::shared::structs::{ViewProjection, Directional, PushConstant};
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
@@ -1142,95 +1142,8 @@ impl Graphics {
 }
 
 impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
-    fn create_vertex_buffer(&self, vertices: &[Vertex], command_buffer: Option<CommandBuffer>) -> super::Buffer {
-        let buffer_size = DeviceSize::try_from(std::mem::size_of::<Vertex>() * vertices.len())
-            .unwrap();
-        let mut staging = super::Buffer::new(
-            Arc::downgrade(&self.logical_device), buffer_size,
-            BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
-            Arc::downgrade(&self.allocator)
-        );
-        let mapped = staging.map_memory(buffer_size, 0);
-        unsafe {
-            std::ptr::copy_nonoverlapping(vertices.as_ptr() as *const c_void, mapped, buffer_size as usize);
-        }
-        let buffer = super::Buffer::new(
-            Arc::downgrade(&self.logical_device), buffer_size,
-            BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::VERTEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            Arc::downgrade(&self.allocator)
-        );
-        buffer.copy_buffer(&staging, buffer_size, self.command_pool, *self.graphics_queue.lock(), command_buffer);
-        drop(staging);
-        buffer
-    }
-
-    fn create_index_buffer(&self, indices: &[u32], command_buffer: Option<CommandBuffer>) -> super::Buffer {
-        let buffer_size = DeviceSize::try_from(std::mem::size_of::<u32>() * indices.len())
-            .unwrap();
-        let mut staging = super::Buffer::new(
-            Arc::downgrade(&self.logical_device), buffer_size,
-            BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
-            Arc::downgrade(&self.allocator)
-        );
-        let mapped = staging.map_memory(buffer_size, 0);
-        unsafe {
-            std::ptr::copy_nonoverlapping(indices.as_ptr() as *const c_void, mapped, buffer_size as usize);
-        }
-        let buffer = super::Buffer::new(
-            Arc::downgrade(&self.logical_device), buffer_size,
-            BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::INDEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            Arc::downgrade(&self.allocator)
-        );
-        buffer.copy_buffer(&staging, buffer_size, self.command_pool, *self.graphics_queue.lock(), command_buffer);
-        drop(staging);
-        buffer
-    }
-
     fn get_commands(&self) -> &Vec<CommandBuffer> {
         &self.command_buffers
-    }
-
-    fn create_image(&self, image_data: &[u8], buffer_size: u64, width: u32, height: u32, format: gltf::image::Format) -> super::Image {
-        log::info!("Loading texture...");
-        log::info!("Image data length: {}, Buffer size: {}, Width: {}, Height: {}", image_data.len(), buffer_size, width, height);
-        let mut staging = super::Buffer::new(
-            Arc::downgrade(&self.logical_device),
-            buffer_size,
-            BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
-            Arc::downgrade(&self.allocator)
-        );
-        unsafe {
-            let mapped = staging.map_memory(buffer_size, 0);
-            std::ptr::copy_nonoverlapping(image_data.as_ptr() as *const c_void, mapped, buffer_size as usize);
-
-            let _format = match format {
-                gltf::image::Format::B8G8R8A8 => ash::vk::Format::B8G8R8A8_UNORM,
-                gltf::image::Format::R8G8B8A8 => ash::vk::Format::R8G8B8A8_UNORM,
-                _ => self.swapchain.format.format
-            };
-            let _width = width as f32;
-            let _height = height as f32;
-            let mip_levels = _width.max(_height).log2().floor() as u32;
-            let mut image = super::Image::new(
-                Arc::downgrade(&self.logical_device),
-                ImageUsageFlags::TRANSFER_SRC | ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED,
-                MemoryPropertyFlags::DEVICE_LOCAL, _format,
-                SampleCountFlags::TYPE_1,
-                Extent2D::builder().width(width).height(height).build(),
-                ImageType::TYPE_2D, mip_levels, ImageAspectFlags::COLOR, Arc::downgrade(&self.allocator)
-            );
-            image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::TRANSFER_DST_OPTIMAL,
-            self.command_pool, *self.graphics_queue.lock(), ImageAspectFlags::COLOR, mip_levels, None);
-            image.copy_buffer_to_image(staging.buffer, width, height, self.command_pool, *self.graphics_queue.lock(), None);
-            image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, self.command_pool, *self.graphics_queue.lock(), None);
-            image.create_sampler(mip_levels);
-            image
-        }
     }
 }
 

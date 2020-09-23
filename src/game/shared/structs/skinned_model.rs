@@ -1,4 +1,3 @@
-use anyhow::Context;
 use ash::vk::{CommandBuffer, CommandPool};
 use crossbeam::sync::ShardedLock;
 use glam::{Quat, Vec2, Vec3, Vec3A, Vec4, Mat4};
@@ -14,6 +13,7 @@ use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel};
 use crate::game::structs::Joint;
 use crate::game::traits::{Disposable, GraphicsBase};
+use crate::game::util::{create_texture, read_raw_data};
 
 #[allow(dead_code)]
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
@@ -38,12 +38,6 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
           BufferType: 'static + Disposable + Clone,
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
-    fn read_raw_data(file_name: &str) -> anyhow::Result<(gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>)> {
-        let (document, buffers, images) = gltf::import(file_name)
-            .with_context(|| "Failed to import skinned model from glTF.")?;
-        Ok((document, buffers, images))
-    }
-
     fn create_model(file_name: &str, document: gltf::Document, buffers: Vec<gltf::buffer::Data>,
                     images: Vec<Arc<ShardedLock<TextureType>>>,
                     graphics: Weak<ShardedLock<GraphicsType>>,
@@ -84,7 +78,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
     }
 
     fn process_node(node: Node, buffers: &Vec<gltf::buffer::Data>, images: &Vec<Arc<ShardedLock<TextureType>>>, local_transform: Mat4) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
-        let mut meshes = vec![];
+        let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
         let transform = Mat4::from_scale_rotation_translation(
             Vec3::from(s),
@@ -310,8 +304,8 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     .clone();
             }
             log::info!("Skinned model index: {}, Command pool: {:?}", model_index, command_pool);
-            let (document, buffers, images) = Self::read_raw_data(file_name).unwrap();
-            let textures = Self::create_texture(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
+            let (document, buffers, images) = read_raw_data(file_name).unwrap();
+            let textures = create_texture(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
             let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color);
             {
                 let graphics_lock = graphics_clone.read().unwrap();
@@ -362,74 +356,6 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    async fn create_texture(images: Vec<gltf::image::Data>, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Vec<Arc<ShardedLock<Image>>>> {
-        let mut textures = vec![];
-        let mut texture_handles = vec![];
-        use gltf::image::Format;
-        for image in images.iter() {
-            let buffer_size = image.width * image.height * 4;
-            let texture: JoinHandle<Image>;
-            let pool = command_pool.clone();
-            match image.format {
-                Format::R8G8B8 | Format::B8G8R8 => {
-                    let pixels = &image.pixels;
-                    let mut rgba_pixels: Vec<u8> = vec![];
-                    let mut rgba_index = 0;
-                    let mut rgb_index = 0;
-                    rgba_pixels.resize(buffer_size as usize, 0);
-                    for _ in 0..(image.width * image.height) {
-                        rgba_pixels[rgba_index] = pixels[rgb_index];
-                        rgba_pixels[rgba_index + 1] = pixels[rgb_index + 1];
-                        rgba_pixels[rgba_index + 2] = pixels[rgb_index + 2];
-                        rgba_pixels[rgba_index + 3] = 255;
-                        rgba_index += 4;
-                        rgb_index += 3;
-                    }
-                    let g = graphics.clone();
-                    let image_clone = image.clone();
-                    texture = tokio::spawn(async move {
-                        Graphics::create_image(
-                            rgba_pixels, buffer_size as u64,
-                            image_clone.width, image_clone.height, match image_clone.format {
-                                Format::B8G8R8 => Format::B8G8R8A8,
-                                Format::R8G8B8 => Format::R8G8B8A8,
-                                _ => image_clone.format
-                            }, g, pool
-                        )
-                    });
-                },
-                Format::R8G8B8A8 | Format::B8G8R8A8 => {
-                    let pixels = image.pixels.clone();
-                    let g = graphics.clone();
-                    let image_clone = image.clone();
-                    texture = tokio::spawn(async move {
-                        Graphics::create_image(
-                            pixels, buffer_size as u64,
-                            image_clone.width, image_clone.height, image_clone.format, g, pool
-                        )
-                    });
-                },
-                _ => {
-                    unimplemented!("Unsupported image format: {:?}", image.format);
-                }
-            }
-            texture_handles.push(texture);
-        }
-        for handle in texture_handles.into_iter() {
-            textures.push(handle.await.unwrap());
-        }
-        let graphics_lock = graphics.read().unwrap();
-        let rm_weak = graphics_lock.resource_manager.clone();
-        drop(graphics_lock);
-        let rm = rm_weak.upgrade().unwrap();
-        drop(rm_weak);
-        let mut rm_lock = rm.write().unwrap();
-        let textures = textures.into_iter()
-            .map(|img| rm_lock.add_texture(img))
-            .collect::<Vec<_>>();
-        log::info!("Skinned model texture count: {}", textures.len());
-        Ok(textures)
-    }
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType> From<&SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>> for SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
