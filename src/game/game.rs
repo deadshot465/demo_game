@@ -3,6 +3,7 @@ use crossbeam::sync::ShardedLock;
 use std::sync::{Arc, atomic::{
     AtomicU32
 }};
+#[cfg(target_os = "windows")]
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use winit::{
     event_loop::{
@@ -10,9 +11,11 @@ use winit::{
     },
     window::WindowBuilder
 };
+#[cfg(target_os = "windows")]
 use wio::com::ComPtr;
 
 use crate::game::{ResourceManager, Camera, SceneManager, GameScene};
+#[cfg(target_os = "windows")]
 use crate::game::graphics::dx12 as DX12;
 use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use crate::game::shared::traits::GraphicsBase;
@@ -87,6 +90,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 }
 
+#[cfg(target_os = "windows")]
 impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX12::Resource> {
     pub unsafe fn new(title: &str, width: f64, height: f64, event_loop: &EventLoop<()>) -> Self {
         let window = WindowBuilder::new()

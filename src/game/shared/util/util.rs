@@ -7,7 +7,9 @@ use parking_lot::Mutex;
 use rand::prelude::*;
 use std::sync::{Arc};
 use tokio::task::JoinHandle;
+#[cfg(target_os = "windows")]
 use winapi::ctypes::c_void;
+#[cfg(target_os = "windows")]
 use winapi::shared::winerror::{HRESULT, FAILED};
 
 use crate::game::graphics::vk::{Graphics, Image};
@@ -137,10 +139,12 @@ pub async fn create_texture(images: Vec<gltf::image::Data>, graphics: Arc<Sharde
     Ok(textures)
 }
 
+#[cfg(target_os = "windows")]
 pub fn get_nullptr() -> *mut c_void {
     std::ptr::null_mut() as *mut c_void
 }
 
+#[cfg(target_os = "windows")]
 pub fn log_error(result: HRESULT, msg: &str) {
     if FAILED(result) {
         log::error!("{} Error: {}.", msg, result);

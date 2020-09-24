@@ -3,8 +3,7 @@ use ash::{
     extensions::{
         khr::{
             Surface,
-            Swapchain,
-            Win32Surface
+            Swapchain
         },
         ext::DebugUtils
     },
@@ -17,6 +16,7 @@ use ash::{
     },
     vk::*
 };
+use ash_window::*;
 use std::collections::HashSet;
 use std::ffi::{
     c_void, CStr, CString
@@ -39,6 +39,7 @@ use crate::game::shared::structs::{ViewProjection, Directional, PushConstant};
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
+use anyhow::Context;
 
 #[allow(dead_code)]
 pub struct Graphics {
@@ -87,14 +88,14 @@ impl Graphics {
             .unwrap();
         let entry = Entry::new().unwrap();
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        let instance = Self::create_instance(debug, &enabled_layers, &entry);
+        let instance = Self::create_instance(debug, &enabled_layers, &entry, window);
         let surface_loader = Surface::new(&entry, &instance);
         let debug_messenger = if debug {
             Self::create_debug_messenger(&instance, &entry)
         } else {
             DebugUtilsMessengerEXT::null()
         };
-        let surface = Self::create_surface(window, &entry, &instance);
+        let surface = Self::create_surface(window, &entry, &instance).unwrap();
         let physical_device = super::PhysicalDevice::new(&instance, &surface_loader, surface);
         let (logical_device, graphics_queue, present_queue, compute_queue) = Self::create_logical_device(
             &instance, &physical_device, &enabled_layers, debug
@@ -229,18 +230,19 @@ impl Graphics {
         FALSE
     }
 
-    fn get_required_extensions(debug: bool) -> Vec<*const i8> {
-        let mut extensions = vec![
-            Surface::name().as_ptr(),
-            Win32Surface::name().as_ptr()
-        ];
+    fn get_required_extensions(debug: bool, window: &winit::window::Window) -> anyhow::Result<Vec<*const i8>> {
+        let extensions = enumerate_required_extensions(window)
+            .with_context(|| "Failed to enumerate required extensions.")?;
+        let mut extensions = extensions.into_iter()
+            .map(|extension| extension.as_ptr())
+            .collect::<Vec<_>>();
         if debug {
             extensions.push(DebugUtils::name().as_ptr());
         }
-        extensions
+        Ok(extensions)
     }
 
-    fn create_instance(debug: bool, enabled_layers: &Vec<CString>, entry: &Entry) -> Instance {
+    fn create_instance(debug: bool, enabled_layers: &Vec<CString>, entry: &Entry, window: &winit::window::Window) -> Instance {
         let app_name = CString::new("Demo Engine Rust").unwrap();
         let engine_name = CString::new("Demo Engine").unwrap();
         let app_info = ApplicationInfo::builder()
@@ -250,7 +252,7 @@ impl Graphics {
             .engine_name(&*engine_name)
             .engine_version(make_version(0, 0, 1));
 
-        let extensions = Self::get_required_extensions(debug);
+        let extensions = Self::get_required_extensions(debug, window).unwrap();
         let layers = enabled_layers.iter().map(|s| {
             s.as_ptr()
         }).collect::<Vec<_>>();
@@ -289,23 +291,11 @@ impl Graphics {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    fn create_surface(window: &winit::window::Window, entry: &Entry, instance: &Instance) -> SurfaceKHR {
-        use winit::platform::windows::WindowExtWindows;
-        use winapi::um::libloaderapi::GetModuleHandleW;
-
-        let hwnd = window.hwnd() as HWND;
+    fn create_surface(window: &winit::window::Window, entry: &Entry, instance: &Instance) -> anyhow::Result<SurfaceKHR> {
         unsafe {
-            let hinstance = GetModuleHandleW(std::ptr::null()) as *const c_void;
-            let win32_create_info = Win32SurfaceCreateInfoKHR::builder()
-                .hwnd(hwnd)
-                .hinstance(hinstance);
-            let win32_surface_loader = Win32Surface::new(entry, instance);
-            let surface = win32_surface_loader
-                .create_win32_surface(&win32_create_info, None)
-                .expect("Failed to create Win32 surface.");
-            log::info!("Win32 surface successfully created.");
-            surface
+            let surface = ash_window::create_surface(entry, instance, window, None)
+                .with_context(|| "Failed to create surface.")?;
+            Ok(surface)
         }
     }
 
