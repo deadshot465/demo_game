@@ -21,6 +21,7 @@ pub struct Channel {
 #[derive(Clone, Debug)]
 pub struct Animation {
     pub channels: Vec<Channel>,
+    pub current_time: f32
 }
 
 macro_rules! interpolate {
@@ -167,20 +168,9 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
     }
 }
 
-/*fn cubic_spline_interpolate<T>(p0: T, p1: T, m0: T, m1: T, time: f32) -> T
-    where T: Mul<f32> {
-    let t_pow2 = time * time;
-    let t_pow3 = t_pow2 * time;
-
-    (2.0 * t_pow3 - 3.0 * t_pow2 + 1.0) * p0 +
-        (t_pow3 - 2.0 * t_pow2 + time) * m0 +
-        (-2.0 * t_pow3 + 3.0 * t_pow2) * p1 +
-        (t_pow3 - t_pow2) * m1
-}*/
-
 fn index_step(channel: &Channel, frame: f32) -> usize {
     // 60 fps
-    let seconds = frame / 60.0;
+    let seconds = frame;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return 0;
     }
@@ -196,7 +186,7 @@ fn index_step(channel: &Channel, frame: f32) -> usize {
 
 fn index_linear(channel: &Channel, frame: f32) -> (usize, usize, f32) {
     // 60 fps
-    let seconds = frame / 60.0;
+    let seconds = frame;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return (0, 0, 0.0);
     }
@@ -219,7 +209,7 @@ enum CubicSplineIndex {
 
 fn index_cubic_spline(channel: &Channel, frame: f32) -> CubicSplineIndex {
     // 60 fps
-    let seconds = frame / 60.0;
+    let seconds = frame;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return CubicSplineIndex::Clamped { index: 0 };
     }

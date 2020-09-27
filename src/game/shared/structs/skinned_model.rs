@@ -284,7 +284,8 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                 });
             }
             animations.insert(name, Animation {
-                channels
+                channels,
+                current_time: 0.0
             });
         }
         log::info!("Animation count: {}", animations.len());
@@ -414,16 +415,23 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    pub fn update(&mut self, _delta_time: f64) {
+    pub fn update(&mut self, delta_time: f64) {
         let animation_name = "default0".to_string();
-        let animation = self.animations.get(&animation_name).unwrap();
-        let current_frame = self.current_frame;
+        let animation = self.animations.get_mut(&animation_name).unwrap();
+        animation.current_time += delta_time as f32;
+        let animation_end_time = *animation.channels
+            .last().unwrap()
+            .inputs.last()
+            .unwrap();
+        if animation.current_time > animation_end_time {
+            animation.current_time -= animation_end_time;
+        }
         let buffer_size = std::mem::size_of::<Mat4>() * 500;
         for mesh in self.skinned_meshes.iter_mut() {
             let mut buffer = [Mat4::identity(); 500];
             let local_transform = mesh.transform;
             generate_joint_transforms(
-                animation, current_frame,
+                animation, animation.current_time,
                 mesh.root_joint.as_ref().unwrap(),
                 local_transform, &mut buffer);
             let mapped = mesh.ssbo.as_ref().unwrap().buffer.mapped_memory;
@@ -431,7 +439,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 std::ptr::copy_nonoverlapping(buffer.as_ptr() as *const std::ffi::c_void, mapped, buffer_size);
             }
         }
-        self.current_frame = (self.current_frame + 1.0) % 180.0;
+
     }
 
     pub fn render(&self, inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
