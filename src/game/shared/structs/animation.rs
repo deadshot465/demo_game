@@ -180,7 +180,7 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
 
 fn index_step(channel: &Channel, frame: f32) -> usize {
     // 60 fps
-    let seconds = frame % 60.0;
+    let seconds = frame / 60.0;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return 0;
     }
@@ -196,7 +196,7 @@ fn index_step(channel: &Channel, frame: f32) -> usize {
 
 fn index_linear(channel: &Channel, frame: f32) -> (usize, usize, f32) {
     // 60 fps
-    let seconds = frame % 60.0;
+    let seconds = frame / 60.0;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return (0, 0, 0.0);
     }

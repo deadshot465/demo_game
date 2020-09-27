@@ -2,7 +2,6 @@ use ash::vk::DeviceSize;
 use glam::Mat4;
 
 pub struct DynamicModel {
-    pub model_indices: Vec<usize>,
     pub model_matrices: Vec<Mat4>,
     pub buffer: *mut Mat4,
 }
@@ -17,7 +16,6 @@ pub struct DynamicBufferObject {
 impl DynamicModel {
     pub fn new() -> Self {
         DynamicModel {
-            model_indices: vec![],
             model_matrices: vec![],
             buffer: std::ptr::null_mut(),
         }

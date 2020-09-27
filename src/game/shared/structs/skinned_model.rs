@@ -414,7 +414,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, _delta_time: f64) {
         let animation_name = "default0".to_string();
         let animation = self.animations.get(&animation_name).unwrap();
         let current_frame = self.current_frame;
@@ -431,7 +431,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 std::ptr::copy_nonoverlapping(buffer.as_ptr() as *const std::ffi::c_void, mapped, buffer_size);
             }
         }
-        self.current_frame += 1.0;
+        self.current_frame = (self.current_frame + 1.0) % 180.0;
     }
 
     pub fn render(&self, inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,

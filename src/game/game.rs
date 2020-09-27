@@ -3,6 +3,7 @@ use crossbeam::sync::ShardedLock;
 use std::sync::{Arc, atomic::{
     AtomicU32
 }};
+use std::time;
 #[cfg(target_os = "windows")]
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use winit::{
@@ -32,6 +33,9 @@ pub struct Game<GraphicsType, BufferType, CommandType, TextureType>
     pub graphics: Arc<ShardedLock<GraphicsType>>,
     pub scene_manager: SceneManager,
     current_index: AtomicU32,
+    last_frame_time: time::Instant,
+    current_time: time::Instant,
+    frame_count: u32,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -51,6 +55,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
             current_index: AtomicU32::new(0),
+            last_frame_time: time::Instant::now(),
+            current_time: time::Instant::now(),
+            frame_count: 0,
         }
     }
 
@@ -77,11 +84,17 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         drop(resource_lock);
     }
 
-    pub fn update(&self) {
-        /*let mut lock = self.graphics.write().unwrap();
-        lock.update();
-        self.scene_manager.update(0);
-        drop(lock);*/
+    pub fn update(&mut self) {
+        let delta_time = self.current_time.elapsed().as_secs_f64();
+        self.scene_manager.update(delta_time);
+        self.current_time = time::Instant::now();
+        self.frame_count += 1;
+        let elapsed = self.last_frame_time.elapsed().as_secs_f64();
+        if elapsed >= 1.0 {
+            self.window.read().unwrap().set_title(&format!("Demo Game / FPS: {}", self.frame_count));
+            self.frame_count = 0;
+            self.last_frame_time = time::Instant::now();
+        }
     }
 
     pub fn render(&mut self) {
@@ -109,6 +122,9 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
             current_index: AtomicU32::new(0),
+            current_time: time::Instant::now(),
+            last_frame_time: time::Instant::now(),
+            frame_count: 0,
         }
     }
 

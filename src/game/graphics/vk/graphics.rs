@@ -575,21 +575,24 @@ impl Graphics {
         }
         let resource_manager = arc.unwrap();
         let resource_lock = resource_manager.read().unwrap();
-        let mut matrices = vec![];
-        let mut indices = vec![];
-        if resource_lock.models.is_empty() {
+        if resource_lock.models.is_empty() && resource_lock.skinned_models.is_empty() {
             return;
         }
+        let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
+        let mut matrices = vec![Mat4::identity(); model_count];
         for model in resource_lock.models.iter() {
-            indices.push(indices.len());
-            matrices.push(model.lock().get_world_matrix());
+            let model_lock = model.lock();
+            matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        for model in resource_lock.skinned_models.iter() {
+            let model_lock = model.lock();
+            matrices[model_lock.model_index] = model_lock.get_world_matrix();
         }
         drop(resource_lock);
         drop(resource_manager);
         let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
         let buffer_size = dynamic_alignment * DeviceSize::try_from(matrices.len()).unwrap();
         let mut dynamic_model = DynamicModel {
-            model_indices: indices,
             model_matrices: matrices,
             buffer: std::ptr::null_mut()
         };
@@ -610,7 +613,7 @@ impl Graphics {
                 *ptr = model.clone();
             }
             let mapped = buffer.map_memory(WHOLE_SIZE, 0);
-            std::ptr::copy(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
+            std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
         }
         self.dynamic_objects.models = dynamic_model;
         self.uniform_buffers.model_buffer = Some(ManuallyDrop::new(buffer));
@@ -1077,7 +1080,7 @@ impl Graphics {
                                             viewport: Viewport, scissor: Rect2D) -> Vec<CommandBuffer> {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         let resource_lock = resource_manager.read().unwrap();
-        let model_count = resource_lock.get_model_count();
+        let thread_count = self.thread_pool.thread_count;
         let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
         let push_constant = self.push_constant;
         let ptr = inheritance_info;
@@ -1085,7 +1088,19 @@ impl Graphics {
             let model_clone = model.clone();
             let model_index = model_clone.lock().model_index;
             let ptr_clone = ptr.clone();
-            self.thread_pool.threads[model_index % model_count]
+            self.thread_pool.threads[model_index % thread_count]
+                .add_job(move || {
+                    let model_lock = model_clone.lock();
+                    let ptr = ptr_clone;
+                    model_lock
+                        .render(ptr, dynamic_alignment, push_constant, viewport, scissor);
+                });
+        }
+        for model in resource_lock.skinned_models.iter() {
+            let model_clone = model.clone();
+            let model_index = model_clone.lock().model_index;
+            let ptr_clone = ptr.clone();
+            self.thread_pool.threads[model_index % thread_count]
                 .add_job(move || {
                     let model_lock = model_clone.lock();
                     let ptr = ptr_clone;
@@ -1094,7 +1109,7 @@ impl Graphics {
                 });
         }
         self.thread_pool.wait();
-        let command_buffers = resource_lock.models.iter()
+        let mut model_command_buffers = resource_lock.models.iter()
             .map(|model| {
                 let mesh_command_buffers = model.lock().meshes.iter()
                     .map(|mesh| mesh.command_buffer.unwrap())
@@ -1103,11 +1118,71 @@ impl Graphics {
             })
             .flatten()
             .collect::<Vec<_>>();
-        command_buffers
+        let mut skinned_model_command_buffers = resource_lock.skinned_models.iter()
+            .map(|model| {
+                let primitive_command_buffers = model.lock().skinned_meshes.iter()
+                    .map(|mesh| mesh.primitives.iter()
+                        .map(|primitive| primitive.command_buffer.unwrap())
+                        .collect::<Vec<_>>())
+                    .flatten()
+                    .collect::<Vec<_>>();
+                primitive_command_buffers
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        model_command_buffers.append(&mut skinned_model_command_buffers);
+        model_command_buffers
     }
 
-    pub fn update(&mut self) {
+    fn update_dynamic_buffer(&mut self, _delta_time: f64) {
+        let resource_manager = self.resource_manager.upgrade().unwrap();
+        let resource_lock = resource_manager.read().unwrap();
+        let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
+        let mut matrices = vec![Mat4::identity(); model_count];
+        for model in resource_lock.models.iter() {
+            let model_lock = model.lock();
+            matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        for model in resource_lock.skinned_models.iter() {
+            let model_lock = model.lock();
+            matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        drop(resource_lock);
+        drop(resource_manager);
+        self.dynamic_objects.models.model_matrices = matrices;
+        let dynamic_model = &self.dynamic_objects.models;
+        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
+        unsafe {
+            for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
+                let ptr = std::mem::transmute::<usize, *mut Mat4>(
+                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
+                        (i * (dynamic_alignment as usize))
+                );
+                *ptr = model.clone();
+            }
+            let mapped = self.uniform_buffers.model_buffer
+                .as_ref()
+                .unwrap()
+                .mapped_memory;
+            let buffer_size = self.uniform_buffers.model_buffer
+                .as_ref()
+                .unwrap()
+                .buffer_size;
+            std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
+        }
+    }
 
+    pub fn update(&mut self, delta_time: f64) {
+        let resource_arc = self.resource_manager.upgrade().unwrap();
+        let mut resource_lock = resource_arc.write().unwrap();
+        for model in resource_lock.models.iter_mut() {
+            model.lock().update(delta_time);
+        }
+        for model in resource_lock.skinned_models.iter_mut() {
+            model.lock().update(delta_time);
+        }
+        drop(resource_lock);
+        self.update_dynamic_buffer(delta_time);
     }
 
     pub fn render(&self) -> u32 {

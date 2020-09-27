@@ -61,13 +61,16 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.add_model("./models/bison/output.gltf", Vec3A::new(0.0, 0.0, 0.0),
                        Vec3A::new(400.0, 400.0, 400.0), Vec3A::new(0.0, 90.0, 90.0), Vec4::new(1.0, 1.0, 1.0, 1.0));
         self.add_skinned_model("./models/cesiumMan/CesiumMan.glb", Vec3A::new(-1.5, 0.0, -1.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 225.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
+                       Vec3A::new(2.0, 2.0, 2.0), Vec3A::new(0.0, 180.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
     }
 
-    fn update(&mut self, _delta_time: u64) {
+    fn update(&mut self, delta_time: f64) {
+        let graphics_arc = self.graphics.upgrade().unwrap();
+        let mut graphics_lock = graphics_arc.write().unwrap();
+        graphics_lock.update(delta_time);
     }
 
-    fn render(&self, _delta_time: u64) {
+    fn render(&self, _delta_time: f64) {
         /*let arc = self.resource_manager.upgrade();
         let arc_2 = self.graphics.upgrade();
         if let Some(resource_manager) = arc {

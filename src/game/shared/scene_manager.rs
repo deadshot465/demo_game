@@ -35,14 +35,14 @@ impl SceneManager {
         }
     }
 
-    pub fn update(&self, delta_time: u64) {
+    pub fn update(&self, delta_time: f64) {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
             scene.borrow_mut().update(delta_time)
         }
     }
 
-    pub fn render(&self, delta_time: u64) {
+    pub fn render(&self, delta_time: f64) {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
             scene.borrow().render(delta_time);

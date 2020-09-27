@@ -276,6 +276,10 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         drop(graphics_lock);
     }
 
+    pub fn update(&mut self, _delta_time: f64) {
+
+    }
+
     pub fn render(&self, inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
                   dynamic_alignment: u64,
                   push_constant: PushConstant, viewport: ash::vk::Viewport, scissor: ash::vk::Rect2D) {
