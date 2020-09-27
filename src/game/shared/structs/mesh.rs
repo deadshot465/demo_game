@@ -1,18 +1,12 @@
-use ash::vk::*;
-use ash::version::DeviceV1_0;
 use crossbeam::sync::ShardedLock;
 use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use crate::game::graphics;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
-
-#[derive(Clone)]
-pub enum SamplerResource {
-    DescriptorSet(ash::vk::DescriptorSet)
-}
+use crate::game::enums::SamplerResource;
 
 #[derive(Clone, Debug)]
 pub struct Primitive {
@@ -67,44 +61,6 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
         }
         else {
             panic!("Index buffer is not yet created.");
-        }
-    }
-
-    pub fn create_sampler_resource(&mut self, logical_device: Weak<ash::Device>,
-                                   sampler_descriptor_set_layout: DescriptorSetLayout,
-                                   descriptor_pool: DescriptorPool) {
-        let device = logical_device.upgrade();
-        if device.is_none() {
-            log::error!("Cannot upgrade weak reference to strong reference.");
-            return;
-        }
-        let device = device.unwrap();
-        unsafe {
-            let descriptor_set_info = DescriptorSetAllocateInfo::builder()
-                .descriptor_pool(descriptor_pool)
-                .set_layouts(&[sampler_descriptor_set_layout])
-                .build();
-            let descriptor_set = device
-                .allocate_descriptor_sets(&descriptor_set_info)
-                .expect("Failed to allocate descriptor set for texture.");
-            self.sampler_resource = Some(SamplerResource::DescriptorSet(descriptor_set[0]));
-            log::info!("Successfully allocate descriptor set for texture.");
-
-            let texture_lock = self.texture[0].read().unwrap();
-            let image_info = DescriptorImageInfo::builder()
-                .sampler(texture_lock.sampler)
-                .image_view(texture_lock.image_view)
-                .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .build();
-            let write_descriptor = WriteDescriptorSet::builder()
-                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .dst_set(descriptor_set[0])
-                .dst_binding(0)
-                .dst_array_element(0)
-                .image_info(&[image_info])
-                .build();
-            device.update_descriptor_sets(&[write_descriptor], &[]);
-            log::info!("Descriptor set for texture sampler successfully updated.");
         }
     }
 }

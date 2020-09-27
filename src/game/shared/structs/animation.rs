@@ -34,7 +34,7 @@ macro_rules! interpolate {
     }}
 }
 
-pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: &Joint, local_transform: Mat4, buffer: &mut [[[f32; 4]; 4]; 500]) {
+pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: &Joint, local_transform: Mat4, buffer: &mut [Mat4; 500]) {
     let mut translation = root_joint.translation.clone();
     let mut rotation = root_joint.rotation.clone();
     let mut scale = root_joint.scale.clone();
@@ -161,7 +161,7 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
         rotation *
         Mat4::from_scale(glam::Vec3::from(scale));
     let final_transform = transform * root_joint.inverse_bind_matrices;
-    buffer[root_joint.index] = final_transform.to_cols_array_2d();
+    buffer[root_joint.index] = final_transform;
     for child in root_joint.children.iter() {
         generate_joint_transforms(animation, frame, child, transform.clone(), buffer);
     }
@@ -180,7 +180,7 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
 
 fn index_step(channel: &Channel, frame: f32) -> usize {
     // 60 fps
-    let seconds = frame / 60.0;
+    let seconds = frame % 60.0;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return 0;
     }
@@ -196,7 +196,7 @@ fn index_step(channel: &Channel, frame: f32) -> usize {
 
 fn index_linear(channel: &Channel, frame: f32) -> (usize, usize, f32) {
     // 60 fps
-    let seconds = frame / 60.0;
+    let seconds = frame % 60.0;
     if seconds < *channel.inputs.first().unwrap() || channel.inputs.len() < 2 {
         return (0, 0, 0.0);
     }

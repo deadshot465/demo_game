@@ -1,8 +1,9 @@
+use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use crate::game::shared::structs::{Model, SkinnedModel};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
@@ -123,10 +124,22 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
     }
 }
 
-impl ResourceManager<Graphics, Buffer, ash::vk::CommandBuffer, Image> {
-    pub fn create_sampler_resource(&self) {
-        for model in self.models.iter() {
-            model.lock().create_sampler_resource();
+impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
+    pub fn create_sampler_resource(&mut self) {
+        for model in self.models.iter_mut() {
+            let mut model_lock = model.lock();
+            model_lock.create_sampler_resource();
+        }
+        for model in self.skinned_models.iter_mut() {
+            let mut model_lock = model.lock();
+            model_lock.create_sampler_resource();
+        }
+    }
+
+    pub async fn create_ssbo(&mut self) {
+        for model in self.skinned_models.iter_mut() {
+            let mut model_lock = model.lock();
+            model_lock.create_ssbo().await;
         }
     }
 }

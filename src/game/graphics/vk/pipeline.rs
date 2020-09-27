@@ -3,6 +3,7 @@ use ash::{
     vk::*
 };
 use ash::version::DeviceV1_0;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::Shader;
 use crate::game::structs::{BlendMode, Vertex, PushConstant};
+use crate::game::shared::structs::SkinnedVertex;
 
 pub struct Pipeline {
     pub render_pass: RenderPass,
@@ -17,16 +19,54 @@ pub struct Pipeline {
     pub pipeline_layouts: HashMap<ShaderType, PipelineLayout>,
     pub graphic_pipelines: HashMap<ShaderType, Vec<ash::vk::Pipeline>>,
     owned_renderpass: bool,
+    pipeline_caches: HashMap<ShaderType, Arc<RwLock<Vec<Vec<u8>>>>>,
+    shader_types: Vec<(ShaderType, String)>,
 }
 
 impl Pipeline {
     pub fn new(device: Arc<Device>) -> Self {
+        let mut pipeline_caches = HashMap::new();
+        if let Err(_) = std::fs::create_dir("./caches") {
+            log::warn!("The 'caches' directory already exists.");
+        }
+        let shader_types = vec![
+            (ShaderType::BasicShader, ShaderType::BasicShader.to_string()),
+            (ShaderType::BasicShaderForMesh, ShaderType::BasicShaderForMesh.to_string()),
+            (ShaderType::BasicShaderWithoutTexture, ShaderType::BasicShaderWithoutTexture.to_string()),
+            (ShaderType::AnimatedModel, ShaderType::AnimatedModel.to_string())
+        ];
+        for (shader_type, type_name) in shader_types.iter() {
+            for count in 0..BlendMode::END.0 {
+                let mut file_name = type_name.clone();
+                file_name += "_";
+                file_name.push_str(count.to_string().as_str());
+                file_name += ".bin";
+                let mut path = "caches/".to_string();
+                path.push_str(file_name.as_str());
+                let result = std::fs::read(&path);
+                if result.is_err() {
+                    let entry = pipeline_caches.entry(*shader_type)
+                        .or_insert(Vec::<Vec<u8>>::new());
+                    entry.push(vec![]);
+                    continue;
+                }
+                let file_content = result.unwrap();
+                let entry = pipeline_caches.entry(*shader_type)
+                    .or_insert(vec![]);
+                entry.push(file_content);
+            }
+        }
+        let pipeline_caches = pipeline_caches.into_iter()
+            .map(|(k, v)| (k, Arc::new(RwLock::new(v))))
+            .collect::<HashMap<_, _>>();
         Pipeline {
             logical_device: device,
             render_pass: RenderPass::null(),
             pipeline_layouts: HashMap::new(),
             graphic_pipelines: HashMap::new(),
             owned_renderpass: false,
+            pipeline_caches,
+            shader_types
         }
     }
 
@@ -110,7 +150,6 @@ impl Pipeline {
     pub async fn create_graphic_pipelines(&mut self, descriptor_set_layout: &[DescriptorSetLayout],
                                           sample_count: SampleCountFlags,
                                           shaders: Vec<Shader>,
-                                          _pipeline_cache: Option<PipelineCache>,
                                           shader_type: ShaderType) {
         let push_constant_range = vec![PushConstantRange::builder()
             .stage_flags(ShaderStageFlags::FRAGMENT)
@@ -193,10 +232,19 @@ impl Pipeline {
                     .get(&shader_type).unwrap().clone();
                 let render_pass = self.render_pass.clone();
                 let device = self.logical_device.clone();
+                let caches = self.pipeline_caches.get(&shader_type)
+                    .cloned()
+                    .unwrap();
                 worker_threads.push(
                     tokio::spawn(async move {
-                        let attr_desc = Vertex::get_attribute_description(0);
-                        let binding_desc = vec![Vertex::get_binding_description(0, VertexInputRate::VERTEX)];
+                        let attr_desc = match shader_type {
+                            ShaderType::AnimatedModel => SkinnedVertex::get_attribute_description(0),
+                            _ => Vertex::get_attribute_description(0)
+                        };
+                        let binding_desc = match shader_type {
+                            ShaderType::AnimatedModel => vec![SkinnedVertex::get_binding_description(0, VertexInputRate::VERTEX)],
+                            _ => vec![Vertex::get_binding_description(0, VertexInputRate::VERTEX)]
+                        };
                         let vi_info = PipelineVertexInputStateCreateInfo::builder()
                             .vertex_attribute_descriptions(attr_desc.as_slice())
                             .vertex_binding_descriptions(binding_desc.as_slice());
@@ -246,6 +294,12 @@ impl Pipeline {
                         stage_infos.iter_mut().for_each(|s| {
                             s.p_name = name.as_ptr();
                         });
+                        let caches_lock = caches.read();
+                        let cache_data = caches_lock.get(i).unwrap();
+                        let cache_info = PipelineCacheCreateInfo::builder()
+                            .initial_data(cache_data.as_slice());
+                        let pipeline_cache = device.create_pipeline_cache(&cache_info, None)
+                            .expect("Failed to create pipeline cache.");
                         let pipeline_info = vec![GraphicsPipelineCreateInfo::builder()
                             .layout(pipeline_layout)
                             .base_pipeline_index(-1)
@@ -264,20 +318,28 @@ impl Pipeline {
                             .build()];
                         let pipeline = device
                             .create_graphics_pipelines(
-                                PipelineCache::null(),
+                                pipeline_cache,
                                 pipeline_info.as_slice(),
                                 None
                             ).expect("Failed to create graphics pipeline.");
-                        log::info!("Graphics pipeline successfully created.");
-                        pipeline[0]
+                        (pipeline[0], pipeline_cache)
                     }));
             }
         }
 
         let mut pipelines = vec![];
-        for worker in worker_threads.into_iter() {
-            let pipeline = worker.await.unwrap();
+        for (index, worker) in worker_threads.into_iter().enumerate() {
+            let (pipeline, cache) = worker.await.unwrap();
             pipelines.push(pipeline);
+            unsafe {
+                let cache_data = self.logical_device.get_pipeline_cache_data(cache)
+                    .expect("Failed to retrieve binary data from pipeline cache.");
+                let entry = self.pipeline_caches.entry(shader_type)
+                    .or_insert(Arc::new(RwLock::new(vec![])));
+                let mut vector_lock = entry.write();
+                vector_lock[index] = cache_data;
+                self.logical_device.destroy_pipeline_cache(cache, None);
+            }
         }
         self.graphic_pipelines.insert(shader_type, pipelines);
         log::info!("Graphic pipelines successfully created.");
@@ -291,10 +353,28 @@ impl Pipeline {
     pub fn get_pipeline_layout(&self, shader_type: ShaderType) -> ash::vk::PipelineLayout {
         self.pipeline_layouts.get(&shader_type).unwrap().clone()
     }
+
+    fn write_cache_data(&self) {
+        for (shader_type, type_name) in self.shader_types.iter() {
+            let cache_lock = self.pipeline_caches.get(shader_type).unwrap();
+            let cache_data = cache_lock.read();
+            for (index, data) in cache_data.iter().enumerate() {
+                let mut file_name = type_name.clone();
+                file_name += "_";
+                file_name.push_str(index.to_string().as_str());
+                file_name += ".bin";
+                let mut path = "caches/".to_string();
+                path.push_str(file_name.as_str());
+                std::fs::write(&path, data.as_slice())
+                    .expect("Failed to write binary data of pipeline cache to disk.");
+            }
+        }
+    }
 }
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
+        self.write_cache_data();
         unsafe {
             for (_, pipelines) in self.graphic_pipelines.iter() {
                 for pipeline in pipelines.iter() {

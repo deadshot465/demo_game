@@ -71,9 +71,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         let mut lock = self.graphics.write().unwrap();
         lock.initialize().await;
         drop(lock);
-        let lock = self.resource_manager.read().unwrap();
-        lock.create_sampler_resource();
-        drop(lock);
+        let mut resource_lock = self.resource_manager.write().unwrap();
+        resource_lock.create_sampler_resource();
+        resource_lock.create_ssbo().await;
+        drop(resource_lock);
     }
 
     pub fn update(&self) {

@@ -13,9 +13,10 @@ use std::sync::{
 };
 use tokio::task::JoinHandle;
 
+use crate::game::enums::{create_sampler_resource, SamplerResource};
 use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Primitive, SamplerResource};
+use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Primitive};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::{read_raw_data, create_texture};
@@ -258,18 +259,21 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn create_sampler_resource(&mut self) {
-        let _graphics = self.graphics.upgrade().unwrap();
-        let lock = _graphics.read().unwrap();
+        let graphics_arc = self.graphics.upgrade().unwrap();
+        let graphics_lock = graphics_arc.read().unwrap();
         for mesh in self.meshes.iter_mut() {
             if !mesh.texture.is_empty() {
-                mesh.create_sampler_resource(
-                    Arc::downgrade(&lock.logical_device),
-                    lock.sampler_descriptor_set_layout,
-                    lock.descriptor_pool
+                let texture = mesh.texture[0].read().unwrap();
+                let sampler_resource = create_sampler_resource(
+                    Arc::downgrade(&graphics_lock.logical_device),
+                    graphics_lock.sampler_descriptor_set_layout,
+                    graphics_lock.descriptor_pool, &*texture
                 );
+                drop(texture);
+                mesh.sampler_resource = Some(sampler_resource);
             }
         }
-        drop(lock);
+        drop(graphics_lock);
     }
 
     pub fn render(&self, inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
@@ -290,11 +294,9 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 };
                 let pipeline = graphics_lock
                     .pipeline.get_pipeline(shader_type, 0);
-
                 let inheritance = inheritance_info.load(Ordering::SeqCst)
                     .as_ref()
                     .unwrap();
-
                 let command_buffer_begin_info = CommandBufferBeginInfo::builder()
                     .inheritance_info(inheritance)
                     .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)

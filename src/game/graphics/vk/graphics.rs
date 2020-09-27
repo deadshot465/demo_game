@@ -22,7 +22,6 @@ use std::ffi::{
     c_void, CStr, CString
 };
 use crossbeam::sync::ShardedLock;
-use dashmap::DashMap;
 use glam::{Vec3A, Vec4, Mat4};
 use parking_lot::Mutex;
 use std::convert::TryFrom;
@@ -50,6 +49,7 @@ pub struct Graphics {
     pub push_constant: PushConstant,
     pub current_index: usize,
     pub sampler_descriptor_set_layout: DescriptorSetLayout,
+    pub ssbo_descriptor_set_layout: DescriptorSetLayout,
     pub descriptor_pool: DescriptorPool,
     pub command_pool: CommandPool,
     pub thread_pool: ThreadPool,
@@ -57,7 +57,6 @@ pub struct Graphics {
     pub graphics_queue: Arc<Mutex<Queue>>,
     pub present_queue: Arc<Mutex<Queue>>,
     pub compute_queue: Arc<Mutex<Queue>>,
-    pub command_buffer_list: DashMap<CommandPool, Vec<CommandBuffer>>,
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager: Weak<ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
@@ -143,6 +142,7 @@ impl Graphics {
 
         let descriptor_set_layout = Self::create_descriptor_set_layout(device.as_ref());
         let sampler_descriptor_set_layout = Self::create_sampler_descriptor_set_layout(device.as_ref());
+        let ssbo_descriptor_set_layout = Self::create_ssbo_descriptor_set_layout(device.as_ref());
         let view_projection = Self::create_view_projection(
             camera.read().unwrap().deref(), Arc::downgrade(&device), Arc::downgrade(&allocator));
         let directional_light = Directional::new(
@@ -210,7 +210,7 @@ impl Graphics {
             depth_format,
             allocator,
             thread_pool,
-            command_buffer_list: DashMap::new(),
+            ssbo_descriptor_set_layout,
         }
     }
 
@@ -516,6 +516,24 @@ impl Graphics {
         }
     }
 
+    fn create_ssbo_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
+        let layout_bindings = vec![DescriptorSetLayoutBinding::builder()
+            .binding(0)
+            .descriptor_count(1)
+            .descriptor_type(DescriptorType::STORAGE_BUFFER)
+            .stage_flags(ShaderStageFlags::VERTEX)
+            .build()];
+        let create_info = DescriptorSetLayoutCreateInfo::builder()
+            .bindings(layout_bindings.as_slice());
+        unsafe {
+            let descriptor_set_layout = device
+                .create_descriptor_set_layout(&create_info, None)
+                .expect("Failed to create descriptor set layout for ssbo.");
+            log::info!("Descriptor set layout for ssbo successfully created.");
+            descriptor_set_layout
+        }
+    }
+
     fn create_view_projection(camera: &Camera,
                               device: Weak<Device>, allocator: Weak<ShardedLock<Allocator>>) -> super::Buffer {
         let vp_size = std::mem::size_of::<ViewProjection>();
@@ -600,6 +618,7 @@ impl Graphics {
 
     fn allocate_descriptor_set(&mut self) {
         let mut texture_count = 0_usize;
+        let mut ssbo_count = 0;
         if let Some(r) = self.resource_manager.upgrade() {
             let resource_lock = r.read().unwrap();
             for model in resource_lock.models.iter() {
@@ -611,6 +630,7 @@ impl Graphics {
                     };
                 }
             }
+            ssbo_count = resource_lock.get_skinned_model_count();
             drop(resource_lock);
         }
         let mut pool_sizes = vec![];
@@ -633,6 +653,10 @@ impl Graphics {
         pool_sizes.push(DescriptorPoolSize::builder()
             .descriptor_count(texture_count as u32)
             .ty(DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .build());
+        pool_sizes.push(DescriptorPoolSize::builder()
+            .descriptor_count(ssbo_count as u32)
+            .ty(DescriptorType::STORAGE_BUFFER)
             .build());
 
         let image_count = self.swapchain.swapchain_images.len();
@@ -730,7 +754,10 @@ impl Graphics {
             let shaders = vec![
                 super::Shader::new(
                     self.logical_device.clone(),
-                    "./shaders/vert.spv",
+                    match shader_type {
+                        ShaderType::AnimatedModel => "./shaders/basicShader_animated.spv",
+                        _ => "./shaders/vert.spv"
+                    },
                     ShaderStageFlags::VERTEX
                 ),
                 super::Shader::new(
@@ -745,12 +772,19 @@ impl Graphics {
             ];
 
             let mut descriptor_set_layout = vec![self.descriptor_set_layout];
-            if shader_type == ShaderType::BasicShader {
-                descriptor_set_layout.push(self.sampler_descriptor_set_layout);
+            match shader_type {
+                ShaderType::BasicShader => {
+                    descriptor_set_layout.push(self.sampler_descriptor_set_layout);
+                },
+                ShaderType::AnimatedModel => {
+                    descriptor_set_layout.push(self.sampler_descriptor_set_layout);
+                    descriptor_set_layout.push(self.ssbo_descriptor_set_layout);
+                },
+                _ => ()
             }
             self.pipeline.create_graphic_pipelines(
                 descriptor_set_layout.as_slice(),
-                self.sample_count, shaders, None, shader_type)
+                self.sample_count, shaders, shader_type)
                 .await;
         }
     }
@@ -973,6 +1007,7 @@ impl Graphics {
             sample_count);
         self.create_graphics_pipeline(ShaderType::BasicShader).await;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture).await;
+        self.create_graphics_pipeline(ShaderType::AnimatedModel).await;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
         self.frame_buffers = Self::create_frame_buffers(
@@ -1160,6 +1195,7 @@ impl Drop for Graphics {
                 self.logical_device.destroy_command_pool(*thread.command_pool.lock(), None);
             }
             self.logical_device.destroy_command_pool(self.command_pool, None);
+            self.logical_device.destroy_descriptor_set_layout(self.ssbo_descriptor_set_layout, None);
             self.logical_device.destroy_descriptor_set_layout(self.sampler_descriptor_set_layout, None);
             self.logical_device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.allocator.write().unwrap().destroy();

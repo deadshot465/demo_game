@@ -21,8 +21,7 @@ pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
     scene_name: String,
     model_tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     skinned_model_tasks: Vec<JoinHandle<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
-    model_count: usize,
-    skinned_model_count: usize,
+    model_count: usize
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType, BufferType, CommandType, TextureType>
@@ -38,7 +37,6 @@ impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType,
             model_tasks: vec![],
             model_count: 0,
             skinned_model_tasks: vec![],
-            skinned_model_count: 0,
         }
     }
 }
@@ -161,7 +159,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             let z: f32 = rotation.z();
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
             model.color = color;
-            model.model_index = lock.get_skinned_model_count();
+            model.model_index = lock.get_model_count();
             drop(lock);
             let mut lock = resource_manager
                 .write()
@@ -171,10 +169,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         }
         else {
             drop(lock);
-            let task = SkinnedModel::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.skinned_model_count);
+            let task = SkinnedModel::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.model_count);
             self.skinned_model_tasks.push(task);
         }
-        self.skinned_model_count += 1;
+        self.model_count += 1;
         drop(resource_manager);
     }
 

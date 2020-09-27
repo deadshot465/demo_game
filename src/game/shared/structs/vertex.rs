@@ -9,6 +9,7 @@ use ash::{
 use glam::{Vec2, Vec3A};
 use std::convert::TryFrom;
 
+#[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
     pub position: Vec3A,

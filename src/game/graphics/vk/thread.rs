@@ -15,16 +15,14 @@ pub struct Thread {
     worker: JoinHandle<()>,
     task_queue: Arc<ArrayQueue<Box<dyn FnOnce() + Send + 'static>>>,
     sender: Sender<()>,
-    receiver: Receiver<()>,
 }
 
 impl Thread {
     pub fn new(device: &ash::Device, queue_index: u32) -> Self {
         let task_queue = Arc::new(ArrayQueue::new(20));
         let queue = task_queue.clone();
-        let (sender, receiver) = channel::<()>(50);
+        let (sender, receiver) = channel::<()>(100);
         let s1 = sender.clone();
-        let r1 = sender.subscribe();
         let destroying = Arc::new(AtomicBool::new(false));
         let d1 = destroying.clone();
         let pool_info = ash::vk::CommandPoolCreateInfo::builder()
@@ -38,11 +36,11 @@ impl Thread {
                 destroying,
                 worker: tokio::spawn(async move {
                     let s1 = s1;
-                    let mut r1 = r1;
+                    let mut receiver = receiver;
                     let d1 = d1;
                     'outer: loop {
                         let mut work: Result<Box<dyn FnOnce() + Send>, crossbeam::queue::PopError>;
-                        while let Ok(_) = r1.recv().await {
+                        while let Ok(_) = receiver.recv().await {
                             if d1.load(Ordering::SeqCst) {
                                 break 'outer;
                             }
@@ -60,7 +58,6 @@ impl Thread {
                 }),
                 task_queue: task_queue.clone(),
                 sender,
-                receiver,
                 command_pool: Arc::new(Mutex::new(command_pool)),
             }
         }
