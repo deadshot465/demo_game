@@ -18,6 +18,7 @@ layout (binding = 1) uniform DirectionalLight
 {
     vec4 diffuse;
     vec3 light_direction;
+    float padding0;
     float ambient_intensity;
     float specular_intensity;
 } direction_light;

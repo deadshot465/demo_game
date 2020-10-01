@@ -14,7 +14,7 @@ use crate::game::shared::enums::{create_sampler_resource, ShaderType, SamplerRes
 use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel, SSBO, generate_joint_transforms};
 use crate::game::structs::{Joint, PushConstant};
 use crate::game::traits::{Disposable, GraphicsBase};
-use crate::game::util::{create_texture, read_raw_data};
+use crate::game::util::read_raw_data;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::convert::TryFrom;
 use ash::version::DeviceV1_0;
@@ -49,6 +49,9 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                     position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
         let meshes = Self::process_model(&document, &buffers, images);
         let animations = Self::process_animation(&document, &buffers);
+        for (name, _) in animations.iter() {
+            println!("{}", &name);
+        }
         SkinnedModel {
             position,
             scale,
@@ -153,6 +156,22 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                             },
                             joints: Vec4::new(joints[0] as f32, joints[1] as f32, joints[2] as f32, joints[3] as f32),
                             weights: Vec4::from(weights)
+                        })
+                        .collect::<Vec<_>>();
+                    vertices
+                },
+                (Some(positions), Some(normals), Some(uvs), None, None) => {
+                    let vertices = positions
+                        .zip(normals)
+                        .zip(uvs.into_f32())
+                        .map(|((pos, normals), uv)| SkinnedVertex {
+                            vertex: Vertex {
+                                position: Vec3A::from(pos),
+                                normal: Vec3A::from(normals),
+                                uv: Vec2::from(uv)
+                            },
+                            joints: Vec4::zero(),
+                            weights: Vec4::zero(),
                         })
                         .collect::<Vec<_>>();
                     vertices
@@ -303,7 +322,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
 
 impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
-               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> JoinHandle<Self> {
+               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> anyhow::Result<JoinHandle<Self>> {
         log::info!("Loading skinned model from glTF {}...", file_name);
         let graphics_arc = graphics.upgrade().unwrap();
         let model = tokio::spawn(async move {
@@ -321,7 +340,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             }
             log::info!("Skinned model index: {}, Command pool: {:?}", model_index, command_pool);
             let (document, buffers, images) = read_raw_data(file_name).unwrap();
-            let textures = create_texture(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
+            let textures = Graphics::create_gltf_textures(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
             let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color);
             {
                 let graphics_lock = graphics_clone.read().unwrap();
@@ -334,13 +353,13 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     }
                 }
             }
-            loaded_model.create_buffers(graphics_clone.clone(), command_pool.clone()).await;
+            loaded_model.create_buffers(graphics_clone.clone(), command_pool.clone()).await.unwrap();
             loaded_model
         });
-        model
+        Ok(model)
     }
 
-    async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) {
+    async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
             for primitive in mesh.primitives.iter_mut() {
@@ -364,11 +383,12 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 .zip(mesh_handles.iter_mut())
                 .collect::<Vec<_>>();
             for (primitive, handle) in zipped {
-                let (vertex_buffer, index_buffer) = handle.await.unwrap();
+                let (vertex_buffer, index_buffer) = handle.await??;
                 primitive.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
                 primitive.index_buffer = Some(ManuallyDrop::new(index_buffer));
             }
         }
+        Ok(())
     }
 
     pub async fn create_ssbo(&mut self) {
@@ -408,7 +428,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 let sampler_resource = create_sampler_resource(
                     Arc::downgrade(&graphics_lock.logical_device),
                     graphics_lock.sampler_descriptor_set_layout,
-                    graphics_lock.descriptor_pool, &*texture
+                    *graphics_lock.descriptor_pool.lock(), &*texture
                 );
                 primitive.sampler_resource = Some(sampler_resource);
             }
@@ -416,7 +436,11 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn update(&mut self, delta_time: f64) {
-        let animation_name = "default0".to_string();
+        let mut animation_name = String::new();
+        for (name, _) in self.animations.iter() {
+            animation_name = name.clone();
+            break;
+        }
         let animation = self.animations.get_mut(&animation_name).unwrap();
         animation.current_time += delta_time as f32;
         let animation_end_time = *animation.channels
@@ -430,10 +454,13 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         for mesh in self.skinned_meshes.iter_mut() {
             let mut buffer = [Mat4::identity(); 500];
             let local_transform = mesh.transform;
-            generate_joint_transforms(
-                animation, animation.current_time,
-                mesh.root_joint.as_ref().unwrap(),
-                local_transform, &mut buffer);
+            match mesh.root_joint.as_ref() {
+                Some(joint) => generate_joint_transforms(
+                    animation, animation.current_time,
+                    joint,
+                    local_transform, &mut buffer),
+                None => continue
+            }
             let mapped = mesh.ssbo.as_ref().unwrap().buffer.mapped_memory;
             unsafe {
                 std::ptr::copy_nonoverlapping(buffer.as_ptr() as *const std::ffi::c_void, mapped, buffer_size);

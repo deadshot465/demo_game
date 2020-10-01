@@ -12,7 +12,7 @@ use winit::event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode};
 use wio::com::ComPtr;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     let log_level = dotenv::var("LOG").unwrap();
     Builder::new()
@@ -31,16 +31,16 @@ async fn main() {
     let event_loop = EventLoop::new();
     match api.as_str() {
         "VULKAN" => {
-            let mut game = Game::<VK::Graphics, VK::Buffer, ash::vk::CommandBuffer, VK::Image>::new("Demo game", 1280.0, 720.0, &event_loop);
+            let mut game = Game::<VK::Graphics, VK::Buffer, ash::vk::CommandBuffer, VK::Image>::new("Demo game", 1280.0, 720.0, &event_loop)?;
             if game.initialize() {
-                game.load_content().await;
+                game.load_content().await?;
             }
             log::info!("Game content loaded.");
             event_loop.run(move |event, _target, control_flow| {
                 //*control_flow = ControlFlow::Poll;
                 let game = &mut game;
-                game.update();
-                game.render();
+                game.update().unwrap();
+                game.render().unwrap();
                 match event {
                     Event::WindowEvent { event, .. } => {
                         match event {
@@ -103,4 +103,5 @@ async fn main() {
         }
         _ => (),
     }
+    Ok(())
 }

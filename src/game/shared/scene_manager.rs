@@ -21,11 +21,12 @@ impl SceneManager {
         }
     }
 
-    pub fn load_content(&self) {
+    pub fn load_content(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().load_content();
+            scene.borrow_mut().load_content()?;
         }
+        Ok(())
     }
 
     pub async fn wait_for_all_tasks(&self) {
@@ -35,11 +36,12 @@ impl SceneManager {
         }
     }
 
-    pub fn update(&self, delta_time: f64) {
+    pub fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().update(delta_time)
+            scene.borrow_mut().update(delta_time)?;
         }
+        Ok(())
     }
 
     pub fn render(&self, delta_time: f64) {

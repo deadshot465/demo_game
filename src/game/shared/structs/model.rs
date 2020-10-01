@@ -19,7 +19,7 @@ use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Primitive};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
-use crate::game::util::{read_raw_data, create_texture};
+use crate::game::util::read_raw_data;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -197,7 +197,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(file_name: &'static str, graphics: Weak<ShardedLock<Graphics>>,
-               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> JoinHandle<Self> {
+               position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, model_index: usize) -> anyhow::Result<JoinHandle<Self>> {
         log::info!("Loading model {}...", file_name);
         let graphics_arc = graphics.upgrade().unwrap();
         let model = tokio::spawn(async move {
@@ -215,7 +215,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             }
             log::info!("Model index: {}, Command pool: {:?}", model_index, command_pool);
             let (document, buffers, images) = read_raw_data(file_name).unwrap();
-            let textures = create_texture(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
+            let textures = Graphics::create_gltf_textures(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
             let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color);
             {
                 let graphics_lock = graphics_clone.read().unwrap();
@@ -226,13 +226,13 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 }
                 drop(graphics_lock);
             }
-            loaded_model.create_buffers(graphics_clone).await;
+            loaded_model.create_buffers(graphics_clone).await.unwrap();
             loaded_model
         });
-        model
+        Ok(model)
     }
 
-    async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) {
+    async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) -> anyhow::Result<()> {
         for (index, mesh) in self.meshes.iter_mut().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);
             let vertices = mesh.primitives.iter()
@@ -252,10 +252,11 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 Graphics::create_buffer(g, vertices, indices, pool).await
             });
 
-            let (vertex_buffer, index_buffer) = buffer_result.await.unwrap();
+            let (vertex_buffer, index_buffer) = buffer_result.await??;
             mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
             mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
         }
+        Ok(())
     }
 
     pub fn create_sampler_resource(&mut self) {
@@ -267,7 +268,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 let sampler_resource = create_sampler_resource(
                     Arc::downgrade(&graphics_lock.logical_device),
                     graphics_lock.sampler_descriptor_set_layout,
-                    graphics_lock.descriptor_pool, &*texture
+                    *graphics_lock.descriptor_pool.lock(), &*texture
                 );
                 drop(texture);
                 mesh.sampler_resource = Some(sampler_resource);

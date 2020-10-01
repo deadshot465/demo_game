@@ -32,7 +32,7 @@ impl SSBO {
             std::ptr::copy_nonoverlapping(data.as_ptr() as *const std::ffi::c_void, mapped, buffer_size);
             let layouts = vec![graphics_lock.ssbo_descriptor_set_layout];
             let allocate_info = DescriptorSetAllocateInfo::builder()
-                .descriptor_pool(graphics_lock.descriptor_pool)
+                .descriptor_pool(*graphics_lock.descriptor_pool.lock())
                 .set_layouts(layouts.as_slice());
             let descriptor_set = device.allocate_descriptor_sets(&allocate_info)
                 .expect("Failed to allocate descriptor set for SSBO.");

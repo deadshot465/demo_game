@@ -47,27 +47,29 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
     }
 
-    fn load_content(&mut self) {
+    fn load_content(&mut self) -> anyhow::Result<()> {
+        self.add_skinned_model("./models/nathan/Nathan.glb", Vec3A::new(-1.5, 0.0, -1.5),
+                               Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
+        self.add_model("./models/ak/output.gltf", Vec3A::new(2.5, 0.0, 2.5),
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
         self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0));
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0))?;
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));
-        self.add_model("./models/tank/tank.gltf", Vec3A::new(-1.5, 0.0, -1.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 225.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
-        self.add_model("./models/tank/tank.gltf", Vec3A::new(2.5, 0.0, 2.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 270.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));*/
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
         self.add_model("./models/mr.incredible/Mr.Incredible.glb", Vec3A::new(0.0, 0.0, 0.0),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0));
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
         self.add_model("./models/bison/output.gltf", Vec3A::new(0.0, 0.0, 0.0),
-                       Vec3A::new(400.0, 400.0, 400.0), Vec3A::new(0.0, 90.0, 90.0), Vec4::new(1.0, 1.0, 1.0, 1.0));
+                       Vec3A::new(400.0, 400.0, 400.0), Vec3A::new(0.0, 90.0, 90.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
         self.add_skinned_model("./models/cesiumMan/CesiumMan.glb", Vec3A::new(-1.5, 0.0, -1.5),
-                       Vec3A::new(2.0, 2.0, 2.0), Vec3A::new(0.0, 180.0, 0.0), Vec4::new(1.0, 0.0, 0.0, 1.0));
+                       Vec3A::new(2.0, 2.0, 2.0), Vec3A::new(0.0, 180.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
+        Ok(())
     }
 
-    fn update(&mut self, delta_time: f64) {
+    fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let graphics_arc = self.graphics.upgrade().unwrap();
         let mut graphics_lock = graphics_arc.write().unwrap();
-        graphics_lock.update(delta_time);
+        graphics_lock.update(delta_time)?;
+        Ok(())
     }
 
     fn render(&self, _delta_time: f64) {
@@ -101,11 +103,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    fn add_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) {
+    fn add_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
-            log::error!("Resource manager has been destroyed.");
-            return;
+            return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
         let lock = resource_manager
@@ -134,17 +135,17 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         else {
             drop(lock);
             let task = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.model_count);
-            self.model_tasks.push(task);
+            self.model_tasks.push(task?);
         }
         self.model_count += 1;
         drop(resource_manager);
+        Ok(())
     }
 
-    fn add_skinned_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) {
+    fn add_skinned_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
-            log::error!("Resource manager has been destroyed.");
-            return;
+            return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
         let lock = resource_manager
@@ -172,11 +173,12 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         }
         else {
             drop(lock);
-            let task = SkinnedModel::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.model_count);
+            let task = SkinnedModel::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.model_count)?;
             self.skinned_model_tasks.push(task);
         }
         self.model_count += 1;
         drop(resource_manager);
+        Ok(())
     }
 
     async fn wait_for_all_tasks(&mut self) {
