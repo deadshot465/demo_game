@@ -170,11 +170,11 @@ impl Image {
         }
     }
 
-    pub fn create_sampler(&mut self, mip_levels: u32) {
+    pub fn create_sampler(&mut self, mip_levels: u32, sampler_address_mode: SamplerAddressMode) {
         let create_info = SamplerCreateInfo::builder()
-            .address_mode_u(SamplerAddressMode::REPEAT)
-            .address_mode_v(SamplerAddressMode::REPEAT)
-            .address_mode_w(SamplerAddressMode::REPEAT)
+            .address_mode_u(sampler_address_mode)
+            .address_mode_v(sampler_address_mode)
+            .address_mode_w(sampler_address_mode)
             .anisotropy_enable(true)
             .border_color(BorderColor::FLOAT_OPAQUE_BLACK)
             .compare_enable(false)

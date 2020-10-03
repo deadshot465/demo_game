@@ -21,10 +21,10 @@ impl SceneManager {
         }
     }
 
-    pub fn load_content(&self) -> anyhow::Result<()> {
+    pub async fn load_content(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().load_content()?;
+            scene.borrow_mut().load_content().await?;
         }
         Ok(())
     }

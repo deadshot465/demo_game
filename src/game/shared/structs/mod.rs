@@ -1,5 +1,6 @@
 pub mod animation;
 pub mod blend_mode;
+pub mod frustum;
 pub mod joint;
 pub mod lighting;
 pub mod mesh;

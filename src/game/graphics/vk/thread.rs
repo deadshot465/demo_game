@@ -1,5 +1,5 @@
 use ash::version::DeviceV1_0;
-use ash::vk::CommandPoolCreateFlags;
+use ash::vk::{CommandPoolCreateFlags, CommandPool};
 use crossbeam::queue::ArrayQueue;
 use crossbeam::utils::Backoff;
 use parking_lot::Mutex;
@@ -115,6 +115,17 @@ impl ThreadPool {
     pub fn wait(&self) {
         for thread in self.threads.iter() {
             thread.wait();
+        }
+    }
+
+    pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
+        let backoff = Backoff::new();
+        loop {
+            if let Some(pool) = self.threads.iter()
+                .find(|thread| thread.task_queue.is_empty()) {
+                return pool.command_pool.clone();
+            }
+            backoff.spin();
         }
     }
 }

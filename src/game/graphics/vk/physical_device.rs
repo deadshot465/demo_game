@@ -22,6 +22,7 @@ use ash::{
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use ash::vk::TRUE;
 
 #[derive(Copy, Clone, Debug)]
 pub struct QueueIndices {
@@ -30,10 +31,22 @@ pub struct QueueIndices {
     pub compute_family: Option<u32>
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct FeatureSupport {
+    pub geometry_shader: bool,
+    pub tessellation_shader: bool,
+    pub sample_rate_shading: bool,
+    pub sampler_anisotropy: bool,
+    pub shader_sampled_image_array_dynamic_indexing: bool,
+    pub runtime_descriptor_array: bool,
+    pub descriptor_binding_partially_bound: bool,
+}
+
 pub struct PhysicalDevice {
     pub physical_device: ash::vk::PhysicalDevice,
     pub queue_indices: QueueIndices,
     pub device_properties: PhysicalDeviceProperties,
+    pub feature_support: FeatureSupport,
 }
 
 impl QueueIndices {
@@ -54,10 +67,38 @@ impl QueueIndices {
 impl PhysicalDevice {
     pub fn new(instance: &Instance, surface_loader: &Surface, surface: SurfaceKHR) -> Self {
         let (device, queue_indices, properties) = PhysicalDevice::get_physical_device(instance, surface_loader, surface);
-        PhysicalDevice {
-            physical_device: device,
-            queue_indices,
-            device_properties: properties
+        unsafe {
+            let features = instance.get_physical_device_features(device);
+
+            let mut indexing_feature = PhysicalDeviceDescriptorIndexingFeatures::default();
+            let mut features2 = PhysicalDeviceFeatures2::default();
+            features2.p_next = &mut indexing_feature as *mut _ as *mut std::ffi::c_void;
+            instance.get_physical_device_features2(device, &mut features2);
+
+            let feature_support = FeatureSupport {
+                geometry_shader: if features.geometry_shader == TRUE { true } else { false },
+                tessellation_shader: if features.tessellation_shader == TRUE { true } else { false },
+                sample_rate_shading: if features.sample_rate_shading == TRUE { true } else { false },
+                sampler_anisotropy: if features.sampler_anisotropy == TRUE { true } else { false },
+                shader_sampled_image_array_dynamic_indexing: if features.shader_sampled_image_array_dynamic_indexing == TRUE { true } else { false },
+                runtime_descriptor_array: if indexing_feature.runtime_descriptor_array == TRUE { true } else { false },
+                descriptor_binding_partially_bound: if indexing_feature.descriptor_binding_partially_bound == TRUE { true } else { false }
+            };
+
+            log::info!("Geometry shader: {}", feature_support.geometry_shader);
+            log::info!("Tessellation shader: {}", feature_support.tessellation_shader);
+            log::info!("Sample rate shading: {}", feature_support.sample_rate_shading);
+            log::info!("Sampler Anisotropy: {}", feature_support.sampler_anisotropy);
+            log::info!("Shader sampled image array dynamic indexing: {}", feature_support.shader_sampled_image_array_dynamic_indexing);
+            log::info!("Runtime descriptor array: {}", feature_support.runtime_descriptor_array);
+            log::info!("Descriptor binding partially bound: {}", feature_support.descriptor_binding_partially_bound);
+
+            PhysicalDevice {
+                physical_device: device,
+                queue_indices,
+                device_properties: properties,
+                feature_support,
+            }
         }
     }
 
@@ -119,21 +160,7 @@ impl PhysicalDevice {
             let name = CStr::from_ptr(raw_name);
             log::info!("{}", name.to_str().unwrap());
 
-            let features = instance.get_physical_device_features(device);
-            let feature_support = features.geometry_shader != 0 &&
-                features.sample_rate_shading != 0 &&
-                features.sampler_anisotropy != 0 &&
-                features.shader_sampled_image_array_dynamic_indexing != 0 &&
-                features.tessellation_shader != 0;
-
-            let mut indexing_feature = PhysicalDeviceDescriptorIndexingFeatures::default();
-            let mut features2 = PhysicalDeviceFeatures2::default();
-            features2.p_next = &mut indexing_feature as *mut _ as *mut std::ffi::c_void;
-            instance.get_physical_device_features2(device, &mut features2);
-
-            let result = feature_support && PhysicalDevice::check_extension_support(instance, device) &&
-                indexing_feature.runtime_descriptor_array != 0 &&
-                indexing_feature.descriptor_binding_partially_bound != 0;
+            let result = PhysicalDevice::check_extension_support(instance, device);
             (result, Some(queue_indices))
         }
     }

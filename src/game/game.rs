@@ -73,7 +73,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub async fn load_content(&mut self) -> anyhow::Result<()> {
-        self.scene_manager.load_content()?;
+        self.scene_manager.load_content().await?;
         self.scene_manager.wait_for_all_tasks().await;
         let mut lock = self.graphics.write().unwrap();
         lock.initialize().await?;

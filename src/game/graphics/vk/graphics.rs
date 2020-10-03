@@ -1,48 +1,39 @@
 use ash::{
     Entry,
     extensions::{
-        khr::{
-            Surface,
-            Swapchain
-        },
+        khr::Surface,
         ext::DebugUtils
     },
     Device,
     Instance,
     version::{
-        EntryV1_0,
         DeviceV1_0,
         InstanceV1_0
     },
     vk::*
 };
-use ash_window::*;
-use std::collections::HashSet;
-use std::ffi::{
-    c_void, CStr, CString
-};
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4, Mat4};
+use image::GenericImageView;
 use parking_lot::Mutex;
 use std::convert::TryFrom;
+use std::ffi::{c_void, CString};
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
 use std::sync::atomic::AtomicPtr;
+use tokio::task::JoinHandle;
 use vk_mem::*;
 
 use crate::game::{Camera, ResourceManager};
 use crate::game::enums::ShaderType;
-use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel, ThreadPool};
+use crate::game::graphics::vk::{UniformBuffers, DynamicBufferObject, DynamicModel, Initializer, ThreadPool};
+use crate::game::shared::enums::ImageFormat;
 use crate::game::shared::structs::{ViewProjection, Directional, PushConstant};
 use crate::game::shared::traits::GraphicsBase;
+use crate::game::shared::util::interpolate_alpha;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
-use anyhow::Context;
-use tokio::task::JoinHandle;
-use crate::game::shared::enums::ImageFormat;
-use image::GenericImageView;
-use crate::game::shared::util::interpolate_alpha;
 
 #[allow(dead_code)]
 pub struct Graphics {
@@ -89,16 +80,16 @@ impl Graphics {
             .parse::<bool>()?;
         let entry = Entry::new()?;
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation")?];
-        let instance = Self::create_instance(debug, &enabled_layers, &entry, window)?;
+        let instance = Initializer::create_instance(debug, &enabled_layers, &entry, window)?;
         let surface_loader = Surface::new(&entry, &instance);
         let debug_messenger = if debug {
-            Self::create_debug_messenger(&instance, &entry)
+            Initializer::create_debug_messenger(&instance, &entry)
         } else {
             DebugUtilsMessengerEXT::null()
         };
-        let surface = Self::create_surface(window, &entry, &instance)?;
+        let surface = Initializer::create_surface(window, &entry, &instance)?;
         let physical_device = super::PhysicalDevice::new(&instance, &surface_loader, surface);
-        let (logical_device, graphics_queue, present_queue, compute_queue) = Self::create_logical_device(
+        let (logical_device, graphics_queue, present_queue, compute_queue) = Initializer::create_logical_device(
             &instance, &physical_device, &enabled_layers, debug
         );
         let allocator_info = vk_mem::AllocatorCreateInfo {
@@ -114,7 +105,7 @@ impl Graphics {
             .expect("Failed to create VMA memory allocator.");
         let device = Arc::new(logical_device);
         let allocator = Arc::new(ShardedLock::new(allocator));
-        let swapchain = Self::create_swapchain(
+        let swapchain = Initializer::create_swapchain(
             &surface_loader, surface, &physical_device, window, &instance, Arc::downgrade(&device),
             Arc::downgrade(&allocator)
         );
@@ -133,13 +124,13 @@ impl Graphics {
         let thread_pool = ThreadPool::new(cpu_count, device.as_ref(),
                                                   physical_device.queue_indices.graphics_family
                                                       .unwrap_or_default());
-        let sample_count = Self::get_sample_count(&instance, &physical_device);
-        let depth_format = Self::get_depth_format(&instance, &physical_device);
-        let depth_image = Self::create_depth_image(
+        let sample_count = Initializer::get_sample_count(&instance, &physical_device);
+        let depth_format = Initializer::get_depth_format(&instance, &physical_device);
+        let depth_image = Initializer::create_depth_image(
             Arc::downgrade(&device), depth_format, &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
-        let msaa_image = Self::create_msaa_image(
+        let msaa_image = Initializer::create_msaa_image(
             Arc::downgrade(&device), &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
@@ -380,7 +371,7 @@ impl Graphics {
                         Format::B8G8R8 => ImageFormat::GltfFormat(Format::B8G8R8A8),
                         Format::R8G8B8 => ImageFormat::GltfFormat(Format::R8G8B8A8),
                         _ => ImageFormat::GltfFormat(format)
-                    }, g, pool
+                    }, g, pool, SamplerAddressMode::REPEAT
                 )
             });
             texture_handles.push(texture);
@@ -406,7 +397,9 @@ impl Graphics {
         }
     }
 
-    pub async fn create_image_from_file(file_name: &str, graphics: Arc<ShardedLock<Graphics>>, command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Arc<ShardedLock<super::Image>>> {
+    pub async fn create_image_from_file(file_name: &str, graphics: Arc<ShardedLock<Graphics>>,
+                                        command_pool: Arc<Mutex<CommandPool>>,
+                                        sampler_address_mode: SamplerAddressMode) -> anyhow::Result<Arc<ShardedLock<super::Image>>> {
         let image = image::open(file_name)?;
         let buffer_size = image.width() * image.height() * 4;
         let bytes = match image.color() {
@@ -426,16 +419,18 @@ impl Graphics {
                     ColorType::Rgb8 => ImageFormat::ColorType(ColorType::Rgba8),
                     ColorType::Bgr8 => ImageFormat::ColorType(ColorType::Bgra8),
                     _ => ImageFormat::ColorType(color_type)
-                }, graphics_clone, command_pool_clone
-            )
-        });
-        let graphics_lock = graphics.read().unwrap();
-        let resource_manager = graphics_lock.resource_manager.clone();
-        drop(graphics_lock);
+                }, graphics_clone, command_pool_clone,
+                sampler_address_mode)
+        }).await??;
+        let resource_manager = graphics
+            .read()
+            .unwrap()
+            .resource_manager
+            .clone();
         match resource_manager.upgrade() {
             Some(rm) => {
                 let mut rm_lock = rm.write().unwrap();
-                let image = rm_lock.add_texture(texture.await??);
+                let image = rm_lock.add_texture(texture);
                 Ok(image)
             },
             None => {
@@ -604,245 +599,6 @@ impl Graphics {
         ManuallyDrop::drop(&mut self.msaa_image);
         ManuallyDrop::drop(&mut self.depth_image);
         ManuallyDrop::drop(&mut self.swapchain);
-    }
-
-    unsafe extern "system" fn debug_callback(severity: DebugUtilsMessageSeverityFlagsEXT,
-                                             _message_type: DebugUtilsMessageTypeFlagsEXT,
-                                             p_callback_data: *const DebugUtilsMessengerCallbackDataEXT,
-                                             _p_user_data: *mut c_void) -> Bool32 {
-        let message = CStr::from_ptr((*p_callback_data).p_message);
-        if let Ok(msg) = message.to_str() {
-            match severity {
-                DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::info!("{}", msg),
-                DebugUtilsMessageSeverityFlagsEXT::WARNING => log::warn!("{}", msg),
-                DebugUtilsMessageSeverityFlagsEXT::ERROR => log::error!("{}", msg),
-                _ => (),
-            }
-        }
-        FALSE
-    }
-
-    fn get_required_extensions(debug: bool, window: &winit::window::Window) -> anyhow::Result<Vec<*const i8>> {
-        let extensions = enumerate_required_extensions(window)
-            .with_context(|| "Failed to enumerate required extensions.")?;
-        let mut extensions = extensions.into_iter()
-            .map(|extension| extension.as_ptr())
-            .collect::<Vec<_>>();
-        if debug {
-            extensions.push(DebugUtils::name().as_ptr());
-        }
-        Ok(extensions)
-    }
-
-    fn create_instance(debug: bool, enabled_layers: &Vec<CString>, entry: &Entry, window: &winit::window::Window) -> anyhow::Result<Instance> {
-        let app_name = CString::new("Demo Engine Rust")?;
-        let engine_name = CString::new("Demo Engine")?;
-        let app_info = ApplicationInfo::builder()
-            .api_version(make_version(1, 2, 0))
-            .application_name(&*app_name)
-            .application_version(make_version(0, 0, 1))
-            .engine_name(&*engine_name)
-            .engine_version(make_version(0, 0, 1));
-
-        let extensions = Self::get_required_extensions(debug, window)?;
-        let layers = enabled_layers.iter().map(|s| {
-            s.as_ptr()
-        }).collect::<Vec<_>>();
-
-        let mut instance_info = InstanceCreateInfo::builder()
-            .application_info(&app_info)
-            .enabled_extension_names(extensions.as_slice())
-            .enabled_layer_names(layers.as_slice());
-
-        if debug {
-            instance_info = instance_info.enabled_layer_names(layers.as_slice());
-        }
-
-        unsafe {
-            let instance = entry.create_instance(&instance_info, None)
-                .expect("Failed to create Vulkan instance.");
-            log::info!("Vulkan instance successfully created.");
-            Ok(instance)
-        }
-    }
-
-    fn create_debug_messenger(instance: &Instance, entry: &Entry) -> DebugUtilsMessengerEXT {
-        let create_info = DebugUtilsMessengerCreateInfoEXT::builder()
-            .message_severity(DebugUtilsMessageSeverityFlagsEXT::ERROR |
-                DebugUtilsMessageSeverityFlagsEXT::WARNING |
-                DebugUtilsMessageSeverityFlagsEXT::VERBOSE)
-            .message_type(DebugUtilsMessageTypeFlagsEXT::all())
-            .pfn_user_callback(Some(Self::debug_callback));
-        let debug_utils_loader = DebugUtils::new(entry, instance);
-        unsafe {
-            let messenger = debug_utils_loader
-                .create_debug_utils_messenger(&create_info, None)
-                .expect("Failed to create debug messenger.");
-            log::info!("Debug messenger successfully created.");
-            messenger
-        }
-    }
-
-    fn create_surface(window: &winit::window::Window, entry: &Entry, instance: &Instance) -> anyhow::Result<SurfaceKHR> {
-        unsafe {
-            let surface = ash_window::create_surface(entry, instance, window, None)
-                .with_context(|| "Failed to create surface.")?;
-            Ok(surface)
-        }
-    }
-
-    fn create_logical_device(instance: &Instance, physical_device: &super::PhysicalDevice,
-                             enabled_layers: &Vec<CString>, debug: bool) -> (Device, Queue, Queue, Queue) {
-        let layers = enabled_layers.iter().map(|s| {
-            s.as_ptr()
-        }).collect::<Vec<_>>();
-        let extensions = vec![Swapchain::name()];
-        let extensions = extensions.into_iter()
-            .map(|e| e.as_ptr())
-            .collect::<Vec<_>>();
-        let features = PhysicalDeviceFeatures::builder()
-            .tessellation_shader(true)
-            .shader_sampled_image_array_dynamic_indexing(true)
-            .sampler_anisotropy(true)
-            .sample_rate_shading(true)
-            .geometry_shader(true);
-        let mut indexing_features = PhysicalDeviceDescriptorIndexingFeatures::builder()
-            .runtime_descriptor_array(true)
-            .descriptor_binding_partially_bound(true);
-        let mut queue_create_infos = vec![];
-        let mut unique_indices = HashSet::new();
-        unique_indices.insert(physical_device.queue_indices.graphics_family.unwrap_or_default());
-        unique_indices.insert(physical_device.queue_indices.present_family.unwrap_or_default());
-        unique_indices.insert(physical_device.queue_indices.compute_family.unwrap_or_default());
-        let priority = [1.0_f32];
-        for index in unique_indices.iter() {
-            let queue_create_info = DeviceQueueCreateInfo::builder()
-                .queue_family_index(*index)
-                .queue_priorities(&priority)
-                .build();
-            queue_create_infos.push(queue_create_info);
-        }
-        let mut create_info = DeviceCreateInfo::builder()
-            .enabled_extension_names(extensions.as_slice())
-            .enabled_features(&features)
-            .push_next(&mut indexing_features)
-            .queue_create_infos(queue_create_infos.as_ref());
-        if debug {
-            create_info = create_info.enabled_layer_names(layers.as_slice());
-        }
-        unsafe {
-            let device = instance
-                .create_device(physical_device.physical_device.clone(), &create_info, None)
-                .expect("Failed to create logical device.");
-            let graphics_queue = device.get_device_queue(physical_device
-                                                              .queue_indices
-                                                              .graphics_family.unwrap_or_default(), 0);
-            let present_queue = device.get_device_queue(physical_device
-                                                             .queue_indices
-                                                             .present_family.unwrap_or_default(), 0);
-            let compute_queue = device.get_device_queue(physical_device
-                                                             .queue_indices
-                                                             .compute_family.unwrap_or_default(), 0);
-            log::info!("Device queue successfully acquired.");
-            log::info!("Logical device successfully created.");
-            (device, graphics_queue, present_queue, compute_queue)
-        }
-    }
-
-    fn create_swapchain(surface_loader: &Surface, surface: SurfaceKHR,
-                        physical_device: &super::PhysicalDevice, window: &winit::window::Window,
-                        instance: &Instance, device: Weak<Device>, allocator: Weak<ShardedLock<Allocator>>) -> super::Swapchain {
-        super::Swapchain::new(
-            surface_loader, surface, physical_device.physical_device, window,
-            physical_device.queue_indices, instance, device, allocator
-        )
-    }
-
-    fn choose_depth_format(depth_formats: Vec<Format>, tiling: ImageTiling, feature_flags: FormatFeatureFlags, instance: &Instance, physical_device: &super::PhysicalDevice) -> Format {
-        for format in depth_formats.iter() {
-            unsafe {
-                let format_properties = instance
-                    .get_physical_device_format_properties(
-                        physical_device.physical_device,
-                        *format);
-                if tiling == ImageTiling::LINEAR &&
-                    ((format_properties.linear_tiling_features & feature_flags) == feature_flags) {
-                    return *format;
-                }
-                if tiling == ImageTiling::OPTIMAL &&
-                    ((format_properties.optimal_tiling_features & feature_flags) == feature_flags) {
-                    return *format;
-                }
-            }
-        }
-        depth_formats[0]
-    }
-
-    fn get_depth_format(instance: &Instance, physical_device: &super::PhysicalDevice) -> Format {
-        Self::choose_depth_format(vec![Format::D32_SFLOAT, Format::D24_UNORM_S8_UINT, Format::D16_UNORM],
-                            ImageTiling::OPTIMAL, FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT, instance, physical_device)
-    }
-
-    fn create_depth_image(device: Weak<ash::Device>,
-                          format: Format,
-                          swapchain: &super::Swapchain, command_pool: CommandPool,
-                          graphics_queue: Queue, sample_count: SampleCountFlags, allocator: Weak<ShardedLock<Allocator>>) -> super::Image {
-        let extent = swapchain.extent;
-        let mut image = super::Image
-        ::new(device,
-              ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-              MemoryPropertyFlags::DEVICE_LOCAL, format,
-              sample_count, extent, ImageType::TYPE_2D, 1, ImageAspectFlags::DEPTH,
-              allocator);
-        image.transition_layout(ImageLayout::UNDEFINED,
-                                ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                command_pool, graphics_queue,
-                                ImageAspectFlags::DEPTH, 1, None);
-        log::info!("Depth image successfully created.");
-        image
-    }
-
-    fn get_sample_count(instance: &Instance, physical_device: &super::PhysicalDevice) -> SampleCountFlags {
-        unsafe {
-            let properties = instance
-                .get_physical_device_properties(physical_device.physical_device);
-            let sample_count: SampleCountFlags = properties.limits.sampled_image_color_sample_counts;
-            let supported_samples: SampleCountFlags;
-            supported_samples = if (sample_count & SampleCountFlags::TYPE_64) == SampleCountFlags::TYPE_64 {
-                SampleCountFlags::TYPE_64
-            } else if (sample_count & SampleCountFlags::TYPE_32) == SampleCountFlags::TYPE_32 {
-                SampleCountFlags::TYPE_32
-            } else if (sample_count & SampleCountFlags::TYPE_16) == SampleCountFlags::TYPE_16 {
-                SampleCountFlags::TYPE_16
-            } else if (sample_count & SampleCountFlags::TYPE_8) == SampleCountFlags::TYPE_8 {
-                SampleCountFlags::TYPE_8
-            } else if (sample_count & SampleCountFlags::TYPE_4) == SampleCountFlags::TYPE_4 {
-                SampleCountFlags::TYPE_4
-            } else if (sample_count & SampleCountFlags::TYPE_32) == SampleCountFlags::TYPE_2 {
-                SampleCountFlags::TYPE_2
-            } else {
-                SampleCountFlags::TYPE_1
-            };
-            log::info!("Sample count: {:?}", supported_samples);
-            supported_samples
-        }
-    }
-
-    fn create_msaa_image(device: Weak<ash::Device>,
-                         swapchain: &super::Swapchain, command_pool: CommandPool,
-                         graphics_queue: Queue, sample_count: SampleCountFlags, allocator: Weak<ShardedLock<Allocator>>) -> super::Image {
-        let mut image = super::image::Image::new(
-            device,
-            ImageUsageFlags::TRANSIENT_ATTACHMENT | ImageUsageFlags::COLOR_ATTACHMENT,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            swapchain.format.format,
-            sample_count, swapchain.extent, ImageType::TYPE_2D, 1,
-            ImageAspectFlags::COLOR, allocator
-        );
-        image.transition_layout(ImageLayout::UNDEFINED, ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                                command_pool, graphics_queue, ImageAspectFlags::COLOR, 1, None);
-        log::info!("Msaa image successfully created.");
-        image
     }
 
     fn create_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
@@ -1261,7 +1017,8 @@ impl Graphics {
     fn create_image_from_raw(image_data: Vec<u8>, buffer_size: DeviceSize, width: u32, height: u32,
                                  format: ImageFormat,
                                  graphics: Arc<ShardedLock<Self>>,
-                                 command_pool: Arc<Mutex<ash::vk::CommandPool>>) -> anyhow::Result<super::Image> {
+                                 command_pool: Arc<Mutex<ash::vk::CommandPool>>,
+                             sampler_address_mode: SamplerAddressMode) -> anyhow::Result<super::Image> {
         let lock = graphics.read().unwrap();
         let device = lock.logical_device.clone();
         let allocator = lock.allocator.clone();
@@ -1275,6 +1032,7 @@ impl Graphics {
             ImageFormat::ColorType(color_type) => match color_type {
                 image::ColorType::Bgra8 => ash::vk::Format::B8G8R8A8_UNORM,
                 image::ColorType::Rgba8 => ash::vk::Format::R8G8B8A8_UNORM,
+                image::ColorType::L16 => ash::vk::Format::R16_UNORM,
                 _ => lock.swapchain.format.format
             }
         };
@@ -1312,7 +1070,7 @@ impl Graphics {
         unsafe {
             image.generate_mipmap(ImageAspectFlags::COLOR, mip_levels, *pool_lock, *lock.graphics_queue.lock(), Some(cmd_buffer));
         }
-        image.create_sampler(mip_levels);
+        image.create_sampler(mip_levels, sampler_address_mode);
         end_one_time_command_buffer(cmd_buffer, device.as_ref(), *pool_lock, *lock.graphics_queue.lock());
         Ok(image)
     }

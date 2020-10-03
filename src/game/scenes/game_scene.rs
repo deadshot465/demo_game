@@ -1,4 +1,4 @@
-use ash::vk::CommandBuffer;
+use ash::vk::{CommandBuffer, SamplerAddressMode};
 use async_trait::async_trait;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
@@ -21,7 +21,7 @@ pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
     scene_name: String,
     model_tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     skinned_model_tasks: Vec<JoinHandle<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
-    model_count: usize
+    model_count: usize,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType, BufferType, CommandType, TextureType>
@@ -41,17 +41,34 @@ impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType,
     }
 }
 
+impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
+    pub async fn generate_terrain(&self) -> anyhow::Result<()> {
+        let graphics = self.graphics.upgrade()
+            .expect("Failed to upgrade the weak pointer of Graphics.");
+        let command_pool = graphics
+            .read()
+            .expect("Failed to acquire read lock on Graphics.")
+            .thread_pool
+            .get_idle_command_pool();
+        let image = Graphics::create_image_from_file("textures/demo_map_hm.png", graphics, command_pool,
+                                                     SamplerAddressMode::MIRRORED_REPEAT)
+            .await?;
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {
 
     }
 
-    fn load_content(&mut self) -> anyhow::Result<()> {
-        self.add_skinned_model("./models/nathan/Nathan.glb", Vec3A::new(-1.5, 0.0, -1.5),
+    async fn load_content(&mut self) -> anyhow::Result<()> {
+        self.generate_terrain().await?;
+        /*self.add_skinned_model("./models/nathan/Nathan.glb", Vec3A::new(-1.5, 0.0, -1.5),
                                Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
         self.add_model("./models/ak/output.gltf", Vec3A::new(2.5, 0.0, 2.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;*/
         self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0))?;
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
