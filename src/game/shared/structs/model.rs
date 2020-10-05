@@ -13,13 +13,13 @@ use std::sync::{
 };
 use tokio::task::JoinHandle;
 
-use crate::game::enums::{create_sampler_resource, SamplerResource};
 use crate::game::graphics::vk::{Graphics, Buffer, Image};
 use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Mesh, Vertex, PushConstant, Primitive};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
+use downcast_rs::__std::collections::HashMap;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -45,14 +45,14 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
     fn create_model(file_name: &str, document: gltf::Document, buffers: Vec<gltf::buffer::Data>,
                     images: Vec<Arc<ShardedLock<TextureType>>>,
                     graphics: Weak<ShardedLock<GraphicsType>>,
-                    position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
-        let meshes = Self::process_model(&document, &buffers, images);
+                    position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4, texture_index_offset: usize) -> Self {
+        let meshes = Self::process_model(&document, &buffers, images, texture_index_offset);
 
         let x: f32 = rotation.x();
         let y: f32 = rotation.y();
         let z: f32 = rotation.z();
 
-        let model = Model {
+        Model {
             position,
             scale,
             rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
@@ -62,30 +62,32 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
             is_disposed: false,
             model_name: file_name.to_string(),
             model_index: 0,
-        };
-        model
+        }
     }
 
-    fn process_model(document: &gltf::Document, buffers: &Vec<gltf::buffer::Data>, images: Vec<Arc<ShardedLock<TextureType>>>) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
+    fn process_model(document: &gltf::Document, buffers: &[gltf::buffer::Data], images: Vec<Arc<ShardedLock<TextureType>>>, texture_index_offset: usize) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let meshes = if let Some(scene) = document.default_scene() {
-            Self::process_root_nodes(scene, buffers, images)
+            Self::process_root_nodes(scene, buffers, images, texture_index_offset)
         }
         else {
-            Self::process_root_nodes(document.scenes().nth(0).unwrap(), buffers, images)
+            Self::process_root_nodes(document.scenes().next().unwrap(), buffers, images, texture_index_offset)
         };
         meshes
     }
 
-    fn process_root_nodes(scene: Scene, buffers: &Vec<gltf::buffer::Data>, images: Vec<Arc<ShardedLock<TextureType>>>) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
+    fn process_root_nodes(scene: Scene, buffers: &[gltf::buffer::Data],
+                          images: Vec<Arc<ShardedLock<TextureType>>>,
+                          texture_index_offset: usize) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(150);
         for node in scene.nodes() {
-            let mut submeshes = Self::process_node(node, &buffers, &images, Mat4::identity());
+            let mut submeshes = Self::process_node(node, buffers, &images, Mat4::identity(), texture_index_offset);
             meshes.append(&mut submeshes);
         }
         meshes
     }
 
-    fn process_node(node: Node, buffers: &Vec<gltf::buffer::Data>, images: &Vec<Arc<ShardedLock<TextureType>>>, local_transform: Mat4) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
+    fn process_node(node: Node, buffers: &[gltf::buffer::Data],
+                    images: &[Arc<ShardedLock<TextureType>>], local_transform: Mat4, texture_index_offset: usize) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
         let transform = Mat4::from_scale_rotation_translation(
@@ -95,16 +97,16 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
         );
         let transform = local_transform * transform;
         if let Some(mesh) = node.mesh() {
-            meshes.push(Self::process_mesh(mesh, buffers, transform.clone(), images));
+            meshes.push(Self::process_mesh(mesh, buffers, transform, images, texture_index_offset));
         }
         for _node in node.children() {
-            let mut submeshes = Self::process_node(_node, buffers, images, transform.clone());
+            let mut submeshes = Self::process_node(_node, buffers, images, transform, texture_index_offset);
             meshes.append(&mut submeshes);
         }
         meshes
     }
 
-    fn process_mesh(mesh: gltf::Mesh, buffers: &Vec<gltf::buffer::Data>, local_transform: Mat4, images: &Vec<Arc<ShardedLock<TextureType>>>) -> Mesh<BufferType, CommandType, TextureType> {
+    fn process_mesh(mesh: gltf::Mesh, buffers: &[gltf::buffer::Data], local_transform: Mat4, images: &[Arc<ShardedLock<TextureType>>], texture_index_offset: usize) -> Mesh<BufferType, CommandType, TextureType> {
         let mut primitives = Vec::with_capacity(5);
         let mut textures = Vec::with_capacity(5);
         for primitive in mesh.primitives() {
@@ -135,7 +137,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
                     _vertices
                 },
                 (Some(positions), Some(normals), None) => {
-                    let _vertices = positions
+                    positions
                         .zip(normals)
                         .map(|(pos, normal)| {
                             Vertex {
@@ -144,8 +146,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
                                 uv: Vec2::new(0.0, 0.0)
                             }
                         })
-                        .collect::<Vec<_>>();
-                    _vertices
+                        .collect::<Vec<_>>()
                 },
                 (positions, normals, uvs) => {
                     unimplemented!("Unsupported combination of values. Positions: {}, Normals: {}, UVs: {}", positions.is_some(), normals.is_some(), uvs.is_some());
@@ -161,6 +162,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> Model<GraphicsType, Buf
             if let Some(t) = texture {
                 textures.push(t);
             }
+            let texture_index = texture_index.map(|index| index + texture_index_offset);
 
             for vertex in vertices.iter_mut() {
                 vertex.position = Vec3A::from(local_transform.transform_point3(Vec3::from(vertex.position)));
@@ -215,8 +217,8 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             }
             log::info!("Model index: {}, Command pool: {:?}", model_index, command_pool);
             let (document, buffers, images) = read_raw_data(file_name).unwrap();
-            let textures = Graphics::create_gltf_textures(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
-            let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color);
+            let (textures, texture_index_offset) = Graphics::create_gltf_textures(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
+            let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color, texture_index_offset);
             {
                 let graphics_lock = graphics_clone.read().unwrap();
                 for mesh in loaded_model.meshes.iter_mut() {
@@ -233,17 +235,18 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) -> anyhow::Result<()> {
-        for (index, mesh) in self.meshes.iter_mut().enumerate() {
+        let mut handles = HashMap::new();
+        for (index, mesh) in self.meshes.iter().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);
             let vertices = mesh.primitives.iter()
                 .map(|p| &p.vertices)
                 .flatten()
-                .map(|v| *v)
+                .copied()
                 .collect::<Vec<_>>();
             let indices = mesh.primitives.iter()
                 .map(|p| &p.indices)
                 .flatten()
-                .map(|i| *i)
+                .copied()
                 .collect::<Vec<_>>();
             let cmd_pool = mesh.command_pool.clone().unwrap();
             let pool = cmd_pool.clone();
@@ -251,30 +254,16 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let buffer_result = tokio::spawn(async move {
                 Graphics::create_buffer(g, vertices, indices, pool).await
             });
-
-            let (vertex_buffer, index_buffer) = buffer_result.await??;
-            mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
-            mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
+            handles.insert(index, buffer_result);
         }
-        Ok(())
-    }
-
-    pub fn create_sampler_resource(&mut self) {
-        let graphics_arc = self.graphics.upgrade().unwrap();
-        let graphics_lock = graphics_arc.read().unwrap();
-        for mesh in self.meshes.iter_mut() {
-            if !mesh.texture.is_empty() {
-                let texture = mesh.texture[0].read().unwrap();
-                let sampler_resource = create_sampler_resource(
-                    Arc::downgrade(&graphics_lock.logical_device),
-                    graphics_lock.sampler_descriptor_set_layout,
-                    *graphics_lock.descriptor_pool.lock(), &*texture
-                );
-                drop(texture);
-                mesh.sampler_resource = Some(sampler_resource);
+        for (index, mesh) in self.meshes.iter_mut().enumerate() {
+            if let Some(result) = handles.get_mut(&index) {
+                let (vertex_buffer, index_buffer) = result.await??;
+                mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
+                mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
             }
         }
-        drop(graphics_lock);
+        Ok(())
     }
 
     pub fn update(&mut self, _delta_time: f64) {
@@ -282,26 +271,26 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn render(&self, inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
-                  dynamic_alignment: u64,
                   push_constant: PushConstant, viewport: ash::vk::Viewport, scissor: ash::vk::Rect2D) {
-        let dynamic_offset = dynamic_alignment *
-            ash::vk::DeviceSize::try_from(self.model_index).unwrap();
-        let dynamic_offset = u32::try_from(dynamic_offset).unwrap();
         let graphics_ptr = self.graphics.upgrade().unwrap();
         let graphics_lock = graphics_ptr.read().unwrap();
+        let mut push_constant = push_constant;
+        push_constant.object_color = self.color;
+        push_constant.model_index = self.model_index;
         unsafe {
-            let mut push_constant = push_constant;
+            let inheritance = inheritance_info.load(Ordering::SeqCst)
+                .as_ref()
+                .unwrap();
             for mesh in self.meshes.iter() {
                 let shader_type = if !mesh.texture.is_empty() {
                     ShaderType::BasicShader
                 } else {
                     ShaderType::BasicShaderWithoutTexture
                 };
+                let pipeline_layout = graphics_lock
+                    .pipeline.get_pipeline_layout(shader_type);
                 let pipeline = graphics_lock
                     .pipeline.get_pipeline(shader_type, 0);
-                let inheritance = inheritance_info.load(Ordering::SeqCst)
-                    .as_ref()
-                    .unwrap();
                 let command_buffer_begin_info = CommandBufferBeginInfo::builder()
                     .inheritance_info(inheritance)
                     .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
@@ -319,23 +308,16 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     command_buffer, PipelineBindPoint::GRAPHICS,
                     pipeline
                 );
-                let pipeline_layout = graphics_lock
-                    .pipeline.get_pipeline_layout(shader_type);
-                push_constant.object_color = self.color;
-                let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
-                graphics_lock.logical_device
-                    .cmd_push_constants(command_buffer, pipeline_layout,
-                                        ShaderStageFlags::FRAGMENT, 0, &casted[0..]);
+                graphics_lock.logical_device.cmd_bind_descriptor_sets(
+                    command_buffer, PipelineBindPoint::GRAPHICS,
+                    pipeline_layout, 0,
+                    &[graphics_lock.descriptor_sets[0]], &[]
+                );
                 let vertex_buffers = [
                     mesh.get_vertex_buffer()
                 ];
                 let index_buffer = mesh.get_index_buffer();
-                graphics_lock.logical_device.cmd_bind_descriptor_sets(
-                    command_buffer, PipelineBindPoint::GRAPHICS,
-                    pipeline_layout, 0,
-                    &[graphics_lock.descriptor_sets[0]], &[dynamic_offset, dynamic_offset]
-                );
-                if !mesh.texture.is_empty() {
+                /*if !mesh.texture.is_empty() {
                     match mesh.sampler_resource.as_ref() {
                         Some(res) => {
                             match res {
@@ -350,11 +332,16 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                         },
                         None => (),
                     }
-                }
+                }*/
 
                 let mut vertex_offset_index = 0;
                 let mut index_offset_index = 0;
                 for primitive in mesh.primitives.iter() {
+                    push_constant.texture_index = primitive.texture_index.unwrap_or_default();
+                    let casted = bytemuck::cast::<PushConstant, [u8; 48]>(push_constant);
+                    graphics_lock.logical_device
+                        .cmd_push_constants(command_buffer, pipeline_layout,
+                                            ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX, 0, &casted[0..]);
                     graphics_lock.logical_device.cmd_bind_vertex_buffers(
                         command_buffer, 0, &vertex_buffers[0..], &[0]
                     );
@@ -385,9 +372,10 @@ impl<GraphicsType, BufferType, CommandType, TextureType> From<&Model<GraphicsTyp
           TextureType: 'static + Clone + Disposable {
     fn from(model: &Self) -> Self {
         loop {
-            if model.meshes.iter().all(|mesh| {
+            let is_buffer_completed = model.meshes.iter().all(|mesh| {
                 mesh.vertex_buffer.is_some() && mesh.index_buffer.is_some()
-            }) {
+            });
+            if is_buffer_completed {
                 break;
             }
         }

@@ -6,15 +6,20 @@ layout (binding = 0) uniform ModelViewProjection
     mat4 projection;
 } mvp;
 
-layout (binding = 2) uniform DynamicBufferObject_1
-{
-    mat4 model;
-} dbo;
+layout (std430, binding = 2) readonly buffer ModelMatrices {
+    mat4 modelMatrices[];
+};
 
-layout (binding = 3) uniform DynamicBufferObject_2
+layout (push_constant) uniform PushConstant
 {
-    mat4 model;
-} dbo_2;
+    uint texture_index;
+    vec4 object_color;
+    uint model_index;
+} pco;
+
+layout (std430, set = 1, binding = 0) readonly buffer JointMatrices {
+    mat4 jointMatrices[];
+};
 
 layout (location = 0) in vec3 inPosition;
 layout (location = 1) in vec3 inNormal;
@@ -26,10 +31,6 @@ layout (location = 1) out vec4 outNormal;
 layout (location = 2) out vec2 outTexCoord;
 layout (location = 3) out vec4 fragPos;
 
-layout (std430, set = 2, binding = 0) readonly buffer JointMatrics {
-    mat4 jointMatrices[];
-};
-
 void main()
 {
     vec4 position = vec4(inPosition, 1.0);
@@ -39,10 +40,10 @@ void main()
         inWeight.z * jointMatrices[int(inJoint.z)] +
         inWeight.w * jointMatrices[int(inJoint.w)];
 
-    gl_Position = mvp.projection * mvp.view * dbo.model * skinMatrix * position;
+    gl_Position = mvp.projection * mvp.view * modelMatrices[pco.model_index] * skinMatrix * position;
     
     outNormal = vec4(inNormal, 0.0);
-    outNormal = transpose(inverse(dbo.model)) * outNormal;
+    outNormal = transpose(inverse(modelMatrices[pco.model_index])) * outNormal;
     outTexCoord = inTexCoord;
-    fragPos = dbo.model * vec4(inPosition.xyz, 1.0);
+    fragPos = modelMatrices[pco.model_index] * vec4(inPosition.xyz, 1.0);
 }

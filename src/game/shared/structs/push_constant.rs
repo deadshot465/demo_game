@@ -6,20 +6,23 @@ use glam::Vec4;
 pub struct PushConstant {
     pub texture_index: usize,
     pub object_color: Vec4,
+    pub model_index: usize,
 }
 
 impl PushConstant {
     pub fn null() -> Self {
         PushConstant {
             texture_index: 0,
-            object_color: Vec4::new(0.0, 0.0, 0.0, 0.0)
+            object_color: Vec4::new(0.0, 0.0, 0.0, 0.0),
+            model_index: 0,
         }
     }
 
-    pub fn new(texture_index: usize, object_color: Vec4) -> Self {
+    pub fn new(texture_index: usize, object_color: Vec4, model_index: usize) -> Self {
         PushConstant {
             texture_index,
-            object_color
+            object_color,
+            model_index
         }
     }
 }

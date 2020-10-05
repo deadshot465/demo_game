@@ -6,6 +6,12 @@ pub struct SceneManager {
     scenes: Vec<RefCell<Box<dyn Scene + 'static>>>,
 }
 
+impl Default for SceneManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneManager {
     pub fn new() -> Self {
         SceneManager {

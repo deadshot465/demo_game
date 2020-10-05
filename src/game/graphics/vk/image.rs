@@ -416,7 +416,7 @@ impl Disposable for Image {
 
 impl Mappable for Image {
     fn map_memory(&mut self, _device_size: u64, _offset: u64) -> *mut c_void {
-        if self.mapped_memory == std::ptr::null_mut() {
+        if self.mapped_memory.is_null() {
             self.mapped_memory = self.allocator
                 .upgrade().unwrap()
                 .read().unwrap().map_memory(&self.allocation)

@@ -36,9 +36,9 @@ macro_rules! interpolate {
 }
 
 pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: &Joint, local_transform: Mat4, buffer: &mut [Mat4; 500]) {
-    let mut translation = root_joint.translation.clone();
-    let mut rotation = root_joint.rotation.clone();
-    let mut scale = root_joint.scale.clone();
+    let mut translation = root_joint.translation;
+    let mut rotation = root_joint.rotation;
+    let mut scale = root_joint.scale;
 
     for channel in animation.channels.iter() {
         if root_joint.node_index == channel.target_node_index {
@@ -66,7 +66,7 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                             // previous output tangent
                             let m0: Vec3A = translations[index_prev * 3 + 2] * range;
                             // next output tangent
-                            let m1: Vec3A = translations[index_next * 3 + 0] * range;
+                            let m1: Vec3A = translations[index_next * 3] * range;
                             let result: Vec3A = interpolate!(p0, p1, m0, m1, time);
                             result
                         }
@@ -101,10 +101,10 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                             );
                             // next output tangent
                             let m1 = Quat::from_xyzw(
-                                rotations[index_next * 3 + 0].x() * range,
-                                rotations[index_next * 3 + 0].y() * range,
-                                rotations[index_next * 3 + 0].z() * range,
-                                rotations[index_next * 3 + 0].w() * range
+                                rotations[index_next * 3].x() * range,
+                                rotations[index_next * 3].y() * range,
+                                rotations[index_next * 3].z() * range,
+                                rotations[index_next * 3].w() * range
                             );
                             let p0_vector: glam::Vec4 = glam::Vec4::new(
                                 p0.x(), p0.y(), p0.z(), p0.w()
@@ -147,7 +147,7 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                             // previous output tangent
                             let m0: Vec3A = scales[index_prev * 3 + 2] * range;
                             // next output tangent
-                            let m1: Vec3A = scales[index_next * 3 + 0] * range;
+                            let m1: Vec3A = scales[index_next * 3] * range;
                             let result: Vec3A = interpolate!(p0, p1, m0, m1, time);
                             result
                         }
@@ -164,7 +164,7 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
     let final_transform = transform * root_joint.inverse_bind_matrices;
     buffer[root_joint.index] = final_transform;
     for child in root_joint.children.iter() {
-        generate_joint_transforms(animation, frame, child, transform.clone(), buffer);
+        generate_joint_transforms(animation, frame, child, transform, buffer);
     }
 }
 

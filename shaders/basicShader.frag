@@ -1,18 +1,5 @@
 #version 450
-
-layout (set = 1, binding = 0) uniform sampler2D tex_sampler;
-
-layout (location = 1) in vec4 inNormal;
-layout (location = 2) in vec2 inTexCoord;
-layout (location = 3) in vec4 fragPos;
-
-layout (location = 0) out vec4 fragColor;
-
-layout (push_constant) uniform PushConstant
-{
-    uint texture_index;
-    vec4 object_color;
-} pco;
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout (binding = 1) uniform DirectionalLight
 {
@@ -23,12 +10,25 @@ layout (binding = 1) uniform DirectionalLight
     float specular_intensity;
 } direction_light;
 
-//layout (binding = 2) uniform sampler2D TexSampler[80];
+layout (binding = 3) uniform sampler2D tex_sampler[];
+
+layout (push_constant) uniform PushConstant
+{
+    uint texture_index;
+    vec4 object_color;
+    uint model_index;
+} pco;
+
+layout (location = 1) in vec4 inNormal;
+layout (location = 2) in vec2 inTexCoord;
+layout (location = 3) in vec4 fragPos;
+
+layout (location = 0) out vec4 fragColor;
 
 void main()
 {
     // Texture
-    vec4 tex_color = texture(tex_sampler, inTexCoord);
+    vec4 tex_color = texture(tex_sampler[pco.texture_index], inTexCoord);
     if (tex_color.a < 0.1) {
         discard;
     }

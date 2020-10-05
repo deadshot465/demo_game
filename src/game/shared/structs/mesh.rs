@@ -33,7 +33,7 @@ pub struct Mesh<BufferType, CommandType, TextureType>
 
 impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
     pub fn new(primitives: Vec<Primitive>) -> Self {
-        let mesh = Mesh {
+        Mesh {
             primitives,
             vertex_buffer: None,
             index_buffer: None,
@@ -42,8 +42,7 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
             sampler_resource: None,
             command_pool: None,
             command_buffer: None,
-        };
-        mesh
+        }
     }
 
     pub fn get_vertex_buffer(&self) -> ash::vk::Buffer {

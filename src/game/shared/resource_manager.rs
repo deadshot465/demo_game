@@ -9,13 +9,16 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::traits::GraphicsBase;
 
+type ModelList<GraphicsType, BufferType, CommandType, TextureType> = Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>;
+type SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType> = Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>;
+
 pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
           BufferType: 'static + Disposable + Clone,
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable {
-    pub models: Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>,
-    pub skinned_models: Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>,
+    pub models: ModelList<GraphicsType, BufferType, CommandType, TextureType>,
+    pub skinned_models: SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
@@ -30,6 +33,16 @@ unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync for Resourc
           BufferType: 'static + Disposable + Clone,
           CommandType: 'static + Clone,
           TextureType: 'static + Clone + Disposable { }
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Default for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
+    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+          BufferType: 'static + Disposable + Clone,
+          CommandType: 'static + Clone,
+          TextureType: 'static + Clone + Disposable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -93,6 +106,12 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
     pub fn get_skinned_model_count(&self) -> usize {
         self.skinned_models.len()
     }
+    pub fn get_total_model_count(&self) -> usize {
+        self.get_model_count() + self.get_skinned_model_count()
+    }
+    pub fn get_texture_count(&self) -> usize {
+        self.textures.len()
+    }
 
     pub fn get_resource<U>(&self, resource_name: &str) -> *const U
         where U: Disposable {
@@ -118,28 +137,17 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
                 break;
             }
         }
-        if let Some(_) = res {
+        if res.is_some() {
             self.resource.remove(_index);
         }
     }
 }
 
 impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn create_sampler_resource(&mut self) {
-        for model in self.models.iter_mut() {
-            let mut model_lock = model.lock();
-            model_lock.create_sampler_resource();
-        }
-        for model in self.skinned_models.iter_mut() {
-            let mut model_lock = model.lock();
-            model_lock.create_sampler_resource();
-        }
-    }
-
     pub async fn create_ssbo(&mut self) {
         for model in self.skinned_models.iter_mut() {
             let mut model_lock = model.lock();
-            model_lock.create_ssbo().await;
+            model_lock.create_ssbo().await
         }
     }
 }

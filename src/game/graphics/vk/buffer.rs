@@ -74,7 +74,7 @@ impl Buffer {
         drop(lock);
         let device_memory = allocation_info.get_device_memory();
         let mapped = allocation_info.get_mapped_data();
-        let mut _instance = Buffer {
+        Buffer {
             logical_device: device,
             buffer,
             device_memory,
@@ -84,8 +84,7 @@ impl Buffer {
             allocation,
             allocation_info: Some(allocation_info),
             allocator
-        };
-        _instance
+        }
     }
 
     pub fn copy_buffer(&self, src_buffer: &Buffer, buffer_size: DeviceSize, command_pool: CommandPool, graphics_queue: Queue, command_buffer: Option<CommandBuffer>) {
@@ -153,8 +152,8 @@ impl Disposable for Buffer {
 
 impl Mappable for Buffer {
     fn map_memory(&mut self, _device_size: u64, _offset: u64) -> *mut c_void {
-        if self.mapped_memory == std::ptr::null_mut() &&
-            self.allocation_info.as_ref().unwrap().get_mapped_data() == std::ptr::null_mut() {
+        if self.mapped_memory.is_null() &&
+            self.allocation_info.as_ref().unwrap().get_mapped_data().is_null() {
             self.mapped_memory = self.allocator
                 .upgrade().unwrap()
                 .read().unwrap().map_memory(&self.allocation)
@@ -164,8 +163,8 @@ impl Mappable for Buffer {
     }
 
     fn unmap_memory(&mut self) {
-        if self.allocation_info.as_ref().unwrap().get_mapped_data() == std::ptr::null_mut() &&
-            self.mapped_memory != std::ptr::null_mut() {
+        if self.allocation_info.as_ref().unwrap().get_mapped_data().is_null() &&
+            !self.mapped_memory.is_null() {
             self.allocator
                 .upgrade()
                 .unwrap()

@@ -14,7 +14,7 @@ use vk_mem::Allocator;
 pub struct Initializer {}
 
 impl Initializer {
-    pub fn create_instance(debug: bool, enabled_layers: &Vec<CString>, entry: &Entry, window: &winit::window::Window) -> anyhow::Result<Instance> {
+    pub fn create_instance(debug: bool, enabled_layers: &[CString], entry: &Entry, window: &winit::window::Window) -> anyhow::Result<Instance> {
         let app_name = CString::new("Demo Engine Rust")?;
         let engine_name = CString::new("Demo Engine")?;
         let app_info = ApplicationInfo::builder()
@@ -72,7 +72,7 @@ impl Initializer {
     }
 
     pub fn create_logical_device(instance: &Instance, physical_device: &super::PhysicalDevice,
-                             enabled_layers: &Vec<CString>, debug: bool) -> (ash::Device, Queue, Queue, Queue) {
+                             enabled_layers: &[CString], debug: bool) -> (ash::Device, Queue, Queue, Queue) {
         let layers = enabled_layers.iter().map(|s| {
             s.as_ptr()
         }).collect::<Vec<_>>();
@@ -112,7 +112,7 @@ impl Initializer {
         }
         unsafe {
             let device = instance
-                .create_device(physical_device.physical_device.clone(), &create_info, None)
+                .create_device(physical_device.physical_device, &create_info, None)
                 .expect("Failed to create logical device.");
             let graphics_queue = device.get_device_queue(physical_device
                                                              .queue_indices

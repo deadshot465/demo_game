@@ -1,17 +1,5 @@
 #version 450
 
-layout (location = 1) in vec4 inNormal;
-layout (location = 2) in vec2 inTexCoord;
-layout (location = 3) in vec4 fragPos;
-
-layout (location = 0) out vec4 fragColor;
-
-layout (push_constant) uniform PushConstant
-{
-    uint texture_index;
-    vec4 object_color;
-} pco;
-
 layout (binding = 1) uniform DirectionalLight
 {
     vec4 diffuse;
@@ -21,7 +9,18 @@ layout (binding = 1) uniform DirectionalLight
     float specular_intensity;
 } direction_light;
 
-//layout (binding = 2) uniform sampler2D TexSampler[80];
+layout (push_constant) uniform PushConstant
+{
+    uint texture_index;
+    vec4 object_color;
+    uint model_index;
+} pco;
+
+layout (location = 1) in vec4 inNormal;
+layout (location = 2) in vec2 inTexCoord;
+layout (location = 3) in vec4 fragPos;
+
+layout (location = 0) out vec4 fragColor;
 
 void main()
 {

@@ -20,6 +20,7 @@ pub struct SkinnedPrimitive<BufferType, CommandType, TextureType>
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
     pub texture: Option<Arc<ShardedLock<TextureType>>>,
+    pub texture_index: usize,
     pub is_disposed: bool,
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
     pub command_buffer: Option<CommandType>,

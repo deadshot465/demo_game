@@ -64,11 +64,11 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
-        self.generate_terrain().await?;
-        /*self.add_skinned_model("./models/nathan/Nathan.glb", Vec3A::new(-1.5, 0.0, -1.5),
+        //self.generate_terrain().await?;
+        self.add_skinned_model("./models/nathan/Nathan.glb", Vec3A::new(-1.5, 0.0, -1.5),
                                Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
         self.add_model("./models/ak/output.gltf", Vec3A::new(2.5, 0.0, 2.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;*/
+                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
         self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
                        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0))?;
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
@@ -131,7 +131,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to lock resource manager.");
         let item = lock.models.iter()
             .find(|m| (*m).lock().get_name() == file_name)
-            .map(|m| m.clone());
+            .cloned();
         if let Some(m) = item {
             let mut model = Model::from(&*m.lock());
             model.position = position;
@@ -170,7 +170,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to lock resource manager.");
         let item = lock.skinned_models.iter()
             .find(|m| (*m).lock().get_name() == file_name)
-            .map(|m| m.clone());
+            .cloned();
         if let Some(m) = item {
             let mut model = SkinnedModel::from(&*m.lock());
             model.position = position;
@@ -203,11 +203,11 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let skinned_model_tasks = &mut self.skinned_model_tasks;
         let mut models = vec![];
         let mut skinned_models = vec![];
-        for task in model_tasks.into_iter() {
+        for task in model_tasks.iter_mut() {
             let model = task.await.unwrap();
             models.push(model);
         }
-        for task in skinned_model_tasks.into_iter() {
+        for task in skinned_model_tasks.iter_mut() {
             let model = task.await.unwrap();
             skinned_models.push(model);
         }

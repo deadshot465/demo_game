@@ -10,16 +10,14 @@ use std::sync::{Arc, Weak};
 use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::enums::{create_sampler_resource, ShaderType, SamplerResource};
+use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Vertex, SkinnedMesh, Animation, SkinnedVertex, SkinnedPrimitive, ChannelOutputs, Channel, SSBO, generate_joint_transforms};
 use crate::game::structs::{Joint, PushConstant};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::convert::TryFrom;
 use ash::version::DeviceV1_0;
 
-#[allow(dead_code)]
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
     where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
           BufferType: 'static + Disposable + Clone,
@@ -35,7 +33,6 @@ pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
     pub model_index: usize,
     pub animations: HashMap<String, Animation>,
     graphics: Weak<ShardedLock<GraphicsType>>,
-    current_frame: f32,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
@@ -46,8 +43,9 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
     fn create_model(file_name: &str, document: gltf::Document, buffers: Vec<gltf::buffer::Data>,
                     images: Vec<Arc<ShardedLock<TextureType>>>,
                     graphics: Weak<ShardedLock<GraphicsType>>,
-                    position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> Self {
-        let meshes = Self::process_model(&document, &buffers, images);
+                    position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4,
+                    texture_index_offset: usize) -> Self {
+        let meshes = Self::process_model(&document, &buffers, images, texture_index_offset);
         let animations = Self::process_animation(&document, &buffers);
         for (name, _) in animations.iter() {
             println!("{}", &name);
@@ -63,30 +61,33 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
             model_index: 0,
             animations,
             graphics,
-            current_frame: 0.0,
         }
     }
 
-    fn process_model(document: &gltf::Document, buffers: &Vec<gltf::buffer::Data>, images: Vec<Arc<ShardedLock<TextureType>>>) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
+    fn process_model(document: &gltf::Document, buffers: &[gltf::buffer::Data],
+                     images: Vec<Arc<ShardedLock<TextureType>>>,
+                     texture_index_offset: usize) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let meshes = if let Some(scene) = document.default_scene() {
-            Self::process_root_nodes(scene, buffers, images)
+            Self::process_root_nodes(scene, buffers, images, texture_index_offset)
         } else {
-            Self::process_root_nodes(document.scenes().nth(0).unwrap(), buffers, images)
+            Self::process_root_nodes(document.scenes().next().unwrap(), buffers, images, texture_index_offset)
         };
         log::info!("Skinned model mesh count: {}", meshes.len());
         meshes
     }
 
-    fn process_root_nodes(scene: Scene, buffers: &Vec<gltf::buffer::Data>, images: Vec<Arc<ShardedLock<TextureType>>>) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
+    fn process_root_nodes(scene: Scene, buffers: &[gltf::buffer::Data],
+                          images: Vec<Arc<ShardedLock<TextureType>>>,
+                          texture_index_offset: usize) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = vec![];
         for node in scene.nodes() {
-            let mut sub_meshes = Self::process_node(node, &buffers, &images, Mat4::identity());
+            let mut sub_meshes = Self::process_node(node, buffers, &images, Mat4::identity(), texture_index_offset);
             meshes.append(&mut sub_meshes);
         }
         meshes
     }
 
-    fn process_node(node: Node, buffers: &Vec<gltf::buffer::Data>, images: &Vec<Arc<ShardedLock<TextureType>>>, local_transform: Mat4) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
+    fn process_node(node: Node, buffers: &[gltf::buffer::Data], images: &[Arc<ShardedLock<TextureType>>], local_transform: Mat4, texture_index_offset: usize) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
         let transform = Mat4::from_scale_rotation_translation(
@@ -96,16 +97,18 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
         );
         let transform = local_transform * transform;
         if let Some(mesh) = node.mesh() {
-            meshes.push(Self::process_skinned_mesh(&node, mesh, buffers, transform.clone(), images));
+            meshes.push(Self::process_skinned_mesh(&node, mesh, buffers, transform, images, texture_index_offset));
         }
         for _node in node.children() {
-            let mut sub_meshes = Self::process_node(_node, buffers, images, transform.clone());
+            let mut sub_meshes = Self::process_node(_node, buffers, images, transform, texture_index_offset);
             meshes.append(&mut sub_meshes);
         }
         meshes
     }
 
-    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffers: &Vec<gltf::buffer::Data>, local_transform: Mat4, images: &Vec<Arc<ShardedLock<TextureType>>>) -> SkinnedMesh<BufferType, CommandType, TextureType> {
+    fn process_skinned_mesh(node: &Node, mesh: gltf::Mesh, buffers: &[gltf::buffer::Data], local_transform: Mat4,
+                            images: &[Arc<ShardedLock<TextureType>>],
+                            texture_index_offset: usize) -> SkinnedMesh<BufferType, CommandType, TextureType> {
         let mut root_joint = None;
         if let Some(skin) = node.skin() {
             let joints: Vec<_> = skin.joints().collect();
@@ -187,6 +190,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                 .map(|x| x.texture().index());
             let texture = texture_index
                 .and_then(|x| images.get(x).cloned());
+            let texture_index = texture_index.map(|index| index + texture_index_offset);
 
             let _primitive = SkinnedPrimitive {
                 vertices: skinned_vertices,
@@ -194,6 +198,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                 vertex_buffer: None::<ManuallyDrop<BufferType>>,
                 index_buffer: None::<ManuallyDrop<BufferType>>,
                 texture,
+                texture_index: texture_index.unwrap_or_default(),
                 is_disposed: false,
                 command_pool: None,
                 command_buffer: None,
@@ -228,10 +233,10 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
         );
         let pose_transform = local_transform * node_transform;
         for child in node.children() {
-            let skeleton = Self::process_skeleton(&child, node_to_joints_lookup, inverse_bind_matrices, pose_transform.clone());
+            let skeleton = Self::process_skeleton(&child, node_to_joints_lookup, inverse_bind_matrices, pose_transform);
             children.push(skeleton);
         }
-        let ibm = ibm.clone();
+        let ibm = ibm;
         let (t, r, s) = match node.transform() {
             Transform::Matrix { matrix } => {
                 let mat = Mat4::from_cols_array_2d(&matrix);
@@ -258,7 +263,7 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
         }
     }
 
-    fn process_animation(document: &gltf::Document, buffers: &Vec<gltf::buffer::Data>) -> HashMap<String, Animation> {
+    fn process_animation(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> HashMap<String, Animation> {
         let mut animations = HashMap::new();
         for (index, animation) in document.animations().enumerate() {
             let name = if let Some(n) = animation.name() {
@@ -280,15 +285,15 @@ impl<GraphicsType, BufferType, CommandType, TextureType> SkinnedModel<GraphicsTy
                     .collect::<Vec<_>>();
                 let outputs = match reader.read_outputs().unwrap() {
                     ReadOutputs::Translations(translations) => {
-                        ChannelOutputs::Translations(translations.map(|x| Vec3A::from(x)).collect())
+                        ChannelOutputs::Translations(translations.map(Vec3A::from).collect())
                     },
                     ReadOutputs::Rotations(rotations) => {
                         ChannelOutputs::Rotations(rotations.into_f32()
-                            .map(|r| Quat::from(r))
+                            .map(Quat::from)
                             .collect())
                     },
                     ReadOutputs::Scales(scales) => {
-                        ChannelOutputs::Scales(scales.map(|s| Vec3A::from(s))
+                        ChannelOutputs::Scales(scales.map(Vec3A::from)
                             .collect())
                     },
                     ReadOutputs::MorphTargetWeights(_) => {
@@ -340,8 +345,8 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             }
             log::info!("Skinned model index: {}, Command pool: {:?}", model_index, command_pool);
             let (document, buffers, images) = read_raw_data(file_name).unwrap();
-            let textures = Graphics::create_gltf_textures(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
-            let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color);
+            let (textures, texture_index_offset) = Graphics::create_gltf_textures(images, graphics_clone.clone(), command_pool.clone()).await.unwrap();
+            let mut loaded_model = Self::create_model(file_name, document, buffers, textures, graphics.clone(), position, scale, rotation, color, texture_index_offset);
             {
                 let graphics_lock = graphics_clone.read().unwrap();
                 for mesh in loaded_model.skinned_meshes.iter_mut() {
@@ -373,7 +378,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         indices, cmd_pool
                     ).await
                 });
-                let entry = handles.entry(index).or_insert(vec![]);
+                let entry = handles.entry(index).or_insert_with(Vec::new);
                 (*entry).push(handle);
             }
         }
@@ -395,25 +400,21 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         let mut ssbo_handles = HashMap::new();
         let graphics = self.graphics.upgrade().unwrap();
         for (index, _) in self.skinned_meshes.iter_mut().enumerate() {
-            let entry = ssbo_handles.entry(index).or_insert(vec![]);
+            let entry = ssbo_handles.entry(index).or_insert_with(Vec::new);
             let graphics_clone = graphics.clone();
             entry.push(tokio::spawn(async move {
                 let buffer = [Mat4::identity(); 500];
-                let ssbo = SSBO::new(graphics_clone, &buffer);
-                ssbo
+                SSBO::new(graphics_clone, &buffer)
             }));
         }
         for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
             let ssbos = ssbo_handles.get_mut(&index).unwrap();
-            for ssbo in ssbos.iter_mut() {
-                let item = ssbo.await.unwrap();
-                mesh.ssbo = Some(item);
-                break;
-            }
+            let item = ssbos.get_mut(0).unwrap().await.unwrap();
+            mesh.ssbo = Some(item);
         }
     }
 
-    pub fn create_sampler_resource(&mut self) {
+    /*pub fn create_sampler_resource(&mut self) {
         let graphics_arc = self.graphics.upgrade().unwrap();
         let graphics_lock = graphics_arc.read().unwrap();
         for mesh in self.skinned_meshes.iter_mut() {
@@ -433,14 +434,11 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 primitive.sampler_resource = Some(sampler_resource);
             }
         }
-    }
+    }*/
 
     pub fn update(&mut self, delta_time: f64) {
-        let mut animation_name = String::new();
-        for (name, _) in self.animations.iter() {
-            animation_name = name.clone();
-            break;
-        }
+        let mut keys = self.animations.keys();
+        let animation_name = keys.next().cloned().unwrap();
         let animation = self.animations.get_mut(&animation_name).unwrap();
         animation.current_time += delta_time as f32;
         let animation_end_time = *animation.channels
@@ -470,21 +468,21 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn render(&self, inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
-                  dynamic_alignment: u64,
                   push_constant: PushConstant, viewport: ash::vk::Viewport, scissor: ash::vk::Rect2D) {
-        let dynamic_offset = dynamic_alignment *
-            ash::vk::DeviceSize::try_from(self.model_index).unwrap();
-        let dynamic_offset = u32::try_from(dynamic_offset).unwrap();
         let graphics_ptr = self.graphics.upgrade().unwrap();
         let graphics_lock = graphics_ptr.read().unwrap();
+        let pipeline_layout = graphics_lock
+            .pipeline.get_pipeline_layout(ShaderType::AnimatedModel);
+        let pipeline = graphics_lock.pipeline
+            .get_pipeline(ShaderType::AnimatedModel, 0);
+        let mut push_constant = push_constant;
+        push_constant.object_color = self.color;
+        push_constant.model_index = self.model_index;
         unsafe {
-            let mut push_constant = push_constant;
+            let inheritance = inheritance_info.load(Ordering::SeqCst)
+                .as_ref()
+                .unwrap();
             for mesh in self.skinned_meshes.iter() {
-                let pipeline = graphics_lock.pipeline
-                    .get_pipeline(ShaderType::AnimatedModel, 0);
-                let inheritance = inheritance_info.load(Ordering::SeqCst)
-                    .as_ref()
-                    .unwrap();
                 for primitive in mesh.primitives.iter() {
                     let command_buffer_begin_info = CommandBufferBeginInfo::builder()
                         .inheritance_info(inheritance)
@@ -503,23 +501,21 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         command_buffer, PipelineBindPoint::GRAPHICS,
                         pipeline
                     );
-                    let pipeline_layout = graphics_lock
-                        .pipeline.get_pipeline_layout(ShaderType::AnimatedModel);
-                    push_constant.object_color = self.color;
-                    let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
+                    graphics_lock.logical_device.cmd_bind_descriptor_sets(
+                        command_buffer, PipelineBindPoint::GRAPHICS,
+                        pipeline_layout, 0,
+                        &[graphics_lock.descriptor_sets[0]], &[]
+                    );
+                    push_constant.texture_index = primitive.texture_index;
+                    let casted = bytemuck::cast::<PushConstant, [u8; 48]>(push_constant);
                     graphics_lock.logical_device
                         .cmd_push_constants(command_buffer, pipeline_layout,
-                                            ShaderStageFlags::FRAGMENT, 0, &casted[0..]);
+                                            ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX, 0, &casted[0..]);
                     let vertex_buffers = [
                         primitive.get_vertex_buffer()
                     ];
                     let index_buffer = primitive.get_index_buffer();
-                    graphics_lock.logical_device.cmd_bind_descriptor_sets(
-                        command_buffer, PipelineBindPoint::GRAPHICS,
-                        pipeline_layout, 0,
-                        &[graphics_lock.descriptor_sets[0]], &[dynamic_offset, dynamic_offset]
-                    );
-                    if let Some(sampler_resource) = primitive.sampler_resource.as_ref() {
+                    /*if let Some(sampler_resource) = primitive.sampler_resource.as_ref() {
                         match sampler_resource {
                             SamplerResource::DescriptorSet(set) => {
                                 graphics_lock.logical_device
@@ -529,12 +525,12 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                                     );
                             },
                         }
-                    }
+                    }*/
                     if let Some(ssbo) = mesh.ssbo.as_ref() {
                         graphics_lock.logical_device
                             .cmd_bind_descriptor_sets(
                                 command_buffer, PipelineBindPoint::GRAPHICS,
-                                pipeline_layout, 2, &[ssbo.descriptor_set],
+                                pipeline_layout, 1, &[ssbo.descriptor_set],
                                 &[]
                             );
                     }
@@ -584,7 +580,6 @@ impl<GraphicsType, BufferType, CommandType, TextureType> From<&SkinnedModel<Grap
             model_index: 0,
             animations: model.animations.clone(),
             graphics: model.graphics.clone(),
-            current_frame: 0.0,
         }
     }
 }

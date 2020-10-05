@@ -43,7 +43,7 @@ pub struct Graphics {
     pub descriptor_sets: Vec<DescriptorSet>,
     pub push_constant: PushConstant,
     pub current_index: usize,
-    pub sampler_descriptor_set_layout: DescriptorSetLayout,
+    pub descriptor_set_layout: DescriptorSetLayout,
     pub ssbo_descriptor_set_layout: DescriptorSetLayout,
     pub descriptor_pool: Arc<Mutex<DescriptorPool>>,
     pub command_pool: CommandPool,
@@ -61,7 +61,6 @@ pub struct Graphics {
     debug_messenger: DebugUtilsMessengerEXT,
     surface: SurfaceKHR,
     physical_device: super::PhysicalDevice,
-    descriptor_set_layout: DescriptorSetLayout,
     depth_image: ManuallyDrop<super::Image>,
     msaa_image: ManuallyDrop<super::Image>,
     uniform_buffers: ManuallyDrop<UniformBuffers>,
@@ -134,9 +133,6 @@ impl Graphics {
             Arc::downgrade(&device), &swapchain, command_pool, graphics_queue, sample_count, Arc::downgrade(&allocator)
         );
 
-        let descriptor_set_layout = Self::create_descriptor_set_layout(device.as_ref());
-        let sampler_descriptor_set_layout = Self::create_sampler_descriptor_set_layout(device.as_ref());
-        let ssbo_descriptor_set_layout = Self::create_ssbo_descriptor_set_layout(device.as_ref());
         let view_projection = Self::create_view_projection(
             camera.read().unwrap().deref(), Arc::downgrade(&device), Arc::downgrade(&allocator))?;
         let directional_light = Directional::new(
@@ -149,6 +145,7 @@ impl Graphics {
             Arc::downgrade(&allocator)
         )?;
 
+        let ssbo_descriptor_set_layout = Self::create_ssbo_descriptor_set_layout(device.as_ref());
         let uniform_buffers = UniformBuffers::new(view_projection, directional);
         let min_alignment = physical_device
             .device_properties
@@ -179,9 +176,9 @@ impl Graphics {
             command_pool,
             depth_image: ManuallyDrop::new(depth_image),
             msaa_image: ManuallyDrop::new(msaa_image),
-            descriptor_set_layout,
+            descriptor_set_layout: DescriptorSetLayout::null(),
             uniform_buffers: ManuallyDrop::new(uniform_buffers),
-            push_constant: PushConstant::new(0, Vec4::new(0.0, 1.0, 1.0, 1.0)),
+            push_constant: PushConstant::new(0, Vec4::new(0.0, 1.0, 1.0, 1.0), 0),
             camera,
             resource_manager,
             dynamic_objects: DynamicBufferObject {
@@ -200,7 +197,6 @@ impl Graphics {
             complete_semaphores,
             current_index: 0,
             sample_count,
-            sampler_descriptor_set_layout,
             depth_format,
             allocator,
             thread_pool,
@@ -346,7 +342,7 @@ impl Graphics {
 
     pub async fn create_gltf_textures(images: Vec<gltf::image::Data>,
                                       graphics: Arc<ShardedLock<Graphics>>,
-                                      command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<Vec<Arc<ShardedLock<super::Image>>>> {
+                                      command_pool: Arc<Mutex<CommandPool>>) -> anyhow::Result<(Vec<Arc<ShardedLock<super::Image>>>, usize)> {
         let mut textures = vec![];
         let mut texture_handles = vec![];
         use gltf::image::Format;
@@ -382,14 +378,16 @@ impl Graphics {
         let graphics_lock = graphics.read().unwrap();
         let resource_manager = graphics_lock.resource_manager.clone();
         drop(graphics_lock);
+        let texture_index_offset: usize;
         match resource_manager.upgrade() {
             Some(rm) => {
+                texture_index_offset = rm.read().unwrap().get_texture_count();
                 let mut rm_lock = rm.write().unwrap();
                 let textures_ptrs = textures.into_iter()
                     .map(|img| rm_lock.add_texture(img))
                     .collect::<Vec<_>>();
                 log::info!("Model texture count: {}", textures_ptrs.len());
-                Ok(textures_ptrs)
+                Ok((textures_ptrs, texture_index_offset))
             },
             None => {
                 panic!("Failed to upgrade resource manager.");
@@ -453,7 +451,9 @@ impl Graphics {
     }
 
     pub async fn initialize(&mut self) -> anyhow::Result<()> {
-        self.create_dynamic_model_buffers()?;
+        self.create_descriptor_set_layout()?;
+        //self.create_dynamic_model_buffers()?;
+        self.create_primary_ssbo()?;
         self.allocate_descriptor_set()?;
         let color_format: Format = self.swapchain.format.format;
         let depth_format = self.depth_format;
@@ -525,7 +525,7 @@ impl Graphics {
             model.lock().update(delta_time);
         }
         drop(resource_lock);
-        self.update_dynamic_buffer(delta_time)?;
+        //self.update_dynamic_buffer(delta_time)?;
         Ok(())
     }
 
@@ -535,7 +535,6 @@ impl Graphics {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         let resource_lock = resource_manager.read().unwrap();
         let thread_count = self.thread_pool.thread_count;
-        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
         let push_constant = self.push_constant;
         let ptr = inheritance_info;
         for model in resource_lock.models.iter() {
@@ -547,7 +546,7 @@ impl Graphics {
                     let model_lock = model_clone.lock();
                     let ptr = ptr_clone;
                     model_lock
-                        .render(ptr, dynamic_alignment, push_constant, viewport, scissor);
+                        .render(ptr, push_constant, viewport, scissor);
                 });
         }
         for model in resource_lock.skinned_models.iter() {
@@ -559,7 +558,7 @@ impl Graphics {
                     let model_lock = model_clone.lock();
                     let ptr = ptr_clone;
                     model_lock
-                        .render(ptr, dynamic_alignment, push_constant, viewport, scissor);
+                        .render(ptr, push_constant, viewport, scissor);
                 });
         }
         self.thread_pool.wait();
@@ -601,14 +600,21 @@ impl Graphics {
         ManuallyDrop::drop(&mut self.swapchain);
     }
 
-    fn create_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
+    fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
+        let resource_manager = self.resource_manager
+            .upgrade()
+            .expect("Failed to upgrade Weak of resource manager for creating descriptor set layout.");
+        let resource_lock = resource_manager.read().unwrap();
+        let total_texture_count = resource_lock.get_texture_count();
+        drop(resource_lock);
+        drop(resource_manager);
         let mut descriptor_set_layout_binding = vec![];
         descriptor_set_layout_binding.push(
             DescriptorSetLayoutBinding::builder()
                 .binding(0)
                 .descriptor_count(1)
                 .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::TESSELLATION_CONTROL)
+                .stage_flags(ShaderStageFlags::VERTEX)
                 .build());
 
         descriptor_set_layout_binding.push(
@@ -623,44 +629,26 @@ impl Graphics {
             DescriptorSetLayoutBinding::builder()
                 .binding(2)
                 .descriptor_count(1)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::TESSELLATION_CONTROL)
+                .descriptor_type(DescriptorType::STORAGE_BUFFER)
+                .stage_flags(ShaderStageFlags::VERTEX)
                 .build());
 
         descriptor_set_layout_binding.push(
             DescriptorSetLayoutBinding::builder()
                 .binding(3)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .stage_flags(ShaderStageFlags::VERTEX)
+                .descriptor_count(total_texture_count as u32)
+                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(ShaderStageFlags::FRAGMENT)
                 .build());
 
         let create_info = DescriptorSetLayoutCreateInfo::builder()
             .bindings(descriptor_set_layout_binding.as_slice());
         unsafe {
-            let descriptor_set_layout = device
-                .create_descriptor_set_layout(&create_info, None)
-                .expect("Failed to create descriptor set layout.");
+            let descriptor_set_layout = self.logical_device
+                .create_descriptor_set_layout(&create_info, None)?;
             log::info!("Descriptor set layout successfully created.");
-            descriptor_set_layout
-        }
-    }
-
-    fn create_sampler_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
-        let layout_bindings = vec![DescriptorSetLayoutBinding::builder()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .stage_flags(ShaderStageFlags::FRAGMENT)
-            .build()];
-        let create_info = DescriptorSetLayoutCreateInfo::builder()
-            .bindings(layout_bindings.as_slice());
-        unsafe {
-            let descriptor_set_layout = device
-                .create_descriptor_set_layout(&create_info, None)
-                .expect("Failed to create descriptor set layout for sampler.");
-            log::info!("Descriptor set layout for sampler successfully created.");
-            descriptor_set_layout
+            self.descriptor_set_layout = descriptor_set_layout;
+            Ok(())
         }
     }
 
@@ -716,7 +704,7 @@ impl Graphics {
         }
     }
 
-    fn create_dynamic_model_buffers(&mut self) -> anyhow::Result<()> {
+    /*fn create_dynamic_model_buffers(&mut self) -> anyhow::Result<()> {
         let arc = self.resource_manager.upgrade();
         if arc.is_none() {
             panic!("Resource manager has been destroyed.");
@@ -766,36 +754,51 @@ impl Graphics {
         self.dynamic_objects.models = dynamic_model;
         self.uniform_buffers.model_buffer = Some(ManuallyDrop::new(buffer));
         Ok(())
+    }*/
+
+    fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
+        let resource_manager = self.resource_manager
+            .upgrade()
+            .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
+        let resource_lock = resource_manager.read().unwrap();
+        if resource_lock.models.is_empty() && resource_lock.skinned_models.is_empty() {
+            return Err(anyhow::anyhow!("There are no models in resource manager."));
+        }
+        let mut world_matrices = vec![Mat4::identity(); 50];
+        for model in resource_lock.models.iter() {
+            let model_lock = model.lock();
+            world_matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        for model in resource_lock.skinned_models.iter() {
+            let model_lock = model.lock();
+            world_matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        let buffer_size = std::mem::size_of::<Mat4>() * world_matrices.len();
+        drop(resource_lock);
+        drop(resource_manager);
+        let mut buffer = super::Buffer::new(
+            Arc::downgrade(&self.logical_device),
+            buffer_size as u64,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT, Arc::downgrade(&self.allocator));
+        unsafe {
+            let mapped = buffer.map_memory(buffer_size as u64, 0);
+            std::ptr::copy_nonoverlapping(world_matrices.as_ptr() as *const std::ffi::c_void, mapped, buffer_size);
+            self.uniform_buffers.primary_ssbo = Some(ManuallyDrop::new(buffer));
+            log::info!("Primary SSBO successfully created.");
+        }
+        Ok(())
     }
 
     fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
-        let mut texture_count = 0_usize;
-        let mut ssbo_count = 0;
-        if let Some(r) = self.resource_manager.upgrade() {
-            let resource_lock = r.read().unwrap();
-            for model in resource_lock.models.iter() {
-                for mesh in model.lock().meshes.iter() {
-                    texture_count += if mesh.texture.is_empty() {
-                        0
-                    } else {
-                        mesh.texture.len()
-                    };
-                }
-            }
-            for model in resource_lock.skinned_models.iter() {
-                for mesh in model.lock().skinned_meshes.iter() {
-                    for primitive in mesh.primitives.iter() {
-                        texture_count += if primitive.texture.is_some() {
-                            1
-                        } else {
-                            0
-                        };
-                    }
-                    ssbo_count += 1;
-                }
-            }
-            drop(resource_lock);
-        }
+        let resource_manager = self.resource_manager
+            .upgrade()
+            .expect("Failed to upgrade Weak of resource manager for allocating descriptor set.");
+        let resource_lock = resource_manager.read().unwrap();
+        let texture_count = resource_lock.get_texture_count();
+        let mut ssbo_count = 1;
+        resource_lock.skinned_models.iter()
+            .for_each(|model| ssbo_count += model.lock().skinned_meshes.len());
         let mut pool_sizes = vec![];
         pool_sizes.push(DescriptorPoolSize::builder()
             .descriptor_count(1)
@@ -804,14 +807,6 @@ impl Graphics {
         pool_sizes.push(DescriptorPoolSize::builder()
             .descriptor_count(1)
             .ty(DescriptorType::UNIFORM_BUFFER)
-            .build());
-        pool_sizes.push(DescriptorPoolSize::builder()
-            .descriptor_count(1)
-            .ty(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-            .build());
-        pool_sizes.push(DescriptorPoolSize::builder()
-            .descriptor_count(1)
-            .ty(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
             .build());
         pool_sizes.push(DescriptorPoolSize::builder()
             .descriptor_count(texture_count as u32)
@@ -829,8 +824,7 @@ impl Graphics {
 
         unsafe {
             self.descriptor_pool = Arc::new(Mutex::new(self.logical_device
-                .create_descriptor_pool(&pool_info, None)
-                .expect("Failed to create descriptor pool.")));
+                .create_descriptor_pool(&pool_info, None)?));
             log::info!("Descriptor pool successfully created.");
             let set_layout = vec![self.descriptor_set_layout];
             let allocate_info = DescriptorSetAllocateInfo::builder()
@@ -872,40 +866,40 @@ impl Graphics {
                 .dst_set(self.descriptor_sets[0])
                 .build());
 
-            let model_buffer_info = vec![DescriptorBufferInfo::builder()
-                .range(WHOLE_SIZE)
+            let ssbo_buffer = self.uniform_buffers
+                .primary_ssbo
+                .as_ref()
+                .expect("Primary SSBO buffer doesn't exist.");
+            let ssbo_buffer_info = vec![DescriptorBufferInfo::builder()
+                .range(ssbo_buffer.buffer_size)
                 .offset(0)
-                .buffer(self.uniform_buffers.model_buffer
-                    .as_ref()
-                    .unwrap()
-                    .buffer)
+                .buffer(ssbo_buffer.buffer)
                 .build()];
+            write_descriptors.push(WriteDescriptorSet::builder()
+                .dst_array_element(0)
+                .buffer_info(ssbo_buffer_info.as_slice())
+                .descriptor_type(DescriptorType::STORAGE_BUFFER)
+                .dst_binding(2)
+                .dst_set(self.descriptor_sets[0])
+                .build());
 
-            let mesh_buffer_info = vec![DescriptorBufferInfo::builder()
-                .range(WHOLE_SIZE)
-                .offset(0)
-                .buffer(ash::vk::Buffer::null())
-                .build()];
-
-            if self.uniform_buffers.model_buffer.is_some() {
-                write_descriptors.push(WriteDescriptorSet::builder()
-                    .dst_array_element(0)
-                    .buffer_info(model_buffer_info.as_slice())
-                    .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                    .dst_binding(2)
-                    .dst_set(self.descriptor_sets[0])
-                    .build());
+            let mut texture_info = vec![];
+            for texture in resource_lock.textures.iter() {
+                let texture_lock = texture.read().unwrap();
+                let image_info = DescriptorImageInfo::builder()
+                    .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(texture_lock.image_view)
+                    .sampler(texture_lock.sampler)
+                    .build();
+                texture_info.push(image_info);
             }
-
-            if self.uniform_buffers.mesh_buffer.is_some() {
-                write_descriptors.push(WriteDescriptorSet::builder()
-                    .dst_array_element(0)
-                    .buffer_info(mesh_buffer_info.as_slice())
-                    .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                    .dst_binding(3)
-                    .dst_set(self.descriptor_sets[0])
-                    .build());
-            }
+            write_descriptors.push(WriteDescriptorSet::builder()
+                .dst_array_element(0)
+                .image_info(texture_info.as_slice())
+                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .dst_binding(3)
+                .dst_set(self.descriptor_sets[0])
+                .build());
 
             self.logical_device.update_descriptor_sets(write_descriptors.as_slice(), &[]);
             log::info!("Descriptor successfully updated.");
@@ -937,11 +931,7 @@ impl Graphics {
 
             let mut descriptor_set_layout = vec![self.descriptor_set_layout];
             match shader_type {
-                ShaderType::BasicShader => {
-                    descriptor_set_layout.push(self.sampler_descriptor_set_layout);
-                },
                 ShaderType::AnimatedModel => {
-                    descriptor_set_layout.push(self.sampler_descriptor_set_layout);
                     descriptor_set_layout.push(self.ssbo_descriptor_set_layout);
                 },
                 _ => ()
@@ -959,9 +949,8 @@ impl Graphics {
             .command_buffer_count(image_count)
             .level(CommandBufferLevel::PRIMARY);
         unsafe {
-            let cmd_buffers = device.allocate_command_buffers(&command_buffer_info)
-                .expect("Failed to allocate command buffers.");
-            cmd_buffers
+            device.allocate_command_buffers(&command_buffer_info)
+                .expect("Failed to allocate command buffers.")
         }
     }
 
@@ -1075,7 +1064,7 @@ impl Graphics {
         Ok(image)
     }
 
-    fn update_dynamic_buffer(&mut self, _delta_time: f64) -> anyhow::Result<()> {
+    /*fn update_dynamic_buffer(&mut self, _delta_time: f64) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         let resource_lock = resource_manager.read().unwrap();
         let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
@@ -1099,7 +1088,7 @@ impl Graphics {
                     std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
                         (i * (dynamic_alignment as usize))
                 );
-                *ptr = model.clone();
+                *ptr = *model;
             }
             let mapped = self.uniform_buffers.model_buffer
                 .as_ref()
@@ -1112,7 +1101,7 @@ impl Graphics {
             std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
             Ok(())
         }
-    }
+    }*/
 }
 
 impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
@@ -1145,7 +1134,6 @@ impl Drop for Graphics {
             }
             self.logical_device.destroy_command_pool(self.command_pool, None);
             self.logical_device.destroy_descriptor_set_layout(self.ssbo_descriptor_set_layout, None);
-            self.logical_device.destroy_descriptor_set_layout(self.sampler_descriptor_set_layout, None);
             self.logical_device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.allocator.write().unwrap().destroy();
             self.logical_device.destroy_device(None);

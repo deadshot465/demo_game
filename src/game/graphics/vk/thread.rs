@@ -40,7 +40,7 @@ impl Thread {
                     let d1 = d1;
                     'outer: loop {
                         let mut work: Result<Box<dyn FnOnce() + Send>, crossbeam::queue::PopError>;
-                        while let Ok(_) = receiver.recv().await {
+                        while receiver.recv().await.is_ok() {
                             if d1.load(Ordering::SeqCst) {
                                 break 'outer;
                             }
@@ -54,7 +54,6 @@ impl Thread {
                             }
                         }
                     }
-                    ()
                 }),
                 task_queue: task_queue.clone(),
                 sender,

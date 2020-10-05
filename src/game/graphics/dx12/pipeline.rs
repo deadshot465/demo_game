@@ -90,7 +90,7 @@ impl Pipeline {
             ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL
         };
         let constant = parameter_3.u.Constants_mut();
-        *constant = root_constant.clone();
+        *constant = root_constant;
         root_parameters.push(parameter_3);
 
         let static_sampler = D3D12_STATIC_SAMPLER_DESC {

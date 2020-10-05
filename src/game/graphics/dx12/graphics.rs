@@ -24,10 +24,12 @@ use winit::platform::windows::WindowExtWindows;
 use winapi::shared::windef::HWND;
 use crossbeam::sync::ShardedLock;
 
+type ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType> = Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>;
+
 #[allow(dead_code)]
 pub struct Graphics {
     camera: Arc<ShardedLock<Camera>>,
-    resource_manager: Weak<ShardedLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>,
+    resource_manager: ResourceManagerHandle<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>,
     debug: ComPtr<ID3D12Debug2>,
     dxgi_factory: ComPtr<IDXGIFactory2>,
     dxgi_adapter: ComPtr<IDXGIAdapter4>,
@@ -130,7 +132,7 @@ impl Graphics {
                 ))) {
                 log::info!("Device successfully created.");
                 dedicated_memory = desc.DedicatedVideoMemory;
-                adapter_ptr = adapter.clone();
+                adapter_ptr = adapter;
             }
             adapter_index += 1;
         }

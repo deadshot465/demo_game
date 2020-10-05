@@ -48,7 +48,7 @@ impl Swapchain {
         swapchain
     }
 
-    fn choose_format(formats: &Vec<SurfaceFormatKHR>) -> SurfaceFormatKHR {
+    fn choose_format(formats: &[SurfaceFormatKHR]) -> SurfaceFormatKHR {
         for format in formats.iter() {
             if format.format == Format::B8G8R8A8_UNORM &&
                 format.color_space == ColorSpaceKHR::SRGB_NONLINEAR {
@@ -66,27 +66,24 @@ impl Swapchain {
             let inner_size = window.inner_size();
             let actual_width: u32;
             let actual_height: u32;
-            match inner_size {
-                winit::dpi::PhysicalSize {
-                    width, height
-                } => {
-                    actual_width = if width < capabilities.min_image_extent.width {
-                        capabilities.min_image_extent.width
-                    } else if width > capabilities.max_image_extent.width {
-                        capabilities.max_image_extent.width
-                    } else {
-                        width
-                    };
+            let winit::dpi::PhysicalSize {
+                width, height
+            } = inner_size;
+            actual_width = if width < capabilities.min_image_extent.width {
+                capabilities.min_image_extent.width
+            } else if width > capabilities.max_image_extent.width {
+                capabilities.max_image_extent.width
+            } else {
+                width
+            };
 
-                    actual_height = if height < capabilities.min_image_extent.height {
-                        capabilities.min_image_extent.height
-                    } else if height > capabilities.max_image_extent.height {
-                        capabilities.max_image_extent.height
-                    } else {
-                        height
-                    };
-                }
-            }
+            actual_height = if height < capabilities.min_image_extent.height {
+                capabilities.min_image_extent.height
+            } else if height > capabilities.max_image_extent.height {
+                capabilities.max_image_extent.height
+            } else {
+                height
+            };
             let extent = Extent2D::builder()
                 .width(actual_width)
                 .height(actual_height)
@@ -95,7 +92,7 @@ impl Swapchain {
         }
     }
 
-    fn choose_present_mode(present_modes: &Vec<PresentModeKHR>) -> PresentModeKHR {
+    fn choose_present_mode(present_modes: &[PresentModeKHR]) -> PresentModeKHR {
         let mut fifo_support = false;
         for mode in present_modes.iter() {
             match *mode {
@@ -132,7 +129,7 @@ impl Swapchain {
 
     fn create_swapchain(&mut self, surface: SurfaceKHR,
                         queue_indices: QueueIndices) {
-        let min_image_count = if self.capabilities.max_image_count <= 0 {
+        let min_image_count = if self.capabilities.max_image_count == 0 {
             self.capabilities.min_image_count + 1
         } else if self.capabilities.min_image_count + 1 > self.capabilities.max_image_count {
             self.capabilities.max_image_count

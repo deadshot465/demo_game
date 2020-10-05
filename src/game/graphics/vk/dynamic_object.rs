@@ -13,6 +13,18 @@ pub struct DynamicBufferObject {
     pub dynamic_alignment: DeviceSize,
 }
 
+impl Default for DynamicBufferObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for DynamicModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DynamicModel {
     pub fn new() -> Self {
         DynamicModel {
@@ -40,7 +52,7 @@ impl DynamicBufferObject {
 impl Drop for DynamicModel {
     fn drop(&mut self) {
         unsafe {
-            if self.buffer == std::ptr::null_mut() {
+            if self.buffer.is_null() {
                 return;
             }
             aligned_alloc::aligned_free(self.buffer as *mut ());

@@ -49,6 +49,12 @@ pub struct PhysicalDevice {
     pub feature_support: FeatureSupport,
 }
 
+impl Default for QueueIndices {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QueueIndices {
     pub fn new() -> Self {
         QueueIndices {
@@ -76,13 +82,13 @@ impl PhysicalDevice {
             instance.get_physical_device_features2(device, &mut features2);
 
             let feature_support = FeatureSupport {
-                geometry_shader: if features.geometry_shader == TRUE { true } else { false },
-                tessellation_shader: if features.tessellation_shader == TRUE { true } else { false },
-                sample_rate_shading: if features.sample_rate_shading == TRUE { true } else { false },
-                sampler_anisotropy: if features.sampler_anisotropy == TRUE { true } else { false },
-                shader_sampled_image_array_dynamic_indexing: if features.shader_sampled_image_array_dynamic_indexing == TRUE { true } else { false },
-                runtime_descriptor_array: if indexing_feature.runtime_descriptor_array == TRUE { true } else { false },
-                descriptor_binding_partially_bound: if indexing_feature.descriptor_binding_partially_bound == TRUE { true } else { false }
+                geometry_shader: features.geometry_shader == TRUE,
+                tessellation_shader: features.tessellation_shader == TRUE,
+                sample_rate_shading: features.sample_rate_shading == TRUE,
+                sampler_anisotropy: features.sampler_anisotropy == TRUE,
+                shader_sampled_image_array_dynamic_indexing: features.shader_sampled_image_array_dynamic_indexing == TRUE,
+                runtime_descriptor_array: indexing_feature.runtime_descriptor_array == TRUE,
+                descriptor_binding_partially_bound: indexing_feature.descriptor_binding_partially_bound == TRUE
             };
 
             log::info!("Geometry shader: {}", feature_support.geometry_shader);
@@ -181,7 +187,7 @@ impl PhysicalDevice {
                 selected_device = *device;
                 let properties = instance.get_physical_device_properties(*device);
                 if properties.device_type == PhysicalDeviceType::DISCRETE_GPU {
-                    return (selected_device, queue_indices, properties.clone());
+                    return (selected_device, queue_indices, properties);
                 }
             }
         }

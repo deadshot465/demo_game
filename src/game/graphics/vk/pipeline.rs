@@ -26,7 +26,7 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn new(device: Arc<Device>) -> Self {
         let mut pipeline_caches = HashMap::new();
-        if let Err(_) = std::fs::create_dir("./caches") {
+        if std::fs::create_dir("./caches").is_err() {
             log::warn!("The 'caches' directory already exists.");
         }
         let shader_types = vec![
@@ -46,13 +46,13 @@ impl Pipeline {
                 let result = std::fs::read(&path);
                 if result.is_err() {
                     let entry = pipeline_caches.entry(*shader_type)
-                        .or_insert(Vec::<Vec<u8>>::new());
+                        .or_insert_with(Vec::<Vec<u8>>::new);
                     entry.push(vec![]);
                     continue;
                 }
                 let file_content = result.unwrap();
                 let entry = pipeline_caches.entry(*shader_type)
-                    .or_insert(vec![]);
+                    .or_insert_with(Vec::new);
                 entry.push(file_content);
             }
         }
@@ -152,7 +152,7 @@ impl Pipeline {
                                           shaders: Vec<Shader>,
                                           shader_type: ShaderType) {
         let push_constant_range = vec![PushConstantRange::builder()
-            .stage_flags(ShaderStageFlags::FRAGMENT)
+            .stage_flags(ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX)
             .offset(0)
             .size(std::mem::size_of::<PushConstant>() as u32)
             .build()];
@@ -228,9 +228,9 @@ impl Pipeline {
                     .src_color_blend_factor(src_color_blend_factor[i])
                     .build()];
                 let ptr_shaders = _shaders.clone();
-                let pipeline_layout = self.pipeline_layouts
-                    .get(&shader_type).unwrap().clone();
-                let render_pass = self.render_pass.clone();
+                let pipeline_layout = *self.pipeline_layouts
+                    .get(&shader_type).unwrap();
+                let render_pass = self.render_pass;
                 let device = self.logical_device.clone();
                 let caches = self.pipeline_caches.get(&shader_type)
                     .cloned()
@@ -335,7 +335,7 @@ impl Pipeline {
                 let cache_data = self.logical_device.get_pipeline_cache_data(cache)
                     .expect("Failed to retrieve binary data from pipeline cache.");
                 let entry = self.pipeline_caches.entry(shader_type)
-                    .or_insert(Arc::new(RwLock::new(vec![])));
+                    .or_insert_with(|| Arc::new(RwLock::new(vec![])));
                 let mut vector_lock = entry.write();
                 vector_lock[index] = cache_data;
                 self.logical_device.destroy_pipeline_cache(cache, None);
@@ -347,11 +347,11 @@ impl Pipeline {
 
     pub fn get_pipeline(&self, shader_type: ShaderType, index: usize) -> ash::vk::Pipeline {
         let pipelines = self.graphic_pipelines.get(&shader_type).unwrap();
-        pipelines.get(index).unwrap().clone()
+        *pipelines.get(index).unwrap()
     }
 
     pub fn get_pipeline_layout(&self, shader_type: ShaderType) -> ash::vk::PipelineLayout {
-        self.pipeline_layouts.get(&shader_type).unwrap().clone()
+        *self.pipeline_layouts.get(&shader_type).unwrap()
     }
 
     fn write_cache_data(&self) {

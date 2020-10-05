@@ -105,7 +105,7 @@ impl Resource {
 
 impl Drop for Resource {
     fn drop(&mut self) {
-        ()
+
     }
 }
 
