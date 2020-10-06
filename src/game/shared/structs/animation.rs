@@ -1,4 +1,4 @@
-use glam::{Quat, Vec3A, Mat4};
+use glam::{Mat4, Quat, Vec3A};
 use gltf::animation::Interpolation;
 
 use crate::game::shared::structs::Joint;
@@ -7,7 +7,7 @@ use crate::game::shared::structs::Joint;
 pub enum ChannelOutputs {
     Translations(Vec<Vec3A>),
     Rotations(Vec<Quat>),
-    Scales(Vec<Vec3A>)
+    Scales(Vec<Vec3A>),
 }
 
 #[derive(Clone, Debug)]
@@ -21,21 +21,27 @@ pub struct Channel {
 #[derive(Clone, Debug)]
 pub struct Animation {
     pub channels: Vec<Channel>,
-    pub current_time: f32
+    pub current_time: f32,
 }
 
 macro_rules! interpolate {
     ($p0: expr, $p1: expr, $m0: expr, $m1: expr, $time: expr) => {{
         let t_pow2 = $time * $time;
         let t_pow3 = $time * $time;
-        (2.0 * t_pow3 - 3.0 * t_pow2 + 1.0) * $p0 +
-            (t_pow3 - 2.0 * t_pow2 + $time) * $m0 +
-            (-2.0 * t_pow3 + 3.0 * t_pow2) * $p1 +
-            (t_pow3 - t_pow2) * $m1
-    }}
+        (2.0 * t_pow3 - 3.0 * t_pow2 + 1.0) * $p0
+            + (t_pow3 - 2.0 * t_pow2 + $time) * $m0
+            + (-2.0 * t_pow3 + 3.0 * t_pow2) * $p1
+            + (t_pow3 - t_pow2) * $m1
+    }};
 }
 
-pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: &Joint, local_transform: Mat4, buffer: &mut [Mat4; 500]) {
+pub fn generate_joint_transforms(
+    animation: &Animation,
+    frame: f32,
+    root_joint: &Joint,
+    local_transform: Mat4,
+    buffer: &mut [Mat4; 500],
+) {
     let mut translation = root_joint.translation;
     let mut rotation = root_joint.rotation;
     let mut scale = root_joint.scale;
@@ -48,17 +54,20 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                     let prev = translations[index_prev];
                     let next = translations[index_next];
                     translation = prev.lerp(next, amount);
-                },
+                }
                 (ChannelOutputs::Translations(translations), Interpolation::Step) => {
                     let output_index = index_step(channel, frame);
                     translation = translations[output_index];
-                },
+                }
                 (ChannelOutputs::Translations(translations), Interpolation::CubicSpline) => {
                     translation = match index_cubic_spline(channel, frame) {
-                        CubicSplineIndex::Clamped { index } => {
-                            translations[index * 3 + 1]
-                        },
-                        CubicSplineIndex::Interpolate { index_prev, index_next, time, range } => {
+                        CubicSplineIndex::Clamped { index } => translations[index * 3 + 1],
+                        CubicSplineIndex::Interpolate {
+                            index_prev,
+                            index_next,
+                            time,
+                            range,
+                        } => {
                             // previous spline vertex
                             let p0 = translations[index_prev * 3 + 1];
                             // next spline vertex
@@ -71,23 +80,26 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                             result
                         }
                     };
-                },
+                }
                 (ChannelOutputs::Rotations(rotations), Interpolation::Linear) => {
                     let (index_prev, index_next, amount) = index_linear(channel, frame);
                     let prev = rotations[index_prev];
                     let next = rotations[index_next];
                     rotation = prev.slerp(next, amount);
-                },
+                }
                 (ChannelOutputs::Rotations(rotations), Interpolation::Step) => {
                     let output_index = index_step(channel, frame);
                     rotation = rotations[output_index];
-                },
+                }
                 (ChannelOutputs::Rotations(rotations), Interpolation::CubicSpline) => {
                     rotation = match index_cubic_spline(channel, frame) {
-                        CubicSplineIndex::Clamped { index } => {
-                            rotations[index * 3 + 1]
-                        },
-                        CubicSplineIndex::Interpolate { index_prev, index_next, time, range } => {
+                        CubicSplineIndex::Clamped { index } => rotations[index * 3 + 1],
+                        CubicSplineIndex::Interpolate {
+                            index_prev,
+                            index_next,
+                            time,
+                            range,
+                        } => {
                             // previous spline vertex
                             let p0 = rotations[index_prev * 3 + 1];
                             // next spline vertex
@@ -97,33 +109,30 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                                 rotations[index_prev * 3 + 2].x() * range,
                                 rotations[index_prev * 3 + 2].y() * range,
                                 rotations[index_prev * 3 + 2].z() * range,
-                                rotations[index_prev * 3 + 2].w() * range
+                                rotations[index_prev * 3 + 2].w() * range,
                             );
                             // next output tangent
                             let m1 = Quat::from_xyzw(
                                 rotations[index_next * 3].x() * range,
                                 rotations[index_next * 3].y() * range,
                                 rotations[index_next * 3].z() * range,
-                                rotations[index_next * 3].w() * range
+                                rotations[index_next * 3].w() * range,
                             );
-                            let p0_vector: glam::Vec4 = glam::Vec4::new(
-                                p0.x(), p0.y(), p0.z(), p0.w()
-                            );
-                            let p1_vector: glam::Vec4 = glam::Vec4::new(
-                                p1.x(), p1.y(), p1.z(), p1.w()
-                            );
-                            let m0_vector: glam::Vec4 = glam::Vec4::new(
-                                m0.x(), m0.y(), m0.z(), m0.w()
-                            );
-                            let m1_vector: glam::Vec4 = glam::Vec4::new(
-                                m1.x(), m1.y(), m1.z(), m1.w()
-                            );
-                            let result: glam::Vec4 = interpolate!(p0_vector, p1_vector, m0_vector, m1_vector, time);
+                            let p0_vector: glam::Vec4 =
+                                glam::Vec4::new(p0.x(), p0.y(), p0.z(), p0.w());
+                            let p1_vector: glam::Vec4 =
+                                glam::Vec4::new(p1.x(), p1.y(), p1.z(), p1.w());
+                            let m0_vector: glam::Vec4 =
+                                glam::Vec4::new(m0.x(), m0.y(), m0.z(), m0.w());
+                            let m1_vector: glam::Vec4 =
+                                glam::Vec4::new(m1.x(), m1.y(), m1.z(), m1.w());
+                            let result: glam::Vec4 =
+                                interpolate!(p0_vector, p1_vector, m0_vector, m1_vector, time);
                             Quat::from_xyzw(result.x(), result.y(), result.z(), result.w())
                         }
                     };
                     rotation = rotation.normalize();
-                },
+                }
                 (ChannelOutputs::Scales(scales), Interpolation::Linear) => {
                     let (index_prev, index_next, amount) = index_linear(channel, frame);
                     let prev = scales[index_prev];
@@ -133,13 +142,16 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
                 (ChannelOutputs::Scales(scales), Interpolation::Step) => {
                     let output_index = index_step(channel, frame);
                     scale = scales[output_index];
-                },
+                }
                 (ChannelOutputs::Scales(scales), Interpolation::CubicSpline) => {
                     scale = match index_cubic_spline(channel, frame) {
-                        CubicSplineIndex::Clamped { index } => {
-                            scales[index * 3 + 1]
-                        },
-                        CubicSplineIndex::Interpolate { index_prev, index_next, time, range } => {
+                        CubicSplineIndex::Clamped { index } => scales[index * 3 + 1],
+                        CubicSplineIndex::Interpolate {
+                            index_prev,
+                            index_next,
+                            time,
+                            range,
+                        } => {
                             // previous spline vertex
                             let p0 = scales[index_prev * 3 + 1];
                             // next spline vertex
@@ -157,10 +169,10 @@ pub fn generate_joint_transforms(animation: &Animation, frame: f32, root_joint: 
         }
     }
     let rotation = Mat4::from_quat(rotation);
-    let transform = local_transform *
-        Mat4::from_translation(glam::Vec3::from(translation)) *
-        rotation *
-        Mat4::from_scale(glam::Vec3::from(scale));
+    let transform = local_transform
+        * Mat4::from_translation(glam::Vec3::from(translation))
+        * rotation
+        * Mat4::from_scale(glam::Vec3::from(scale));
     let final_transform = transform * root_joint.inverse_bind_matrices;
     buffer[root_joint.index] = final_transform;
     for child in root_joint.children.iter() {
@@ -195,7 +207,7 @@ fn index_linear(channel: &Channel, frame: f32) -> (usize, usize, f32) {
         let input_next = window[1];
         if seconds >= input_prev && seconds < input_next {
             let amount = (seconds - input_prev) / (input_next - input_prev);
-            return (i, i + 1, amount)
+            return (i, i + 1, amount);
         }
     }
     let last = channel.inputs.len() - 1;
@@ -203,8 +215,15 @@ fn index_linear(channel: &Channel, frame: f32) -> (usize, usize, f32) {
 }
 
 enum CubicSplineIndex {
-    Clamped { index: usize },
-    Interpolate { index_prev: usize, index_next: usize, time: f32, range: f32 }
+    Clamped {
+        index: usize,
+    },
+    Interpolate {
+        index_prev: usize,
+        index_next: usize,
+        time: f32,
+        range: f32,
+    },
 }
 
 fn index_cubic_spline(channel: &Channel, frame: f32) -> CubicSplineIndex {
@@ -223,7 +242,7 @@ fn index_cubic_spline(channel: &Channel, frame: f32) -> CubicSplineIndex {
                 index_prev: i,
                 index_next: i + 1,
                 time,
-                range
+                range,
             };
         }
     }

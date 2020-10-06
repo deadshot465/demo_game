@@ -1,14 +1,9 @@
-use ash::{
-    Device,
-    util::read_spv,
-    vk::{
-        PipelineShaderStageCreateInfo,
-        ShaderModule,
-        ShaderModuleCreateInfo,
-        ShaderStageFlags,
-    }
-};
 use ash::version::DeviceV1_0;
+use ash::{
+    util::read_spv,
+    vk::{PipelineShaderStageCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags},
+    Device,
+};
 use std::ffi::CString;
 use std::sync::Arc;
 

@@ -1,6 +1,8 @@
-use glam::{Vec2, Vec3A, Vec4};
 use crate::game::structs::Vertex;
-use ash::vk::{VertexInputRate, VertexInputBindingDescription, VertexInputAttributeDescription, Format};
+use ash::vk::{
+    Format, VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
+};
+use glam::{Vec2, Vec3A, Vec4};
 use std::convert::TryFrom;
 
 #[repr(C)]
@@ -20,11 +22,14 @@ impl SkinnedVertex {
                 uv,
             },
             joints,
-            weights
+            weights,
         }
     }
 
-    pub fn get_binding_description(binding: u32, input_rate: VertexInputRate) -> VertexInputBindingDescription {
+    pub fn get_binding_description(
+        binding: u32,
+        input_rate: VertexInputRate,
+    ) -> VertexInputBindingDescription {
         let desc = VertexInputBindingDescription::builder()
             .binding(binding)
             .input_rate(input_rate)
@@ -35,18 +40,22 @@ impl SkinnedVertex {
 
     pub fn get_attribute_description(binding: u32) -> Vec<VertexInputAttributeDescription> {
         let mut descs = Vertex::get_attribute_description(binding);
-        descs.push(VertexInputAttributeDescription::builder()
-            .binding(binding)
-            .offset(u32::try_from(memoffset::offset_of!(SkinnedVertex, joints)).unwrap())
-            .format(Format::R32G32B32A32_SFLOAT)
-            .location(3)
-            .build());
-        descs.push(VertexInputAttributeDescription::builder()
-            .binding(binding)
-            .offset(u32::try_from(memoffset::offset_of!(SkinnedVertex, weights)).unwrap())
-            .format(Format::R32G32B32A32_SFLOAT)
-            .location(4)
-            .build());
+        descs.push(
+            VertexInputAttributeDescription::builder()
+                .binding(binding)
+                .offset(u32::try_from(memoffset::offset_of!(SkinnedVertex, joints)).unwrap())
+                .format(Format::R32G32B32A32_SFLOAT)
+                .location(3)
+                .build(),
+        );
+        descs.push(
+            VertexInputAttributeDescription::builder()
+                .binding(binding)
+                .offset(u32::try_from(memoffset::offset_of!(SkinnedVertex, weights)).unwrap())
+                .format(Format::R32G32B32A32_SFLOAT)
+                .location(4)
+                .build(),
+        );
         descs
     }
 }

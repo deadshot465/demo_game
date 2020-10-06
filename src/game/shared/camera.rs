@@ -1,4 +1,4 @@
-use glam::{Vec3, Vec3A, Mat4};
+use glam::{Mat4, Vec3, Vec3A};
 
 const MIN_DISTANCE: f32 = 5.0;
 const MAX_DISTANCE: f32 = 15.0;
@@ -7,7 +7,11 @@ const HEIGHT: f32 = 0.75;
 
 #[derive(Copy, Clone, Debug)]
 pub enum CameraType {
-    Watch(Vec3A), Directional(Vec3A), Chase(Vec3A), TPS(Vec3A, f32), FPS(Vec3A, f32)
+    Watch(Vec3A),
+    Directional(Vec3A),
+    Chase(Vec3A),
+    TPS(Vec3A, f32),
+    FPS(Vec3A, f32),
 }
 
 pub struct Camera {
@@ -39,7 +43,7 @@ impl Camera {
             CameraType::Directional(pos) => self.directional(pos),
             CameraType::Chase(pos) => self.chase(pos),
             CameraType::TPS(pos, angle) => self.tps(pos, angle),
-            CameraType::FPS(pos, angle) => self.fps(pos, angle)
+            CameraType::FPS(pos, angle) => self.fps(pos, angle),
         }
     }
 
@@ -54,7 +58,11 @@ impl Camera {
     }
 
     pub fn get_view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(Vec3::from(self.position), Vec3::from(self.target), Vec3::new(0.0, -1.0, 0.0))
+        Mat4::look_at_rh(
+            Vec3::from(self.position),
+            Vec3::from(self.target),
+            Vec3::new(0.0, -1.0, 0.0),
+        )
     }
 
     pub fn get_projection_matrix(&self) -> Mat4 {
@@ -67,7 +75,11 @@ impl Camera {
     }
 
     fn directional(&mut self, player_pos: Vec3A) {
-        self.position = Vec3A::new(player_pos.x() + 8.0, player_pos.y() + 5.0, player_pos.z() - 8.0);
+        self.position = Vec3A::new(
+            player_pos.x() + 8.0,
+            player_pos.y() + 5.0,
+            player_pos.z() - 8.0,
+        );
         self.target = player_pos;
     }
 
@@ -82,7 +94,7 @@ impl Camera {
             self.position = Vec3A::new(
                 player_pos.x() - MIN_DISTANCE * dx,
                 self.position.y(),
-                player_pos.z() - MIN_DISTANCE * dz
+                player_pos.z() - MIN_DISTANCE * dz,
             );
         }
         if distance > MAX_DISTANCE {
@@ -91,7 +103,7 @@ impl Camera {
             self.position = Vec3A::new(
                 player_pos.x() - MAX_DISTANCE * dx,
                 self.position.y(),
-                player_pos.z() - MAX_DISTANCE * dz
+                player_pos.z() - MAX_DISTANCE * dz,
             );
         }
         self.target = player_pos;
@@ -103,7 +115,7 @@ impl Camera {
         self.position = Vec3A::new(
             player_pos.x() - DISTANCE * dx,
             self.position.y(),
-            player_pos.z() - DISTANCE * dz
+            player_pos.z() - DISTANCE * dz,
         );
         self.target = player_pos;
     }
@@ -111,15 +123,11 @@ impl Camera {
     fn fps(&mut self, player_pos: Vec3A, player_angle: f32) {
         let dx = player_angle.sin();
         let dz = player_angle.cos();
-        self.position = Vec3A::new(
-            player_pos.x(),
-            player_pos.y() + HEIGHT,
-            player_pos.z()
-        );
+        self.position = Vec3A::new(player_pos.x(), player_pos.y() + HEIGHT, player_pos.z());
         self.target = Vec3A::new(
             self.position.x() + dx,
             self.position.y(),
-            self.position.z() + dz
+            self.position.z() + dz,
         );
     }
 }

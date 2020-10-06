@@ -1,20 +1,22 @@
 use crossbeam::sync::ShardedLock;
-use glam::{Mat4};
+use glam::Mat4;
 use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
+use crate::game::graphics::vk::{Buffer, Image};
 use crate::game::shared::enums::SamplerResource;
 use crate::game::shared::structs::{Joint, SkinnedVertex, SSBO};
 use crate::game::traits::Disposable;
 use ash::vk::CommandBuffer;
-use crate::game::graphics::vk::{Buffer, Image};
 
 #[derive(Clone, Debug)]
 pub struct SkinnedPrimitive<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     pub vertices: Vec<SkinnedVertex>,
     pub indices: Vec<u32>,
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
@@ -27,14 +29,22 @@ pub struct SkinnedPrimitive<BufferType, CommandType, TextureType>
     pub sampler_resource: Option<SamplerResource>,
 }
 
-unsafe impl<BufferType, CommandType, TextureType> Send for SkinnedPrimitive<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {}
-unsafe impl<BufferType, CommandType, TextureType> Sync for SkinnedPrimitive<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {}
+unsafe impl<BufferType, CommandType, TextureType> Send
+    for SkinnedPrimitive<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+unsafe impl<BufferType, CommandType, TextureType> Sync
+    for SkinnedPrimitive<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
+}
 
 impl SkinnedPrimitive<Buffer, CommandBuffer, Image> {
     pub fn get_vertex_buffer(&self) -> ash::vk::Buffer {
@@ -46,10 +56,13 @@ impl SkinnedPrimitive<Buffer, CommandBuffer, Image> {
     }
 }
 
-impl<BufferType, CommandType, TextureType> Drop for SkinnedPrimitive<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+impl<BufferType, CommandType, TextureType> Drop
+    for SkinnedPrimitive<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     fn drop(&mut self) {
         if !self.is_disposed {
             self.dispose();
@@ -57,10 +70,13 @@ impl<BufferType, CommandType, TextureType> Drop for SkinnedPrimitive<BufferType,
     }
 }
 
-impl<BufferType, CommandType, TextureType> Disposable for SkinnedPrimitive<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+impl<BufferType, CommandType, TextureType> Disposable
+    for SkinnedPrimitive<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     fn dispose(&mut self) {
         unsafe {
             if let Some(buffer) = self.vertex_buffer.as_mut() {
@@ -88,9 +104,11 @@ impl<BufferType, CommandType, TextureType> Disposable for SkinnedPrimitive<Buffe
 
 #[derive(Clone)]
 pub struct SkinnedMesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     pub primitives: Vec<SkinnedPrimitive<BufferType, CommandType, TextureType>>,
     pub is_disposed: bool,
     pub transform: Mat4,
@@ -98,25 +116,30 @@ pub struct SkinnedMesh<BufferType, CommandType, TextureType>
     pub ssbo: Option<SSBO>,
 }
 
-impl<BufferType, CommandType, TextureType> Drop for SkinnedMesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+impl<BufferType, CommandType, TextureType> Drop
+    for SkinnedMesh<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     fn drop(&mut self) {
         if !self.is_disposed {
             self.dispose();
             log::info!("Successfully dropped skinned mesh.");
-        }
-        else {
+        } else {
             log::warn!("Skinned mesh is already dropped.");
         }
     }
 }
 
-impl<BufferType, CommandType, TextureType> Disposable for SkinnedMesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+impl<BufferType, CommandType, TextureType> Disposable
+    for SkinnedMesh<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     fn dispose(&mut self) {
         for primitive in self.primitives.iter_mut() {
             primitive.dispose();

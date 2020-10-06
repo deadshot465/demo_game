@@ -1,34 +1,22 @@
+use ash::vk::TRUE;
 use ash::{
-    extensions::{
-        khr::{
-            Surface,
-            Swapchain,
-        }
+    extensions::khr::{Surface, Swapchain},
+    version::{InstanceV1_0, InstanceV1_1},
+    vk::{
+        PhysicalDeviceDescriptorIndexingFeatures, PhysicalDeviceFeatures2,
+        PhysicalDeviceProperties, PhysicalDeviceType, QueueFlags, SurfaceKHR,
     },
     Instance,
-    version::{
-        InstanceV1_0,
-        InstanceV1_1,
-    },
-    vk::{
-        PhysicalDeviceDescriptorIndexingFeatures,
-        PhysicalDeviceFeatures2,
-        PhysicalDeviceProperties,
-        PhysicalDeviceType,
-        SurfaceKHR,
-        QueueFlags,
-    }
 };
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use ash::vk::TRUE;
 
 #[derive(Copy, Clone, Debug)]
 pub struct QueueIndices {
     pub graphics_family: Option<u32>,
     pub present_family: Option<u32>,
-    pub compute_family: Option<u32>
+    pub compute_family: Option<u32>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -60,19 +48,21 @@ impl QueueIndices {
         QueueIndices {
             graphics_family: None,
             present_family: None,
-            compute_family: None
+            compute_family: None,
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.graphics_family.is_some() && self.present_family.is_some() &&
-            self.compute_family.is_some()
+        self.graphics_family.is_some()
+            && self.present_family.is_some()
+            && self.compute_family.is_some()
     }
 }
 
 impl PhysicalDevice {
     pub fn new(instance: &Instance, surface_loader: &Surface, surface: SurfaceKHR) -> Self {
-        let (device, queue_indices, properties) = PhysicalDevice::get_physical_device(instance, surface_loader, surface);
+        let (device, queue_indices, properties) =
+            PhysicalDevice::get_physical_device(instance, surface_loader, surface);
         unsafe {
             let features = instance.get_physical_device_features(device);
 
@@ -86,18 +76,37 @@ impl PhysicalDevice {
                 tessellation_shader: features.tessellation_shader == TRUE,
                 sample_rate_shading: features.sample_rate_shading == TRUE,
                 sampler_anisotropy: features.sampler_anisotropy == TRUE,
-                shader_sampled_image_array_dynamic_indexing: features.shader_sampled_image_array_dynamic_indexing == TRUE,
+                shader_sampled_image_array_dynamic_indexing: features
+                    .shader_sampled_image_array_dynamic_indexing
+                    == TRUE,
                 runtime_descriptor_array: indexing_feature.runtime_descriptor_array == TRUE,
-                descriptor_binding_partially_bound: indexing_feature.descriptor_binding_partially_bound == TRUE
+                descriptor_binding_partially_bound: indexing_feature
+                    .descriptor_binding_partially_bound
+                    == TRUE,
             };
 
             log::info!("Geometry shader: {}", feature_support.geometry_shader);
-            log::info!("Tessellation shader: {}", feature_support.tessellation_shader);
-            log::info!("Sample rate shading: {}", feature_support.sample_rate_shading);
+            log::info!(
+                "Tessellation shader: {}",
+                feature_support.tessellation_shader
+            );
+            log::info!(
+                "Sample rate shading: {}",
+                feature_support.sample_rate_shading
+            );
             log::info!("Sampler Anisotropy: {}", feature_support.sampler_anisotropy);
-            log::info!("Shader sampled image array dynamic indexing: {}", feature_support.shader_sampled_image_array_dynamic_indexing);
-            log::info!("Runtime descriptor array: {}", feature_support.runtime_descriptor_array);
-            log::info!("Descriptor binding partially bound: {}", feature_support.descriptor_binding_partially_bound);
+            log::info!(
+                "Shader sampled image array dynamic indexing: {}",
+                feature_support.shader_sampled_image_array_dynamic_indexing
+            );
+            log::info!(
+                "Runtime descriptor array: {}",
+                feature_support.runtime_descriptor_array
+            );
+            log::info!(
+                "Descriptor binding partially bound: {}",
+                feature_support.descriptor_binding_partially_bound
+            );
 
             PhysicalDevice {
                 physical_device: device,
@@ -108,18 +117,24 @@ impl PhysicalDevice {
         }
     }
 
-    fn get_queue_indices(instance: &Instance, surface_loader: &Surface, device: ash::vk::PhysicalDevice, surface: SurfaceKHR) -> QueueIndices {
+    fn get_queue_indices(
+        instance: &Instance,
+        surface_loader: &Surface,
+        device: ash::vk::PhysicalDevice,
+        surface: SurfaceKHR,
+    ) -> QueueIndices {
         let mut queue_indices = QueueIndices::new();
         unsafe {
-            let queue_families = instance
-                .get_physical_device_queue_family_properties(device);
+            let queue_families = instance.get_physical_device_queue_family_properties(device);
 
             for item in queue_families.iter().enumerate() {
                 let surface_support = surface_loader
                     .get_physical_device_surface_support(device, item.0 as u32, surface)
                     .expect("Failed to query surface support.");
 
-                if item.1.queue_count > 0 && ((item.1.queue_flags & QueueFlags::GRAPHICS) == QueueFlags::GRAPHICS) {
+                if item.1.queue_count > 0
+                    && ((item.1.queue_flags & QueueFlags::GRAPHICS) == QueueFlags::GRAPHICS)
+                {
                     queue_indices.graphics_family = Some(item.0 as u32);
                 }
 
@@ -127,7 +142,9 @@ impl PhysicalDevice {
                     queue_indices.present_family = Some(item.0 as u32);
                 }
 
-                if item.1.queue_count > 0 && ((item.1.queue_flags & QueueFlags::COMPUTE) != QueueFlags::COMPUTE) {
+                if item.1.queue_count > 0
+                    && ((item.1.queue_flags & QueueFlags::COMPUTE) != QueueFlags::COMPUTE)
+                {
                     queue_indices.compute_family = Some(item.0 as u32);
                 }
 
@@ -155,8 +172,14 @@ impl PhysicalDevice {
         required_extension.is_empty()
     }
 
-    fn is_device_suitable(instance: &Instance, surface_loader: &Surface, device: ash::vk::PhysicalDevice, surface: SurfaceKHR) -> (bool, Option<QueueIndices>) {
-        let queue_indices = PhysicalDevice::get_queue_indices(instance, surface_loader, device, surface);
+    fn is_device_suitable(
+        instance: &Instance,
+        surface_loader: &Surface,
+        device: ash::vk::PhysicalDevice,
+        surface: SurfaceKHR,
+    ) -> (bool, Option<QueueIndices>) {
+        let queue_indices =
+            PhysicalDevice::get_queue_indices(instance, surface_loader, device, surface);
         if !queue_indices.is_ready() {
             return (false, None);
         }
@@ -171,7 +194,15 @@ impl PhysicalDevice {
         }
     }
 
-    fn get_physical_device(instance: &Instance, surface_loader: &Surface, surface: SurfaceKHR) -> (ash::vk::PhysicalDevice, QueueIndices, PhysicalDeviceProperties) {
+    fn get_physical_device(
+        instance: &Instance,
+        surface_loader: &Surface,
+        surface: SurfaceKHR,
+    ) -> (
+        ash::vk::PhysicalDevice,
+        QueueIndices,
+        PhysicalDeviceProperties,
+    ) {
         let mut selected_device = ash::vk::PhysicalDevice::null();
         let mut queue_indices = QueueIndices::new();
         unsafe {
@@ -179,7 +210,8 @@ impl PhysicalDevice {
                 .enumerate_physical_devices()
                 .expect("Failed to enumerate available physical devices.");
             for device in physical_devices.iter() {
-                let (res, _queue_indices) = PhysicalDevice::is_device_suitable(instance, surface_loader, *device, surface);
+                let (res, _queue_indices) =
+                    PhysicalDevice::is_device_suitable(instance, surface_loader, *device, surface);
                 if !res {
                     continue;
                 }
@@ -191,6 +223,10 @@ impl PhysicalDevice {
                 }
             }
         }
-        (selected_device, queue_indices, PhysicalDeviceProperties::builder().build())
+        (
+            selected_device,
+            queue_indices,
+            PhysicalDeviceProperties::builder().build(),
+        )
     }
 }

@@ -10,7 +10,12 @@ pub struct Directional {
 }
 
 impl Directional {
-    pub fn new(diffuse: Vec4, light_direction: Vec3A, ambient_intensity: f32, specular_intensity: f32) -> Self {
+    pub fn new(
+        diffuse: Vec4,
+        light_direction: Vec3A,
+        ambient_intensity: f32,
+        specular_intensity: f32,
+    ) -> Self {
         Directional {
             diffuse,
             light_direction,

@@ -3,10 +3,10 @@ use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
+use crate::game::enums::SamplerResource;
 use crate::game::graphics;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
-use crate::game::enums::SamplerResource;
 
 #[derive(Clone, Debug)]
 pub struct Primitive {
@@ -18,9 +18,11 @@ pub struct Primitive {
 
 #[derive(Clone)]
 pub struct Mesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          CommandType: 'static,
-          TextureType: 'static + Clone + Disposable {
+where
+    BufferType: 'static + Clone + Disposable,
+    CommandType: 'static,
+    TextureType: 'static + Clone + Disposable,
+{
     pub primitives: Vec<Primitive>,
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
@@ -48,8 +50,7 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
     pub fn get_vertex_buffer(&self) -> ash::vk::Buffer {
         if let Some(buffer) = self.vertex_buffer.as_ref() {
             buffer.buffer
-        }
-        else {
+        } else {
             panic!("Vertex buffer is not yet created.");
         }
     }
@@ -57,37 +58,47 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
     pub fn get_index_buffer(&self) -> ash::vk::Buffer {
         if let Some(buffer) = self.index_buffer.as_ref() {
             buffer.buffer
-        }
-        else {
+        } else {
             panic!("Index buffer is not yet created.");
         }
     }
 }
 
-unsafe impl<BufferType, CommandType, TextureType> Send for Mesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          TextureType: 'static + Clone + Disposable { }
-unsafe impl<BufferType, CommandType, TextureType> Sync for Mesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          TextureType: 'static + Clone + Disposable { }
+unsafe impl<BufferType, CommandType, TextureType> Send
+    for Mesh<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+unsafe impl<BufferType, CommandType, TextureType> Sync
+    for Mesh<BufferType, CommandType, TextureType>
+where
+    BufferType: 'static + Clone + Disposable,
+    TextureType: 'static + Clone + Disposable,
+{
+}
 
 impl<BufferType, CommandType, TextureType> Drop for Mesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          TextureType: 'static + Clone + Disposable {
+where
+    BufferType: 'static + Clone + Disposable,
+    TextureType: 'static + Clone + Disposable,
+{
     fn drop(&mut self) {
         if !self.is_disposed {
             self.dispose();
             log::info!("Successfully dropped mesh.");
-        }
-        else {
+        } else {
             log::warn!("Mesh is already dropped.");
         }
     }
 }
 
 impl<BufferType, CommandType, TextureType> Disposable for Mesh<BufferType, CommandType, TextureType>
-    where BufferType: 'static + Clone + Disposable,
-          TextureType: 'static + Clone + Disposable {
+where
+    BufferType: 'static + Clone + Disposable,
+    TextureType: 'static + Clone + Disposable,
+{
     fn dispose(&mut self) {
         unsafe {
             if let Some(buffer) = self.index_buffer.as_mut() {

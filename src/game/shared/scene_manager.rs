@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use crate::game::shared::traits::Scene;
+use std::cell::RefCell;
 
 pub struct SceneManager {
     pub current_index: usize,
@@ -16,7 +16,7 @@ impl SceneManager {
     pub fn new() -> Self {
         SceneManager {
             current_index: 0,
-            scenes: vec![]
+            scenes: vec![],
         }
     }
 
@@ -57,7 +57,10 @@ impl SceneManager {
         }
     }
 
-    pub fn register_scene<T>(&mut self, scene: T) where T: Scene + 'static {
+    pub fn register_scene<T>(&mut self, scene: T)
+    where
+        T: Scene + 'static,
+    {
         self.scenes.push(RefCell::new(Box::new(scene)));
     }
 
@@ -68,17 +71,15 @@ impl SceneManager {
     pub fn set_current_scene_by_name(&mut self, name: &str) {
         let mut index = 0_usize;
         let mut found = false;
-        let _ = self.scenes.iter().enumerate()
-            .find(|s| {
-                if (*s).1.borrow().get_scene_name() == name {
-                    index = (*s).0;
-                    found = true;
-                    true
-                }
-                else {
-                    false
-                }
-            });
+        let _ = self.scenes.iter().enumerate().find(|s| {
+            if (*s).1.borrow().get_scene_name() == name {
+                index = (*s).0;
+                found = true;
+                true
+            } else {
+                false
+            }
+        });
         if found {
             self.current_index = index;
         }

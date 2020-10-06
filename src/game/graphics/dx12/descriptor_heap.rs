@@ -1,12 +1,17 @@
-use winapi::um::d3d12::{D3D12_DESCRIPTOR_HEAP_DESC, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, ID3D12DescriptorHeap, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, ID3D12Device2, ID3D12Resource, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_CLEAR_VALUE, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL};
-use wio::com::ComPtr;
-use crate::game::graphics::dx12::{SwapChain, Resource, ResourceType};
+use crate::game::graphics::dx12::{Resource, ResourceType, SwapChain};
 use crate::game::shared::util::{get_nullptr, log_error};
-use winapi::shared::guiddef::{REFGUID, REFIID};
-use winapi::Interface;
+use std::mem::ManuallyDrop;
 use winapi::shared::basetsd::{SIZE_T, UINT64};
 use winapi::shared::dxgiformat::DXGI_FORMAT_D32_FLOAT;
-use std::mem::ManuallyDrop;
+use winapi::shared::guiddef::{REFGUID, REFIID};
+use winapi::um::d3d12::{
+    ID3D12DescriptorHeap, ID3D12Device2, ID3D12Resource, D3D12_CLEAR_VALUE,
+    D3D12_DESCRIPTOR_HEAP_DESC, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+    D3D12_DESCRIPTOR_HEAP_TYPE_RTV, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+    D3D12_RESOURCE_STATE_DEPTH_WRITE,
+};
+use winapi::Interface;
+use wio::com::ComPtr;
 
 pub struct DescriptorHeap {
     pub rtv_heap: ComPtr<ID3D12DescriptorHeap>,
@@ -23,24 +28,26 @@ impl DescriptorHeap {
             rtv_heap,
             rtvs,
             dsv_heap,
-            dsv: ManuallyDrop::new(dsv)
+            dsv: ManuallyDrop::new(dsv),
         }
     }
 
-    unsafe fn create_render_target_view(device: &ComPtr<ID3D12Device2>, swap_chain: &SwapChain) -> (ComPtr<ID3D12DescriptorHeap>, Vec<ComPtr<ID3D12Resource>>) {
+    unsafe fn create_render_target_view(
+        device: &ComPtr<ID3D12Device2>,
+        swap_chain: &SwapChain,
+    ) -> (ComPtr<ID3D12DescriptorHeap>, Vec<ComPtr<ID3D12Resource>>) {
         let buffer_count = swap_chain.buffer_count;
         let desc = D3D12_DESCRIPTOR_HEAP_DESC {
             Type: D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
             NumDescriptors: buffer_count,
             Flags: D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
-            NodeMask: 0
+            NodeMask: 0,
         };
         let mut ptr = get_nullptr();
-        let res = device
-            .CreateDescriptorHeap(
+        let res = device.CreateDescriptorHeap(
             &desc as *const _,
             &ID3D12DescriptorHeap::uuidof() as REFGUID,
-            &mut ptr as *mut _
+            &mut ptr as *mut _,
         );
         log_error(res, "Failed to create RTV descriptor heap.");
         log::info!("RTV descriptor heap successfully created.");
@@ -49,20 +56,18 @@ impl DescriptorHeap {
             .unwrap()
             .GetCPUDescriptorHandleForHeapStart();
         let mut rtvs = vec![];
-        let increment_size = device
-            .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        let increment_size =
+            device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         for i in 0..buffer_count {
             let mut _ptr = get_nullptr();
-            let res = swap_chain.swap_chain
-                .GetBuffer(i, &ID3D12Resource::uuidof() as REFIID, &mut _ptr as *mut _);
-            log_error(res, "Failed to get back buffer from swap chain.");
-            device
-                .CreateRenderTargetView(
-                _ptr as *mut ID3D12Resource,
-                std::ptr::null(),
-                handle
+            let res = swap_chain.swap_chain.GetBuffer(
+                i,
+                &ID3D12Resource::uuidof() as REFIID,
+                &mut _ptr as *mut _,
             );
+            log_error(res, "Failed to get back buffer from swap chain.");
+            device.CreateRenderTargetView(_ptr as *mut ID3D12Resource, std::ptr::null(), handle);
             log::info!("Render target view {} successfully created.", i);
             handle.ptr += increment_size as SIZE_T;
             let comptr = ComPtr::from_raw(_ptr as *mut ID3D12Resource);
@@ -71,18 +76,21 @@ impl DescriptorHeap {
         (ComPtr::from_raw(ptr as *mut ID3D12DescriptorHeap), rtvs)
     }
 
-    unsafe fn create_depth_stencil_view(device: &ComPtr<ID3D12Device2>, swap_chain: &SwapChain) -> (ComPtr<ID3D12DescriptorHeap>, Resource) {
+    unsafe fn create_depth_stencil_view(
+        device: &ComPtr<ID3D12Device2>,
+        swap_chain: &SwapChain,
+    ) -> (ComPtr<ID3D12DescriptorHeap>, Resource) {
         let desc = D3D12_DESCRIPTOR_HEAP_DESC {
             Type: D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
             NumDescriptors: 1,
             Flags: D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
-            NodeMask: 0
+            NodeMask: 0,
         };
         let mut ptr = get_nullptr();
         let res = device.CreateDescriptorHeap(
             &desc as *const _,
             &ID3D12DescriptorHeap::uuidof() as REFGUID,
-            &mut ptr as *mut _
+            &mut ptr as *mut _,
         );
         log_error(res, "Failed to create dsv descriptor heap.");
         log::info!("DSV descriptor heap successfully created.");
@@ -98,20 +106,19 @@ impl DescriptorHeap {
         clear_value.Format = DXGI_FORMAT_D32_FLOAT;
 
         let resource = Resource::new(
-            device, ResourceType::Image,
+            device,
+            ResourceType::Image,
             swap_chain.width as UINT64,
-            swap_chain.height, 0, DXGI_FORMAT_D32_FLOAT,
+            swap_chain.height,
+            0,
+            DXGI_FORMAT_D32_FLOAT,
             D3D12_RESOURCE_STATE_DEPTH_WRITE,
             &clear_value as *const _,
-            D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
+            D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
         );
         log::info!("Successfully create resource for dsv.");
 
-        device.CreateDepthStencilView(
-            resource.resource.as_raw(),
-            std::ptr::null(),
-            handle
-        );
+        device.CreateDepthStencilView(resource.resource.as_raw(), std::ptr::null(), handle);
 
         (ComPtr::from_raw(ptr as *mut ID3D12DescriptorHeap), resource)
     }

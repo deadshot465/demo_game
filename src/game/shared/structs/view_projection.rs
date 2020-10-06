@@ -7,9 +7,6 @@ pub struct ViewProjection {
 
 impl ViewProjection {
     pub fn new(view: Mat4, projection: Mat4) -> Self {
-        ViewProjection {
-            view,
-            projection
-        }
+        ViewProjection { view, projection }
     }
 }

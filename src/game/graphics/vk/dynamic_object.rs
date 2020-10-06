@@ -44,7 +44,7 @@ impl DynamicBufferObject {
             models: DynamicModel::new(),
             meshes: DynamicModel::new(),
             min_alignment: 0,
-            dynamic_alignment: 0
+            dynamic_alignment: 0,
         }
     }
 }

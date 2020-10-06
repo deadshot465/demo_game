@@ -1,6 +1,8 @@
 #[derive(Eq, PartialEq, Hash, Copy, Clone, Debug)]
 pub enum ShaderType {
-    BasicShader, BasicShaderForMesh, BasicShaderWithoutTexture,
+    BasicShader,
+    BasicShaderForMesh,
+    BasicShaderWithoutTexture,
     AnimatedModel,
 }
 

@@ -5,31 +5,43 @@ use glam::{Vec3A, Vec4};
 use std::sync::Weak;
 use tokio::task::JoinHandle;
 
-use crate::game::graphics::vk::{Graphics, Buffer, Image};
+use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{Model, SkinnedModel};
-use crate::game::shared::traits::{Scene, GraphicsBase};
+use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::traits::Disposable;
 use crate::game::ResourceManager;
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable {
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
     graphics: Weak<ShardedLock<GraphicsType>>,
-    resource_manager: Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+    resource_manager:
+        Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
     model_tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
-    skinned_model_tasks: Vec<JoinHandle<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
+    skinned_model_tasks:
+        Vec<JoinHandle<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
     model_count: usize,
 }
 
-impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable {
-    pub fn new(resource_manager: Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>, graphics: Weak<ShardedLock<GraphicsType>>) -> Self {
+impl<GraphicsType, BufferType, CommandType, TextureType>
+    GameScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+    pub fn new(
+        resource_manager: Weak<
+            ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
+        >,
+        graphics: Weak<ShardedLock<GraphicsType>>,
+    ) -> Self {
         GameScene {
             graphics,
             resource_manager,
@@ -43,42 +55,76 @@ impl<GraphicsType, BufferType, CommandType, TextureType> GameScene<GraphicsType,
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
     pub async fn generate_terrain(&self) -> anyhow::Result<()> {
-        let graphics = self.graphics.upgrade()
+        let graphics = self
+            .graphics
+            .upgrade()
             .expect("Failed to upgrade the weak pointer of Graphics.");
         let command_pool = graphics
             .read()
             .expect("Failed to acquire read lock on Graphics.")
             .thread_pool
             .get_idle_command_pool();
-        let image = Graphics::create_image_from_file("textures/demo_map_hm.png", graphics, command_pool,
-                                                     SamplerAddressMode::MIRRORED_REPEAT)
-            .await?;
+        let image = Graphics::create_image_from_file(
+            "textures/demo_map_hm.png",
+            graphics,
+            command_pool,
+            SamplerAddressMode::MIRRORED_REPEAT,
+        )
+        .await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    fn initialize(&mut self) {
-
-    }
+    fn initialize(&mut self) {}
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
         //self.generate_terrain().await?;
-        self.add_skinned_model("./models/nathan/Nathan.glb", Vec3A::new(-1.5, 0.0, -1.5),
-                               Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
-        self.add_model("./models/ak/output.gltf", Vec3A::new(2.5, 0.0, 2.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
-        self.add_model("./models/tank/tank.gltf", Vec3A::new(0.0, 0.0, 0.0),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0))?;
+        self.add_skinned_model(
+            "./models/nathan/Nathan.glb",
+            Vec3A::new(-1.5, 0.0, -1.5),
+            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        )?;
+        self.add_model(
+            "./models/ak/output.gltf",
+            Vec3A::new(2.5, 0.0, 2.5),
+            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        )?;
+        self.add_model(
+            "./models/tank/tank.gltf",
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(90.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 1.0, 1.0),
+        )?;
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
-        self.add_model("./models/mr.incredible/Mr.Incredible.glb", Vec3A::new(0.0, 0.0, 0.0),
-                       Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(0.0, 0.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
-        self.add_model("./models/bison/output.gltf", Vec3A::new(0.0, 0.0, 0.0),
-                       Vec3A::new(400.0, 400.0, 400.0), Vec3A::new(0.0, 90.0, 90.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
-        self.add_skinned_model("./models/cesiumMan/CesiumMan.glb", Vec3A::new(-1.5, 0.0, -1.5),
-                       Vec3A::new(2.0, 2.0, 2.0), Vec3A::new(0.0, 180.0, 0.0), Vec4::new(1.0, 1.0, 1.0, 1.0))?;
+        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
+        self.add_model(
+            "./models/mr.incredible/Mr.Incredible.glb",
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        )?;
+        self.add_model(
+            "./models/bison/output.gltf",
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(400.0, 400.0, 400.0),
+            Vec3A::new(0.0, 90.0, 90.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        )?;
+        self.add_skinned_model(
+            "./models/cesiumMan/CesiumMan.glb",
+            Vec3A::new(-1.5, 0.0, -1.5),
+            Vec3A::new(2.0, 2.0, 2.0),
+            Vec3A::new(0.0, 180.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        )?;
         Ok(())
     }
 
@@ -120,7 +166,14 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    fn add_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> anyhow::Result<()> {
+    fn add_model(
+        &mut self,
+        file_name: &'static str,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+    ) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -129,7 +182,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let lock = resource_manager
             .read()
             .expect("Failed to lock resource manager.");
-        let item = lock.models.iter()
+        let item = lock
+            .models
+            .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
         if let Some(m) = item {
@@ -143,15 +198,20 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
-            let mut lock = resource_manager
-                .write()
-                .unwrap();
+            let mut lock = resource_manager.write().unwrap();
             lock.add_model(model);
             drop(lock);
-        }
-        else {
+        } else {
             drop(lock);
-            let task = Model::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.model_count);
+            let task = Model::new(
+                file_name,
+                self.graphics.clone(),
+                position,
+                scale,
+                rotation,
+                color,
+                self.model_count,
+            );
             self.model_tasks.push(task?);
         }
         self.model_count += 1;
@@ -159,7 +219,14 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    fn add_skinned_model(&mut self, file_name: &'static str, position: Vec3A, scale: Vec3A, rotation: Vec3A, color: Vec4) -> anyhow::Result<()> {
+    fn add_skinned_model(
+        &mut self,
+        file_name: &'static str,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+    ) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -168,7 +235,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let lock = resource_manager
             .read()
             .expect("Failed to lock resource manager.");
-        let item = lock.skinned_models.iter()
+        let item = lock
+            .skinned_models
+            .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
         if let Some(m) = item {
@@ -182,15 +251,20 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
-            let mut lock = resource_manager
-                .write()
-                .unwrap();
+            let mut lock = resource_manager.write().unwrap();
             lock.add_skinned_model(model);
             drop(lock);
-        }
-        else {
+        } else {
             drop(lock);
-            let task = SkinnedModel::new(file_name, self.graphics.clone(), position, scale, rotation, color, self.model_count)?;
+            let task = SkinnedModel::new(
+                file_name,
+                self.graphics.clone(),
+                position,
+                scale,
+                rotation,
+                color,
+                self.model_count,
+            )?;
             self.skinned_model_tasks.push(task);
         }
         self.model_count += 1;

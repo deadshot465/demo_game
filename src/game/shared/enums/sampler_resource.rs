@@ -1,17 +1,23 @@
 use ash::version::DeviceV1_0;
-use ash::vk::{DescriptorSetLayout, DescriptorPool, DescriptorSetAllocateInfo, DescriptorImageInfo, ImageLayout, WriteDescriptorSet, DescriptorType};
+use ash::vk::{
+    DescriptorImageInfo, DescriptorPool, DescriptorSetAllocateInfo, DescriptorSetLayout,
+    DescriptorType, ImageLayout, WriteDescriptorSet,
+};
 use std::sync::Weak;
 
 use crate::game::graphics::vk::Image;
 
 #[derive(Clone, Debug)]
 pub enum SamplerResource {
-    DescriptorSet(ash::vk::DescriptorSet)
+    DescriptorSet(ash::vk::DescriptorSet),
 }
 
-pub fn create_sampler_resource(logical_device: Weak<ash::Device>,
-                               sampler_descriptor_set_layout: DescriptorSetLayout,
-                               descriptor_pool: DescriptorPool, texture: &Image) -> SamplerResource {
+pub fn create_sampler_resource(
+    logical_device: Weak<ash::Device>,
+    sampler_descriptor_set_layout: DescriptorSetLayout,
+    descriptor_pool: DescriptorPool,
+    texture: &Image,
+) -> SamplerResource {
     let device = logical_device.upgrade();
     if device.is_none() {
         panic!("Cannot upgrade weak reference to strong reference.");

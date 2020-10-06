@@ -3,52 +3,70 @@ use crossbeam::sync::ShardedLock;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::game::graphics::vk::{Graphics, Buffer, Image};
+use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{Model, SkinnedModel};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::traits::GraphicsBase;
 
-type ModelList<GraphicsType, BufferType, CommandType, TextureType> = Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>;
-type SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType> = Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>;
+type ModelList<GraphicsType, BufferType, CommandType, TextureType> =
+    Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>;
+type SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType> =
+    Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>;
 
 pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable {
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
     pub models: ModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub skinned_models: SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
-unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable { }
-unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable { }
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
+    for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync
+    for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
 
-impl<GraphicsType, BufferType, CommandType, TextureType> Default for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable {
+impl<GraphicsType, BufferType, CommandType, TextureType> Default
+    for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable {
+impl<GraphicsType, BufferType, CommandType, TextureType>
+    ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
     pub fn new() -> Self {
         ResourceManager {
             resource: vec![],
@@ -59,13 +77,17 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
     }
 
     pub fn add_resource<U: 'static>(&mut self, resource: U) -> *mut U
-        where U: Disposable {
+    where
+        U: Disposable,
+    {
         let name = get_random_string(7);
         self.add_resource_with_name(resource, name)
     }
 
     pub fn add_resource_with_name<U: 'static>(&mut self, resource: U, name: String) -> *mut U
-        where U: Disposable {
+    where
+        U: Disposable,
+    {
         self.resource.push(Arc::new(Mutex::new(Box::new(resource))));
         let mutable = self.resource.last_mut().cloned().unwrap();
         let mut boxed = mutable.lock();
@@ -84,7 +106,10 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
         self.models.push(model);
     }
 
-    pub fn add_skinned_model(&mut self, model: SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>) {
+    pub fn add_skinned_model(
+        &mut self,
+        model: SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>,
+    ) {
         let name = model.model_name.clone();
         let model = Arc::new(Mutex::new(model));
         let mut model_lock = model.lock();
@@ -114,15 +139,18 @@ impl<GraphicsType, BufferType, CommandType, TextureType> ResourceManager<Graphic
     }
 
     pub fn get_resource<U>(&self, resource_name: &str) -> *const U
-        where U: Disposable {
-        let item = self.resource.iter()
+    where
+        U: Disposable,
+    {
+        let item = self
+            .resource
+            .iter()
             .find(|r| (*r).lock().get_name() == resource_name);
         if let Some(res) = item {
             let resource_lock = res.lock();
             let ptr = resource_lock.as_ref() as *const _ as *const U;
             ptr
-        }
-        else {
+        } else {
             std::ptr::null()
         }
     }
@@ -152,11 +180,14 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
     }
 }
 
-impl<GraphicsType, BufferType, CommandType, TextureType> Drop for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
-    where GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-          BufferType: 'static + Disposable + Clone,
-          CommandType: 'static + Clone,
-          TextureType: 'static + Clone + Disposable {
+impl<GraphicsType, BufferType, CommandType, TextureType> Drop
+    for ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
     fn drop(&mut self) {
         log::info!("Dropping Resource Manager...");
         for texture in self.textures.iter() {

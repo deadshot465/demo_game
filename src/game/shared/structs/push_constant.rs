@@ -22,7 +22,7 @@ impl PushConstant {
         PushConstant {
             texture_index,
             object_color,
-            model_index
+            model_index,
         }
     }
 }

@@ -1,12 +1,15 @@
-use ash::vk::{DescriptorSet, BufferUsageFlags, MemoryPropertyFlags, DescriptorSetAllocateInfo, DescriptorBufferInfo, WriteDescriptorSet, DescriptorType};
+use ash::vk::{
+    BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorSetAllocateInfo,
+    DescriptorType, MemoryPropertyFlags, WriteDescriptorSet,
+};
 use crossbeam::sync::ShardedLock;
 use glam::Mat4;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics};
+use crate::game::shared::traits::Disposable;
 use crate::game::traits::Mappable;
 use ash::version::DeviceV1_0;
-use crate::game::shared::traits::Disposable;
 
 #[derive(Clone)]
 pub struct SSBO {
@@ -22,19 +25,25 @@ impl SSBO {
         let allocator = graphics_lock.allocator.clone();
         let buffer_size = std::mem::size_of::<Mat4>() * 500;
         let mut buffer = Buffer::new(
-            Arc::downgrade(&device), buffer_size as u64,
+            Arc::downgrade(&device),
+            buffer_size as u64,
             BufferUsageFlags::STORAGE_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
-            Arc::downgrade(&allocator)
+            Arc::downgrade(&allocator),
         );
         let mapped = buffer.map_memory(buffer_size as u64, 0);
         unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr() as *const std::ffi::c_void, mapped, buffer_size);
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr() as *const std::ffi::c_void,
+                mapped,
+                buffer_size,
+            );
             let layouts = vec![graphics_lock.ssbo_descriptor_set_layout];
             let allocate_info = DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(*graphics_lock.descriptor_pool.lock())
                 .set_layouts(layouts.as_slice());
-            let descriptor_set = device.allocate_descriptor_sets(&allocate_info)
+            let descriptor_set = device
+                .allocate_descriptor_sets(&allocate_info)
                 .expect("Failed to allocate descriptor set for SSBO.");
             log::info!("Successfully allocated descriptor set for SSBO.");
             let buffer_info = vec![DescriptorBufferInfo::builder()

@@ -1,10 +1,10 @@
 use ash::version::DeviceV1_0;
-use ash::vk::{CommandPoolCreateFlags, CommandPool};
+use ash::vk::{CommandPool, CommandPoolCreateFlags};
 use crossbeam::queue::ArrayQueue;
 use crossbeam::utils::Backoff;
 use parking_lot::Mutex;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::broadcast::*;
 use tokio::task::JoinHandle;
 
@@ -30,7 +30,8 @@ impl Thread {
             .queue_family_index(queue_index)
             .build();
         unsafe {
-            let command_pool = device.create_command_pool(&pool_info, None)
+            let command_pool = device
+                .create_command_pool(&pool_info, None)
                 .expect("Failed to create command pool for thread.");
             Thread {
                 destroying,
@@ -48,8 +49,7 @@ impl Thread {
                             if let Ok(job) = work {
                                 job();
                                 s1.send(()).unwrap();
-                            }
-                            else {
+                            } else {
                                 break;
                             }
                         }
@@ -82,8 +82,7 @@ impl Thread {
         self.destroying.store(true, Ordering::SeqCst);
         self.sender.send(()).unwrap();
         let worker = &mut self.worker;
-        worker.await
-            .expect("Failed to dispose worker thread.");
+        worker.await.expect("Failed to dispose worker thread.");
     }
 }
 
@@ -100,7 +99,7 @@ impl ThreadPool {
         }
         ThreadPool {
             threads,
-            thread_count
+            thread_count,
         }
     }
 
@@ -120,8 +119,11 @@ impl ThreadPool {
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
         let backoff = Backoff::new();
         loop {
-            if let Some(pool) = self.threads.iter()
-                .find(|thread| thread.task_queue.is_empty()) {
+            if let Some(pool) = self
+                .threads
+                .iter()
+                .find(|thread| thread.task_queue.is_empty())
+            {
                 return pool.command_pool.clone();
             }
             backoff.spin();

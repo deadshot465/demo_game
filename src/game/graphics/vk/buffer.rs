@@ -1,19 +1,11 @@
-use ash::{
-    Device,
-    vk::{
-        BufferCopy,
-        BufferCreateInfo,
-        BufferUsageFlags,
-        CommandBuffer,
-        CommandPool,
-        DeviceMemory,
-        DeviceSize,
-        MemoryPropertyFlags,
-        Queue,
-        SharingMode,
-    },
-};
 use ash::version::DeviceV1_0;
+use ash::{
+    vk::{
+        BufferCopy, BufferCreateInfo, BufferUsageFlags, CommandBuffer, CommandPool, DeviceMemory,
+        DeviceSize, MemoryPropertyFlags, Queue, SharingMode,
+    },
+    Device,
+};
 use crossbeam::sync::ShardedLock;
 use std::ffi::c_void;
 use std::sync::Weak;
@@ -21,7 +13,7 @@ use vk_mem::*;
 
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::mappable::Mappable;
-use crate::game::util::{get_single_time_command_buffer, end_one_time_command_buffer};
+use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
 
 #[derive(Clone)]
 pub struct Buffer {
@@ -40,10 +32,13 @@ unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
 impl Buffer {
-    pub fn new(device: Weak<Device>,
-               buffer_size: DeviceSize,
-               usage_flag: BufferUsageFlags,
-               memory_properties: MemoryPropertyFlags, allocator: Weak<ShardedLock<Allocator>>) -> Self {
+    pub fn new(
+        device: Weak<Device>,
+        buffer_size: DeviceSize,
+        usage_flag: BufferUsageFlags,
+        memory_properties: MemoryPropertyFlags,
+        allocator: Weak<ShardedLock<Allocator>>,
+    ) -> Self {
         let create_info = BufferCreateInfo::builder()
             .sharing_mode(SharingMode::EXCLUSIVE)
             .size(buffer_size)
@@ -52,11 +47,16 @@ impl Buffer {
         let allocation_info = AllocationCreateInfo {
             usage: match usage_flag {
                 BufferUsageFlags::TRANSFER_SRC => MemoryUsage::CpuOnly,
-                x if (x & BufferUsageFlags::TRANSFER_DST) == BufferUsageFlags::empty() => MemoryUsage::CpuToGpu,
-                _ => MemoryUsage::GpuOnly
+                x if (x & BufferUsageFlags::TRANSFER_DST) == BufferUsageFlags::empty() => {
+                    MemoryUsage::CpuToGpu
+                }
+                _ => MemoryUsage::GpuOnly,
             },
-            flags: if (memory_properties & MemoryPropertyFlags::HOST_VISIBLE) == MemoryPropertyFlags::HOST_VISIBLE &&
-                (memory_properties & MemoryPropertyFlags::HOST_COHERENT) == MemoryPropertyFlags::HOST_COHERENT {
+            flags: if (memory_properties & MemoryPropertyFlags::HOST_VISIBLE)
+                == MemoryPropertyFlags::HOST_VISIBLE
+                && (memory_properties & MemoryPropertyFlags::HOST_COHERENT)
+                    == MemoryPropertyFlags::HOST_COHERENT
+            {
                 AllocationCreateFlags::MAPPED
             } else {
                 AllocationCreateFlags::NONE
@@ -65,11 +65,12 @@ impl Buffer {
             preferred_flags: MemoryPropertyFlags::empty(),
             memory_type_bits: 0,
             pool: None,
-            user_data: None
+            user_data: None,
         };
         let arc = allocator.upgrade().unwrap();
         let lock = arc.read().unwrap();
-        let (buffer, allocation, allocation_info) = lock.create_buffer(&create_info, &allocation_info)
+        let (buffer, allocation, allocation_info) = lock
+            .create_buffer(&create_info, &allocation_info)
             .expect("Failed to create buffer from VMA allocator.");
         drop(lock);
         let device_memory = allocation_info.get_device_memory();
@@ -83,11 +84,18 @@ impl Buffer {
             buffer_size,
             allocation,
             allocation_info: Some(allocation_info),
-            allocator
+            allocator,
         }
     }
 
-    pub fn copy_buffer(&self, src_buffer: &Buffer, buffer_size: DeviceSize, command_pool: CommandPool, graphics_queue: Queue, command_buffer: Option<CommandBuffer>) {
+    pub fn copy_buffer(
+        &self,
+        src_buffer: &Buffer,
+        buffer_size: DeviceSize,
+        command_pool: CommandPool,
+        graphics_queue: Queue,
+        command_buffer: Option<CommandBuffer>,
+    ) {
         unsafe {
             let device = self.logical_device.upgrade();
             if let Some(d) = device {
@@ -100,9 +108,19 @@ impl Buffer {
                 } else {
                     get_single_time_command_buffer(d.as_ref(), command_pool)
                 };
-                d.cmd_copy_buffer(cmd_buffer, src_buffer.buffer, self.buffer, &[copy_info.build()]);
+                d.cmd_copy_buffer(
+                    cmd_buffer,
+                    src_buffer.buffer,
+                    self.buffer,
+                    &[copy_info.build()],
+                );
                 if command_buffer.is_none() {
-                    end_one_time_command_buffer(cmd_buffer, d.as_ref(), command_pool, graphics_queue);
+                    end_one_time_command_buffer(
+                        cmd_buffer,
+                        d.as_ref(),
+                        command_pool,
+                        graphics_queue,
+                    );
                 }
             }
         }
@@ -152,19 +170,35 @@ impl Disposable for Buffer {
 
 impl Mappable for Buffer {
     fn map_memory(&mut self, _device_size: u64, _offset: u64) -> *mut c_void {
-        if self.mapped_memory.is_null() &&
-            self.allocation_info.as_ref().unwrap().get_mapped_data().is_null() {
-            self.mapped_memory = self.allocator
-                .upgrade().unwrap()
-                .read().unwrap().map_memory(&self.allocation)
-                .expect("Failed to map device memory.") as *mut c_void;
+        if self.mapped_memory.is_null()
+            && self
+                .allocation_info
+                .as_ref()
+                .unwrap()
+                .get_mapped_data()
+                .is_null()
+        {
+            self.mapped_memory =
+                self.allocator
+                    .upgrade()
+                    .unwrap()
+                    .read()
+                    .unwrap()
+                    .map_memory(&self.allocation)
+                    .expect("Failed to map device memory.") as *mut c_void;
         }
         self.mapped_memory
     }
 
     fn unmap_memory(&mut self) {
-        if self.allocation_info.as_ref().unwrap().get_mapped_data().is_null() &&
-            !self.mapped_memory.is_null() {
+        if self
+            .allocation_info
+            .as_ref()
+            .unwrap()
+            .get_mapped_data()
+            .is_null()
+            && !self.mapped_memory.is_null()
+        {
             self.allocator
                 .upgrade()
                 .unwrap()

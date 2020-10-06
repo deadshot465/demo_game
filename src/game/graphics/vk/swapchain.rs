@@ -1,7 +1,4 @@
-use ash::{
-    extensions::khr::Surface,
-    vk::*
-};
+use ash::{extensions::khr::Surface, vk::*};
 use crossbeam::sync::ShardedLock;
 use std::sync::Weak;
 use vk_mem::Allocator;
@@ -19,12 +16,18 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new(surface_loader: &Surface,
-               surface: SurfaceKHR,
-               physical_device: PhysicalDevice,
-               window: &winit::window::Window,
-               queue_indices: QueueIndices, instance: &ash::Instance, device: Weak<ash::Device>, allocator: Weak<ShardedLock<Allocator>>) -> Self {
-        let (capabilities, formats, present_modes) = Swapchain::get_swapchain_details(surface_loader, surface, physical_device);
+    pub fn new(
+        surface_loader: &Surface,
+        surface: SurfaceKHR,
+        physical_device: PhysicalDevice,
+        window: &winit::window::Window,
+        queue_indices: QueueIndices,
+        instance: &ash::Instance,
+        device: Weak<ash::Device>,
+        allocator: Weak<ShardedLock<Allocator>>,
+    ) -> Self {
+        let (capabilities, formats, present_modes) =
+            Swapchain::get_swapchain_details(surface_loader, surface, physical_device);
         let logical_device = device.upgrade().unwrap();
         let mut swapchain = Swapchain {
             swapchain: SwapchainKHR::null(),
@@ -32,16 +35,28 @@ impl Swapchain {
             extent: Swapchain::choose_extent(&capabilities, window),
             format: Swapchain::choose_format(&formats),
             present_mode: Swapchain::choose_present_mode(&present_modes),
-            swapchain_loader: ash::extensions::khr::Swapchain::new(instance, logical_device.as_ref()),
-            swapchain_images: vec![]
+            swapchain_loader: ash::extensions::khr::Swapchain::new(
+                instance,
+                logical_device.as_ref(),
+            ),
+            swapchain_images: vec![],
         };
         swapchain.create_swapchain(surface, queue_indices);
         unsafe {
-            let images = swapchain.swapchain_loader.get_swapchain_images(swapchain.swapchain)
+            let images = swapchain
+                .swapchain_loader
+                .get_swapchain_images(swapchain.swapchain)
                 .expect("Failed to acquire swapchain images.");
             let format = swapchain.format.format;
             for image in images.into_iter() {
-                let img = super::Image::from_image(image, device.clone(), format, ImageAspectFlags::COLOR, 1, allocator.clone());
+                let img = super::Image::from_image(
+                    image,
+                    device.clone(),
+                    format,
+                    ImageAspectFlags::COLOR,
+                    1,
+                    allocator.clone(),
+                );
                 swapchain.swapchain_images.push(img);
             }
         }
@@ -50,25 +65,26 @@ impl Swapchain {
 
     fn choose_format(formats: &[SurfaceFormatKHR]) -> SurfaceFormatKHR {
         for format in formats.iter() {
-            if format.format == Format::B8G8R8A8_UNORM &&
-                format.color_space == ColorSpaceKHR::SRGB_NONLINEAR {
+            if format.format == Format::B8G8R8A8_UNORM
+                && format.color_space == ColorSpaceKHR::SRGB_NONLINEAR
+            {
                 return *format;
             }
         }
         formats[0]
     }
 
-    fn choose_extent(capabilities: &SurfaceCapabilitiesKHR, window: &winit::window::Window) -> Extent2D {
+    fn choose_extent(
+        capabilities: &SurfaceCapabilitiesKHR,
+        window: &winit::window::Window,
+    ) -> Extent2D {
         if capabilities.min_image_extent.width != u32::max_value() {
             capabilities.current_extent
-        }
-        else {
+        } else {
             let inner_size = window.inner_size();
             let actual_width: u32;
             let actual_height: u32;
-            let winit::dpi::PhysicalSize {
-                width, height
-            } = inner_size;
+            let winit::dpi::PhysicalSize { width, height } = inner_size;
             actual_width = if width < capabilities.min_image_extent.width {
                 capabilities.min_image_extent.width
             } else if width > capabilities.max_image_extent.width {
@@ -98,11 +114,11 @@ impl Swapchain {
             match *mode {
                 PresentModeKHR::MAILBOX => {
                     return *mode;
-                },
+                }
                 PresentModeKHR::FIFO => {
                     fifo_support = true;
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
         if fifo_support {
@@ -112,7 +128,15 @@ impl Swapchain {
         }
     }
 
-    fn get_swapchain_details(surface_loader: &Surface, surface: SurfaceKHR, physical_device: PhysicalDevice) -> (SurfaceCapabilitiesKHR, Vec<SurfaceFormatKHR>, Vec<PresentModeKHR>) {
+    fn get_swapchain_details(
+        surface_loader: &Surface,
+        surface: SurfaceKHR,
+        physical_device: PhysicalDevice,
+    ) -> (
+        SurfaceCapabilitiesKHR,
+        Vec<SurfaceFormatKHR>,
+        Vec<PresentModeKHR>,
+    ) {
         unsafe {
             let capabilities = surface_loader
                 .get_physical_device_surface_capabilities(physical_device, surface)
@@ -127,8 +151,7 @@ impl Swapchain {
         }
     }
 
-    fn create_swapchain(&mut self, surface: SurfaceKHR,
-                        queue_indices: QueueIndices) {
+    fn create_swapchain(&mut self, surface: SurfaceKHR, queue_indices: QueueIndices) {
         let min_image_count = if self.capabilities.max_image_count == 0 {
             self.capabilities.min_image_count + 1
         } else if self.capabilities.min_image_count + 1 > self.capabilities.max_image_count {
@@ -157,19 +180,21 @@ impl Swapchain {
 
         let indices = vec![
             queue_indices.graphics_family.unwrap(),
-            queue_indices.present_family.unwrap()
+            queue_indices.present_family.unwrap(),
         ];
 
         if indices[0] != indices[1] {
-            create_info = create_info.image_sharing_mode(SharingMode::CONCURRENT)
+            create_info = create_info
+                .image_sharing_mode(SharingMode::CONCURRENT)
                 .queue_family_indices(&indices)
-        }
-        else {
+        } else {
             create_info = create_info.image_sharing_mode(SharingMode::EXCLUSIVE);
         }
 
         unsafe {
-            self.swapchain = self.swapchain_loader.create_swapchain(&create_info, None)
+            self.swapchain = self
+                .swapchain_loader
+                .create_swapchain(&create_info, None)
                 .expect("Failed to create swapchain.");
         }
     }
@@ -178,7 +203,8 @@ impl Swapchain {
 impl Drop for Swapchain {
     fn drop(&mut self) {
         unsafe {
-            self.swapchain_loader.destroy_swapchain(self.swapchain, None);
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
             log::info!("Swapchain successfully dropped.");
         }
     }

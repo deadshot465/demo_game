@@ -25,37 +25,37 @@ impl Frustum {
             vectors[0][3] + vectors[0][0],
             vectors[1][3] + vectors[1][0],
             vectors[2][3] + vectors[2][0],
-            vectors[3][3] + vectors[3][0]
+            vectors[3][3] + vectors[3][0],
         );
         self.planes[FrustumSide::RIGHT.0] = Vec4::new(
             vectors[0][3] - vectors[0][0],
             vectors[1][3] - vectors[1][0],
             vectors[2][3] - vectors[2][0],
-            vectors[3][3] - vectors[3][0]
+            vectors[3][3] - vectors[3][0],
         );
         self.planes[FrustumSide::TOP.0] = Vec4::new(
             vectors[0][3] - vectors[0][1],
             vectors[1][3] - vectors[1][1],
             vectors[2][3] - vectors[2][1],
-            vectors[3][3] - vectors[3][1]
+            vectors[3][3] - vectors[3][1],
         );
         self.planes[FrustumSide::BOTTOM.0] = Vec4::new(
             vectors[0][3] + vectors[0][1],
             vectors[1][3] + vectors[1][1],
             vectors[2][3] + vectors[2][1],
-            vectors[3][3] + vectors[3][1]
+            vectors[3][3] + vectors[3][1],
         );
         self.planes[FrustumSide::BACK.0] = Vec4::new(
             vectors[0][3] + vectors[0][2],
             vectors[1][3] + vectors[1][2],
             vectors[2][3] + vectors[2][2],
-            vectors[3][3] + vectors[3][2]
+            vectors[3][3] + vectors[3][2],
         );
         self.planes[FrustumSide::FRONT.0] = Vec4::new(
             vectors[0][3] - vectors[0][2],
             vectors[1][3] - vectors[1][2],
             vectors[2][3] - vectors[2][2],
-            vectors[3][3] - vectors[3][2]
+            vectors[3][3] - vectors[3][2],
         );
         for plane in self.planes.iter_mut() {
             let sum: f32 = plane.x() * plane.x() + plane.y() * plane.y() + plane.z() * plane.z();
@@ -66,9 +66,12 @@ impl Frustum {
 
     pub fn check_sphere(&self, position: Vec3, radius: f32) -> bool {
         for plane in self.planes.iter() {
-            if (plane.x() * position.x()) +
-                (plane.y() * position.y()) +
-                (plane.z() * position.z()) + plane.w() < -radius {
+            if (plane.x() * position.x())
+                + (plane.y() * position.y())
+                + (plane.z() * position.z())
+                + plane.w()
+                < -radius
+            {
                 return false;
             }
         }
