@@ -1,9 +1,9 @@
 use ash::version::DeviceV1_0;
 use ash::{vk::*, Device};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::Shader;
@@ -344,11 +344,12 @@ impl Pipeline {
                         .min_sample_shading(0.25)
                         .rasterization_samples(sample_count)
                         .sample_shading_enable(true);
-                    let shader_vector = ptr_shaders.lock().unwrap();
+                    let shader_vector = ptr_shaders.lock();
                     let mut stage_infos = shader_vector
                         .iter()
                         .map(|s| s.shader_stage_info)
                         .collect::<Vec<_>>();
+                    drop(shader_vector);
                     let name = CString::new("main").unwrap();
                     stage_infos.iter_mut().for_each(|s| {
                         s.p_name = name.as_ptr();

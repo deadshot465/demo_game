@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast::*;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 #[allow(dead_code)]
@@ -15,6 +16,7 @@ pub struct Thread {
     worker: JoinHandle<()>,
     task_queue: Arc<ArrayQueue<Box<dyn FnOnce() + Send + 'static>>>,
     sender: Sender<()>,
+    notify: Arc<Notify>,
 }
 
 impl Thread {
@@ -29,6 +31,8 @@ impl Thread {
             .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_index)
             .build();
+        let notify = Arc::new(Notify::new());
+        let n1 = notify.clone();
         unsafe {
             let command_pool = device
                 .create_command_pool(&pool_info, None)
@@ -36,9 +40,10 @@ impl Thread {
             Thread {
                 destroying,
                 worker: tokio::spawn(async move {
-                    let s1 = s1;
+                    let mut s1 = s1;
                     let mut receiver = receiver;
                     let d1 = d1;
+                    let notify = n1;
                     'outer: loop {
                         let mut work: Result<Box<dyn FnOnce() + Send>, crossbeam::queue::PopError>;
                         while receiver.recv().await.is_ok() {
@@ -50,6 +55,7 @@ impl Thread {
                                 job();
                                 s1.send(()).unwrap();
                             } else {
+                                notify.notify();
                                 break;
                             }
                         }
@@ -58,11 +64,12 @@ impl Thread {
                 task_queue: task_queue.clone(),
                 sender,
                 command_pool: Arc::new(Mutex::new(command_pool)),
+                notify,
             }
         }
     }
 
-    pub fn add_job(&self, work: impl FnOnce() + Send + 'static) {
+    pub fn add_job(&mut self, work: impl FnOnce() + Send + 'static) {
         let result = self.task_queue.push(Box::new(work));
         if let Err(e) = result {
             log::error!("Error pushing new job into the queue: {}", e.to_string());
@@ -71,11 +78,8 @@ impl Thread {
         self.sender.send(()).unwrap();
     }
 
-    pub fn wait(&self) {
-        let backoff = Backoff::new();
-        while !self.task_queue.is_empty() {
-            backoff.snooze();
-        }
+    pub async fn wait(&self) {
+        self.notify.notified().await;
     }
 
     pub async fn dispose(&mut self) {
@@ -110,9 +114,9 @@ impl ThreadPool {
         }
     }
 
-    pub fn wait(&self) {
+    pub async fn wait(&self) {
         for thread in self.threads.iter() {
-            thread.wait();
+            thread.wait().await;
         }
     }
 

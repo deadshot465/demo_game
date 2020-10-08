@@ -1,7 +1,4 @@
-use ash::vk::{
-    CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
-    CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags,
-};
+use ash::vk::{CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags, CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags, DescriptorSet};
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::animation::util::ReadOutputs;
@@ -23,6 +20,7 @@ use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
 use ash::version::DeviceV1_0;
 use std::sync::atomic::{AtomicPtr, Ordering};
+use ash::Device;
 
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -581,14 +579,15 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         push_constant: PushConstant,
         viewport: ash::vk::Viewport,
         scissor: ash::vk::Rect2D,
+        device: Arc<Device>,
+        pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
+        descriptor_set: DescriptorSet,
     ) {
-        let graphics_ptr = self.graphics.upgrade().unwrap();
-        let graphics_lock = graphics_ptr.read().unwrap();
-        let pipeline_layout = graphics_lock
-            .pipeline
+        let pipeline_layout = pipeline
+            .read().unwrap()
             .get_pipeline_layout(ShaderType::AnimatedModel);
-        let pipeline = graphics_lock
-            .pipeline
+        let pipeline = pipeline
+            .read().unwrap()
             .get_pipeline(ShaderType::AnimatedModel, 0);
         let mut push_constant = push_constant;
         push_constant.object_color = self.color;
@@ -602,8 +601,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                         .build();
                     let command_buffer = primitive.command_buffer.unwrap();
-                    let result = graphics_lock
-                        .logical_device
+                    let result = device
                         .begin_command_buffer(command_buffer, &command_buffer_begin_info);
                     if let Err(e) = result {
                         log::error!(
@@ -611,28 +609,26 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                             e.to_string()
                         );
                     }
-                    graphics_lock
-                        .logical_device
+                    device
                         .cmd_set_viewport(command_buffer, 0, &[viewport]);
-                    graphics_lock
-                        .logical_device
+                    device
                         .cmd_set_scissor(command_buffer, 0, &[scissor]);
-                    graphics_lock.logical_device.cmd_bind_pipeline(
+                    device.cmd_bind_pipeline(
                         command_buffer,
                         PipelineBindPoint::GRAPHICS,
                         pipeline,
                     );
-                    graphics_lock.logical_device.cmd_bind_descriptor_sets(
+                    device.cmd_bind_descriptor_sets(
                         command_buffer,
                         PipelineBindPoint::GRAPHICS,
                         pipeline_layout,
                         0,
-                        &[graphics_lock.descriptor_sets[0]],
+                        &[descriptor_set],
                         &[],
                     );
                     push_constant.texture_index = primitive.texture_index;
                     let casted = bytemuck::cast::<PushConstant, [u8; 48]>(push_constant);
-                    graphics_lock.logical_device.cmd_push_constants(
+                    device.cmd_push_constants(
                         command_buffer,
                         pipeline_layout,
                         ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
@@ -641,19 +637,8 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     );
                     let vertex_buffers = [primitive.get_vertex_buffer()];
                     let index_buffer = primitive.get_index_buffer();
-                    /*if let Some(sampler_resource) = primitive.sampler_resource.as_ref() {
-                        match sampler_resource {
-                            SamplerResource::DescriptorSet(set) => {
-                                graphics_lock.logical_device
-                                    .cmd_bind_descriptor_sets(
-                                        command_buffer, PipelineBindPoint::GRAPHICS,
-                                        pipeline_layout, 1, &[*set], &[]
-                                    );
-                            },
-                        }
-                    }*/
                     if let Some(ssbo) = mesh.ssbo.as_ref() {
-                        graphics_lock.logical_device.cmd_bind_descriptor_sets(
+                        device.cmd_bind_descriptor_sets(
                             command_buffer,
                             PipelineBindPoint::GRAPHICS,
                             pipeline_layout,
@@ -662,19 +647,19 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                             &[],
                         );
                     }
-                    graphics_lock.logical_device.cmd_bind_vertex_buffers(
+                    device.cmd_bind_vertex_buffers(
                         command_buffer,
                         0,
                         &vertex_buffers[0..],
                         &[0],
                     );
-                    graphics_lock.logical_device.cmd_bind_index_buffer(
+                    device.cmd_bind_index_buffer(
                         command_buffer,
                         index_buffer,
                         0,
                         IndexType::UINT32,
                     );
-                    graphics_lock.logical_device.cmd_draw_indexed(
+                    device.cmd_draw_indexed(
                         command_buffer,
                         primitive.indices.len() as u32,
                         1,
@@ -682,8 +667,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         0,
                         0,
                     );
-                    let result = graphics_lock
-                        .logical_device
+                    let result = device
                         .end_command_buffer(command_buffer);
                     if let Err(e) = result {
                         log::error!("Error ending command buffer: {}", e.to_string());
@@ -691,7 +675,6 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
         }
-        drop(graphics_lock);
     }
 }
 
@@ -741,8 +724,6 @@ where
         if !self.is_disposed {
             self.dispose();
             log::info!("Successfully dropped skinned model.");
-        } else {
-            log::warn!("Skinned model is already dropped.");
         }
     }
 }

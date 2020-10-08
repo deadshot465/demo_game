@@ -11,8 +11,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(target_os = "windows")]
 use wio::com::ComPtr;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     let log_level = dotenv::var("LOG").unwrap();
     Builder::new()
@@ -32,24 +31,34 @@ async fn main() -> anyhow::Result<()> {
     let api = dotenv::var("API").unwrap();
     log::info!("Using API: {}", &api);
     let event_loop = EventLoop::new();
+    let mut rt = tokio::runtime::Runtime::new()?;
+    let handle = rt.handle().clone();
     match api.as_str() {
         "VULKAN" => {
-            let mut game =
-                Game::<VK::Graphics, VK::Buffer, ash::vk::CommandBuffer, VK::Image>::new(
-                    "Demo game",
-                    1280.0,
-                    720.0,
-                    &event_loop,
-                )?;
-            if game.initialize() {
-                game.load_content().await?;
-            }
+            let mut game = rt.block_on(async {
+                let mut game =
+                    Game::<VK::Graphics, VK::Buffer, ash::vk::CommandBuffer, VK::Image>::new(
+                        "Demo game",
+                        1280.0,
+                        720.0,
+                        &event_loop,
+                    )
+                    .unwrap();
+                if game.initialize() {
+                    game.load_content().await.expect("Failed to load game content.");
+                }
+                game
+            });
             log::info!("Game content loaded.");
             event_loop.run(move |event, _target, control_flow| {
                 //*control_flow = ControlFlow::Poll;
                 let game = &mut game;
-                game.update().unwrap();
-                game.render().unwrap();
+                let rt = &mut rt;
+                let handle = &handle;
+                rt.block_on(async {
+                    game.update().unwrap();
+                    game.render(handle).await.unwrap();
+                });
                 match event {
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
@@ -75,15 +84,19 @@ async fn main() -> anyhow::Result<()> {
         "DX12" => {
             #[cfg(target_os = "windows")]
             unsafe {
-                let mut game = Game::<
-                    DX12::Graphics,
-                    DX12::Resource,
-                    ComPtr<ID3D12GraphicsCommandList>,
-                    DX12::Resource,
-                >::new("Demo game", 1280.0, 720.0, &event_loop);
-                if game.initialize() {
-                    game.load_content().await;
-                }
+                let mut game = rt.block_on(async {
+                    let mut game =
+                        Game::<
+                            DX12::Graphics,
+                            DX12::Resource,
+                            ComPtr<ID3D12GraphicsCommandList>,
+                            DX12::Resource,
+                        >::new("Demo game", 1280.0, 720.0, &event_loop);
+                    if game.initialize() {
+                        game.load_content().await;
+                    }
+                    game
+                });
                 println!("Game content loaded.");
                 event_loop.run(move |event, _target, control_flow| {
                     //*control_flow = ControlFlow::Poll;

@@ -6,7 +6,7 @@ pub use shared::*;
 
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
-use std::sync::{atomic::AtomicU32, Arc};
+use std::sync::Arc;
 use std::time;
 #[cfg(target_os = "windows")]
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
@@ -34,10 +34,10 @@ where
     pub camera: Arc<ShardedLock<Camera>>,
     pub graphics: Arc<ShardedLock<GraphicsType>>,
     pub scene_manager: SceneManager,
-    current_index: AtomicU32,
     last_frame_time: time::Instant,
     current_time: time::Instant,
     frame_count: u32,
+    delta_time: f64,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -61,10 +61,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             camera,
             graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
-            current_index: AtomicU32::new(0),
             last_frame_time: time::Instant::now(),
             current_time: time::Instant::now(),
             frame_count: 0,
+            delta_time: 0.0,
         })
     }
 
@@ -96,6 +96,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_manager.update(delta_time)?;
         self.current_time = time::Instant::now();
         self.frame_count += 1;
+        self.delta_time = delta_time;
         let elapsed = self.last_frame_time.elapsed().as_secs_f64();
         if elapsed >= 1.0 {
             self.window
@@ -108,11 +109,8 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    pub fn render(&mut self) -> anyhow::Result<()> {
-        let lock = self.graphics.read().unwrap();
-        self.current_index
-            .store(lock.render()?, std::sync::atomic::Ordering::SeqCst);
-        drop(lock);
+    pub async fn render(&mut self, handle: &tokio::runtime::Handle) -> anyhow::Result<()> {
+        self.scene_manager.render(self.delta_time, handle).await?;
         Ok(())
     }
 }
@@ -135,10 +133,10 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             camera,
             graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
-            current_index: AtomicU32::new(0),
             current_time: time::Instant::now(),
             last_frame_time: time::Instant::now(),
             frame_count: 0,
+            delta_time: 0.0,
         }
     }
 

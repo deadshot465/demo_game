@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::structs::{Model, SkinnedModel};
+use crate::game::shared::structs::{Model, SkinnedModel, Terrain};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::traits::GraphicsBase;
@@ -24,6 +24,7 @@ where
     pub models: ModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub skinned_models: SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
+    pub terrains: Vec<Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -73,6 +74,7 @@ where
             models: vec![],
             skinned_models: vec![],
             textures: vec![],
+            terrains: vec![],
         }
     }
 
@@ -96,14 +98,18 @@ where
         ptr
     }
 
-    pub fn add_model(&mut self, model: Model<GraphicsType, BufferType, CommandType, TextureType>) {
+    pub fn add_model(
+        &mut self,
+        model: Model<GraphicsType, BufferType, CommandType, TextureType>,
+    ) -> Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>> {
         let name = model.model_name.clone();
         let model = Arc::new(Mutex::new(model));
         let mut model_lock = model.lock();
         model_lock.model_index = self.models.len();
         model_lock.model_name = name;
         drop(model_lock);
-        self.models.push(model);
+        self.models.push(model.clone());
+        model
     }
 
     pub fn add_skinned_model(
@@ -123,6 +129,13 @@ where
         let texture_wrapped = Arc::new(ShardedLock::new(texture));
         self.textures.push(texture_wrapped.clone());
         texture_wrapped
+    }
+
+    pub fn add_terrain(&mut self, terrain: Terrain<GraphicsType, BufferType, CommandType, TextureType>)
+        -> Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>> {
+        let terrain_wrapped = Arc::new(Mutex::new(terrain));
+        self.terrains.push(terrain_wrapped.clone());
+        terrain_wrapped
     }
 
     pub fn get_model_count(&self) -> usize {
@@ -211,6 +224,13 @@ where
                 continue;
             }
             model_lock.dispose();
+        }
+        for terrain in self.terrains.iter() {
+            let mut terrain_lock = terrain.lock();
+            if terrain_lock.is_disposed() {
+                continue;
+            }
+            terrain_lock.dispose();
         }
         for resource in self.resource.iter() {
             let mut resource_lock = resource.lock();

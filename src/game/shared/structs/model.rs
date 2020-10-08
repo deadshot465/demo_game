@@ -1,8 +1,5 @@
 use ash::version::DeviceV1_0;
-use ash::vk::{
-    CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
-    CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags,
-};
+use ash::vk::{CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags, CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags, DescriptorSet};
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::{Node, Scene};
@@ -22,6 +19,7 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
 use downcast_rs::__std::collections::HashMap;
+use ash::Device;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -38,7 +36,7 @@ where
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
-    graphics: Weak<ShardedLock<GraphicsType>>,
+    pub graphics: Weak<ShardedLock<GraphicsType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -230,7 +228,6 @@ where
             index_buffer: None,
             texture: textures,
             is_disposed: false,
-            sampler_resource: None,
             command_buffer: None,
             command_pool: None,
         }
@@ -355,9 +352,10 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         push_constant: PushConstant,
         viewport: ash::vk::Viewport,
         scissor: ash::vk::Rect2D,
+        device: Arc<Device>,
+        pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
+        descriptor_set: DescriptorSet,
     ) {
-        let graphics_ptr = self.graphics.upgrade().unwrap();
-        let graphics_lock = graphics_ptr.read().unwrap();
         let mut push_constant = push_constant;
         push_constant.object_color = self.color;
         push_constant.model_index = self.model_index;
@@ -369,15 +367,14 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 } else {
                     ShaderType::BasicShaderWithoutTexture
                 };
-                let pipeline_layout = graphics_lock.pipeline.get_pipeline_layout(shader_type);
-                let pipeline = graphics_lock.pipeline.get_pipeline(shader_type, 0);
+                let pipeline_layout = pipeline.read().unwrap().get_pipeline_layout(shader_type);
+                let pipeline = pipeline.read().unwrap().get_pipeline(shader_type, 0);
                 let command_buffer_begin_info = CommandBufferBeginInfo::builder()
                     .inheritance_info(inheritance)
                     .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                     .build();
                 let command_buffer = mesh.command_buffer.unwrap();
-                let result = graphics_lock
-                    .logical_device
+                let result = device
                     .begin_command_buffer(command_buffer, &command_buffer_begin_info);
                 if let Err(e) = result {
                     log::error!(
@@ -385,69 +382,49 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                         e.to_string()
                     );
                 }
-                graphics_lock
-                    .logical_device
-                    .cmd_set_viewport(command_buffer, 0, &[viewport]);
-                graphics_lock
-                    .logical_device
-                    .cmd_set_scissor(command_buffer, 0, &[scissor]);
-                graphics_lock.logical_device.cmd_bind_pipeline(
+                device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                device.cmd_bind_pipeline(
                     command_buffer,
                     PipelineBindPoint::GRAPHICS,
                     pipeline,
                 );
-                graphics_lock.logical_device.cmd_bind_descriptor_sets(
+                device.cmd_bind_descriptor_sets(
                     command_buffer,
                     PipelineBindPoint::GRAPHICS,
                     pipeline_layout,
                     0,
-                    &[graphics_lock.descriptor_sets[0]],
+                    &[descriptor_set],
                     &[],
                 );
                 let vertex_buffers = [mesh.get_vertex_buffer()];
                 let index_buffer = mesh.get_index_buffer();
-                /*if !mesh.texture.is_empty() {
-                    match mesh.sampler_resource.as_ref() {
-                        Some(res) => {
-                            match res {
-                                SamplerResource::DescriptorSet(set) => {
-                                    graphics_lock.logical_device
-                                        .cmd_bind_descriptor_sets(
-                                            command_buffer, PipelineBindPoint::GRAPHICS,
-                                            pipeline_layout, 1, &[*set], &[]
-                                        );
-                                }
-                            }
-                        },
-                        None => (),
-                    }
-                }*/
 
                 let mut vertex_offset_index = 0;
                 let mut index_offset_index = 0;
                 for primitive in mesh.primitives.iter() {
                     push_constant.texture_index = primitive.texture_index.unwrap_or_default();
                     let casted = bytemuck::cast::<PushConstant, [u8; 48]>(push_constant);
-                    graphics_lock.logical_device.cmd_push_constants(
+                    device.cmd_push_constants(
                         command_buffer,
                         pipeline_layout,
                         ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
                         0,
                         &casted[0..],
                     );
-                    graphics_lock.logical_device.cmd_bind_vertex_buffers(
+                    device.cmd_bind_vertex_buffers(
                         command_buffer,
                         0,
                         &vertex_buffers[0..],
                         &[0],
                     );
-                    graphics_lock.logical_device.cmd_bind_index_buffer(
+                    device.cmd_bind_index_buffer(
                         command_buffer,
                         index_buffer,
                         0,
                         IndexType::UINT32,
                     );
-                    graphics_lock.logical_device.cmd_draw_indexed(
+                    device.cmd_draw_indexed(
                         command_buffer,
                         u32::try_from(primitive.indices.len()).unwrap(),
                         1,
@@ -458,14 +435,12 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     vertex_offset_index += primitive.vertices.len() as i32;
                     index_offset_index += primitive.indices.len() as u32;
                 }
-                let result = graphics_lock
-                    .logical_device
+                let result = device
                     .end_command_buffer(command_buffer);
                 if let Err(e) = result {
                     log::error!("Error ending command buffer: {}", e.to_string());
                 }
             }
-            drop(graphics_lock);
         }
     }
 }
@@ -545,8 +520,6 @@ where
         if !self.is_disposed {
             self.dispose();
             log::info!("Successfully dropped model.");
-        } else {
-            log::warn!("Model is already dropped.");
         }
     }
 }

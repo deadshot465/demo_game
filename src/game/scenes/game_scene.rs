@@ -6,7 +6,7 @@ use std::sync::Weak;
 use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::structs::{Model, SkinnedModel};
+use crate::game::shared::structs::{Model, SkinnedModel, Terrain};
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::traits::Disposable;
 use crate::game::ResourceManager;
@@ -54,7 +54,7 @@ where
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    pub async fn generate_terrain(&self) -> anyhow::Result<()> {
+    pub async fn generate_terrain(&mut self) -> anyhow::Result<()> {
         let graphics = self
             .graphics
             .upgrade()
@@ -65,12 +65,52 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .thread_pool
             .get_idle_command_pool();
         let image = Graphics::create_image_from_file(
-            "textures/demo_map_hm.png",
-            graphics,
+            "textures/TexturesCom_Grass0150_1_seamless_S.jpg",
+            graphics.clone(),
             command_pool,
-            SamplerAddressMode::MIRRORED_REPEAT,
+            SamplerAddressMode::REPEAT,
         )
         .await?;
+        println!("Terrain texture successfully created.");
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade Weak of resource manager for creating terrain.");
+        let texture_index: usize;
+        let model_index = self.model_count;
+        {
+            let resource_lock = resource_manager.read().unwrap();
+            texture_index = resource_lock.get_texture_count() - 1;
+        }
+        let mut terrain = Terrain::new(
+            0,
+            0,
+            texture_index,
+            image,
+            graphics.clone(),
+        );
+        terrain.model.model_index = model_index;
+        {
+            let graphics_lock = graphics.read().unwrap();
+            let thread_count = graphics_lock.thread_pool.thread_count;
+            let command_pool = graphics_lock.thread_pool
+                .threads[model_index % thread_count]
+                .command_pool
+                .clone();
+            let command_buffer = graphics_lock
+                .create_secondary_command_buffer(command_pool.clone());
+            terrain.model.meshes[0].command_pool = Some(command_pool);
+            terrain.model.meshes[0].command_buffer = Some(command_buffer);
+        }
+        terrain.create_buffers().await?;
+        {
+            let mut resource_lock = resource_manager
+                .write()
+                .unwrap();
+            resource_lock.add_terrain(terrain);
+        }
+        self.model_count += 1;
+        println!("Terrain successfully generated.");
         Ok(())
     }
 }
@@ -80,8 +120,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {}
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
-        //self.generate_terrain().await?;
-        self.add_skinned_model(
+        /*self.add_skinned_model(
             "./models/nathan/Nathan.glb",
             Vec3A::new(-1.5, 0.0, -1.5),
             Vec3A::new(1.0, 1.0, 1.0),
@@ -94,17 +133,17 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
-        self.add_model(
+        )?;*/
+        /*self.add_model(
             "./models/tank/tank.gltf",
             Vec3A::new(0.0, 0.0, 0.0),
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(90.0, 0.0, 0.0),
             Vec4::new(0.0, 0.0, 1.0, 1.0),
-        )?;
+        )?;*/
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
         Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
-        self.add_model(
+        /*self.add_model(
             "./models/mr.incredible/Mr.Incredible.glb",
             Vec3A::new(0.0, 0.0, 0.0),
             Vec3A::new(1.0, 1.0, 1.0),
@@ -124,7 +163,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(2.0, 2.0, 2.0),
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
+        )?;*/
+        self.generate_terrain().await?;
         Ok(())
     }
 
@@ -135,27 +175,14 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    fn render(&self, _delta_time: f64) {
-        /*let arc = self.resource_manager.upgrade();
-        let arc_2 = self.graphics.upgrade();
-        if let Some(resource_manager) = arc {
-            if let Some(graphics) = arc_2 {
-                let resource_lock = resource_manager.read().unwrap();
-                let graphics_lock = graphics.read().unwrap();
-                let models = &resource_lock.models;
-                let frame_buffers = &graphics_lock.frame_buffers;
-                for buffer in frame_buffers.iter() {
-                    for model in models.iter() {
-                        let model_lock = model.lock();
-                        unsafe {
-                            model.as_ref().unwrap().render(*buffer);
-                        }
-                    }
-                }
-                drop(graphics_lock);
-                drop(resource_lock);
-            }
-        }*/
+    async fn render(&self, _delta_time: f64, handle: &tokio::runtime::Handle) -> anyhow::Result<()> {
+        let graphics = self.graphics.upgrade()
+            .expect("Failed to upgrade Weak of Graphics for rendering.");
+        {
+            let mut graphics_lock = graphics.write().unwrap();
+            graphics_lock.render(handle).await?;
+        }
+        Ok(())
     }
 
     fn get_scene_name(&self) -> &str {

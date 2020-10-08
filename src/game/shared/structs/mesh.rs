@@ -3,7 +3,6 @@ use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
-use crate::game::enums::SamplerResource;
 use crate::game::graphics;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
@@ -27,7 +26,6 @@ where
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
     pub texture: Vec<Arc<ShardedLock<TextureType>>>,
-    pub sampler_resource: Option<SamplerResource>,
     pub is_disposed: bool,
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
     pub command_buffer: Option<CommandType>,
@@ -41,7 +39,6 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
             index_buffer: None,
             is_disposed: false,
             texture: vec![],
-            sampler_resource: None,
             command_pool: None,
             command_buffer: None,
         }
@@ -88,8 +85,6 @@ where
         if !self.is_disposed {
             self.dispose();
             log::info!("Successfully dropped mesh.");
-        } else {
-            log::warn!("Mesh is already dropped.");
         }
     }
 }
