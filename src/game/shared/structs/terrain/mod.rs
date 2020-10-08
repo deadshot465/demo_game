@@ -7,6 +7,7 @@ use crossbeam::sync::ShardedLock;
 use glam::{Vec2, Vec3A, Vec4};
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -37,7 +38,7 @@ where
         grid_z: u32,
         texture_index: usize,
         texture: Arc<ShardedLock<TextureType>>,
-        graphics: Arc<ShardedLock<GraphicsType>>,
+        graphics: Arc<RwLock<GraphicsType>>,
     ) -> Self {
         let model = Self::generate_terrain(texture_index, texture, graphics);
         Terrain {
@@ -51,7 +52,7 @@ where
     fn generate_terrain(
         texture_index: usize,
         texture: Arc<ShardedLock<TextureType>>,
-        graphics: Arc<ShardedLock<GraphicsType>>,
+        graphics: Arc<RwLock<GraphicsType>>,
     ) -> Model<GraphicsType, BufferType, CommandType, TextureType> {
         let count = Self::VERTEX_COUNT * Self::VERTEX_COUNT;
         let mut vertices: Vec<Vertex> = vec![];

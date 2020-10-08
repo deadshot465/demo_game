@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicPtr, Ordering},
     Arc, Weak,
 };
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
@@ -36,7 +37,7 @@ where
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
-    pub graphics: Weak<ShardedLock<GraphicsType>>,
+    pub graphics: Weak<RwLock<GraphicsType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -52,7 +53,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<ShardedLock<GraphicsType>>,
+        graphics: Weak<RwLock<GraphicsType>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -244,9 +245,9 @@ where
 }
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn new(
+    pub async fn new(
         file_name: &'static str,
-        graphics: Weak<ShardedLock<Graphics>>,
+        graphics: Weak<RwLock<Graphics>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -260,7 +261,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let thread_count: usize;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_lock = graphics_clone.read().unwrap();
+                let graphics_lock = graphics_clone.read().await;
                 thread_count = graphics_lock.thread_pool.thread_count;
                 command_pool = graphics_lock.thread_pool.threads[model_index % thread_count]
                     .command_pool
@@ -292,7 +293,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 texture_index_offset,
             );
             {
-                let graphics_lock = graphics_clone.read().unwrap();
+                let graphics_lock = graphics_clone.read().await;
                 for mesh in loaded_model.meshes.iter_mut() {
                     let command_buffer =
                         graphics_lock.create_secondary_command_buffer(command_pool.clone());
@@ -307,7 +308,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model)
     }
 
-    async fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) -> anyhow::Result<()> {
+    async fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);

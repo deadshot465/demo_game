@@ -42,10 +42,10 @@ impl SceneManager {
         }
     }
 
-    pub fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+    pub async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().update(delta_time)?;
+            scene.borrow_mut().update(delta_time).await?;
         }
         Ok(())
     }

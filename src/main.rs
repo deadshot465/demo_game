@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
                 let rt = &mut rt;
                 let handle = &handle;
                 rt.block_on(async {
-                    game.update().unwrap();
+                    game.update().await.unwrap();
                     game.render(handle).await.unwrap();
                 });
                 match event {

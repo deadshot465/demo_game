@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 pub struct Thread {
     pub command_pool: Arc<Mutex<ash::vk::CommandPool>>,
     destroying: Arc<AtomicBool>,
+    work_received: AtomicBool,
     worker: JoinHandle<()>,
     task_queue: Arc<ArrayQueue<Box<dyn FnOnce() + Send + 'static>>>,
     sender: Sender<()>,
@@ -65,21 +66,27 @@ impl Thread {
                 sender,
                 command_pool: Arc::new(Mutex::new(command_pool)),
                 notify,
+                work_received: AtomicBool::new(false),
             }
         }
     }
 
-    pub fn add_job(&mut self, work: impl FnOnce() + Send + 'static) {
+    pub fn add_job(&self, work: impl FnOnce() + Send + 'static) {
         let result = self.task_queue.push(Box::new(work));
         if let Err(e) = result {
             log::error!("Error pushing new job into the queue: {}", e.to_string());
             return;
         }
+        self.work_received.store(true, Ordering::SeqCst);
         self.sender.send(()).unwrap();
     }
 
     pub async fn wait(&self) {
+        if !self.work_received.load(Ordering::SeqCst) {
+            return;
+        }
         self.notify.notified().await;
+        self.work_received.store(false, Ordering::SeqCst);
     }
 
     pub async fn dispose(&mut self) {

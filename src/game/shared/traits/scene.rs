@@ -5,11 +5,11 @@ use glam::{Vec3A, Vec4};
 pub trait Scene {
     fn initialize(&mut self);
     async fn load_content(&mut self) -> anyhow::Result<()>;
-    fn update(&mut self, delta_time: f64) -> anyhow::Result<()>;
+    async fn update(&mut self, delta_time: f64) -> anyhow::Result<()>;
     async fn render(&self, delta_time: f64, handle: &tokio::runtime::Handle) -> anyhow::Result<()>;
     fn get_scene_name(&self) -> &str;
     fn set_scene_name(&mut self, scene_name: &str);
-    fn add_model(
+    async fn add_model(
         &mut self,
         file_name: &'static str,
         position: Vec3A,
@@ -17,7 +17,7 @@ pub trait Scene {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()>;
-    fn add_skinned_model(
+    async fn add_skinned_model(
         &mut self,
         file_name: &'static str,
         position: Vec3A,

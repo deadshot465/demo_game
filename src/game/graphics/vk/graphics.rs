@@ -12,8 +12,9 @@ use std::convert::TryFrom;
 use std::ffi::{c_void, CString};
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
-use std::sync::atomic::AtomicPtr;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Weak};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use vk_mem::*;
 
@@ -49,7 +50,7 @@ pub struct Graphics {
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager:
-        Weak<ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+        Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
@@ -73,7 +74,7 @@ impl Graphics {
         window: &winit::window::Window,
         camera: Arc<ShardedLock<Camera>>,
         resource_manager: Weak<
-            ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>,
+            RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>,
         >,
     ) -> anyhow::Result<Self> {
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
@@ -251,14 +252,18 @@ impl Graphics {
                 depth_stencil: *clear_depth,
             },
         ];
-        let cmd_buffer_begin_info = CommandBufferBeginInfo::builder();
         let extent = self.swapchain.extent;
         let render_area = Rect2D::builder().extent(extent).offset(Offset2D::default());
-        let renderpass_begin_info = RenderPassBeginInfo::builder()
-            .render_pass(self.pipeline.read().unwrap().render_pass)
-            .clear_values(clear_values.as_slice())
-            .render_area(*render_area)
-            .framebuffer(frame_buffer);
+        let mut renderpass_ptr = AtomicPtr::new(std::ptr::null_mut());
+        {
+            let renderpass_begin_info = Box::new(RenderPassBeginInfo::builder()
+                .render_pass(self.pipeline.read().unwrap().render_pass)
+                .clear_values(clear_values.as_slice())
+                .render_area(*render_area)
+                .framebuffer(frame_buffer));
+            renderpass_ptr = AtomicPtr::new(Box::into_raw(renderpass_begin_info));
+        }
+        let renderpass_ptr = Arc::new(renderpass_ptr);
         let viewports = vec![Viewport::builder()
             .width(extent.width as f32)
             .height(extent.height as f32)
@@ -271,26 +276,30 @@ impl Graphics {
             .extent(extent)
             .offset(Offset2D::default())
             .build()];
-        let mut inheritance_info = CommandBufferInheritanceInfo::builder()
-            .framebuffer(frame_buffer)
-            .render_pass(self.pipeline.read().unwrap().render_pass)
-            .build();
-        let ptr = Arc::new(AtomicPtr::from(&mut inheritance_info as *mut CommandBufferInheritanceInfo));
+        let mut inheritance_ptr = AtomicPtr::new(std::ptr::null_mut());
+        {
+            let mut inheritance_info = Box::new(CommandBufferInheritanceInfo::builder()
+                .framebuffer(frame_buffer)
+                .render_pass(self.pipeline.read().unwrap().render_pass)
+                .build());
+            inheritance_ptr = AtomicPtr::new(Box::into_raw(inheritance_info));
+        }
+        let inheritance_ptr = Arc::new(inheritance_ptr);
         unsafe {
             let result = self
                 .logical_device
-                .begin_command_buffer(self.command_buffers[0], &cmd_buffer_begin_info);
+                .begin_command_buffer(self.command_buffers[0], &CommandBufferBeginInfo::builder());
             if let Err(e) = result {
                 log::error!("Error beginning command buffer: {}", e.to_string());
             }
             self.logical_device.cmd_begin_render_pass(
                 self.command_buffers[0],
-                &renderpass_begin_info,
+                &*renderpass_ptr.load(Ordering::SeqCst),
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
 
-            let mut command_buffers =
-                self.update_secondary_command_buffers(ptr, viewports[0], scissors[0], handle)
+            let command_buffers =
+                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0], handle)
                 .await?;
             self.logical_device
                 .cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
@@ -307,7 +316,7 @@ impl Graphics {
     }
 
     pub async fn create_buffer<VertexType: 'static + Send>(
-        graphics: Arc<ShardedLock<Self>>,
+        graphics: Arc<RwLock<Self>>,
         vertices: Vec<VertexType>,
         indices: Vec<u32>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
@@ -315,7 +324,7 @@ impl Graphics {
         let device: Arc<ash::Device>;
         let allocator: Arc<ShardedLock<vk_mem::Allocator>>;
         {
-            let lock = graphics.read().unwrap();
+            let lock = graphics.read().await;
             device = lock.logical_device.clone();
             allocator = lock.allocator.clone();
             drop(lock);
@@ -387,7 +396,7 @@ impl Graphics {
 
         let (vertex_staging, vertex_buffer) = vertices_handle.await?;
         let (index_staging, index_buffer) = indices_handle.await?;
-        let graphics_lock = graphics.read().unwrap();
+        let graphics_lock = graphics.read().await;
         let pool_lock = command_pool.lock();
         vertex_buffer.copy_buffer(
             &vertex_staging,
@@ -414,7 +423,7 @@ impl Graphics {
 
     pub async fn create_gltf_textures(
         images: Vec<gltf::image::Data>,
-        graphics: Arc<ShardedLock<Graphics>>,
+        graphics: Arc<RwLock<Self>>,
         command_pool: Arc<Mutex<CommandPool>>,
     ) -> anyhow::Result<(Vec<Arc<ShardedLock<super::Image>>>, usize)> {
         let mut textures = vec![];
@@ -448,21 +457,21 @@ impl Graphics {
                     g,
                     pool,
                     SamplerAddressMode::REPEAT,
-                )
+                ).await
             });
             texture_handles.push(texture);
         }
         for handle in texture_handles.into_iter() {
             textures.push(handle.await??);
         }
-        let graphics_lock = graphics.read().unwrap();
+        let graphics_lock = graphics.read().await;
         let resource_manager = graphics_lock.resource_manager.clone();
         drop(graphics_lock);
         let texture_index_offset: usize;
         match resource_manager.upgrade() {
             Some(rm) => {
-                texture_index_offset = rm.read().unwrap().get_texture_count();
-                let mut rm_lock = rm.write().unwrap();
+                texture_index_offset = rm.read().await.get_texture_count();
+                let mut rm_lock = rm.write().await;
                 let textures_ptrs = textures
                     .into_iter()
                     .map(|img| rm_lock.add_texture(img))
@@ -478,7 +487,7 @@ impl Graphics {
 
     pub async fn create_image_from_file(
         file_name: &str,
-        graphics: Arc<ShardedLock<Graphics>>,
+        graphics: Arc<RwLock<Graphics>>,
         command_pool: Arc<Mutex<CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<Arc<ShardedLock<super::Image>>> {
@@ -520,13 +529,13 @@ impl Graphics {
                 graphics_clone,
                 command_pool_clone,
                 sampler_address_mode,
-            )
+            ).await
         })
         .await??;
-        let resource_manager = graphics.read().unwrap().resource_manager.clone();
+        let resource_manager = graphics.read().await.resource_manager.clone();
         match resource_manager.upgrade() {
             Some(rm) => {
-                let mut rm_lock = rm.write().unwrap();
+                let mut rm_lock = rm.write().await;
                 let image = rm_lock.add_texture(texture);
                 Ok(image)
             }
@@ -554,10 +563,10 @@ impl Graphics {
     }
 
     pub async fn initialize(&mut self) -> anyhow::Result<()> {
-        self.create_descriptor_set_layout()?;
+        self.create_descriptor_set_layout().await?;
         //self.create_dynamic_model_buffers()?;
-        self.create_primary_ssbo()?;
-        self.allocate_descriptor_set()?;
+        self.create_primary_ssbo().await?;
+        self.allocate_descriptor_set().await?;
         let color_format: Format = self.swapchain.format.format;
         let depth_format = self.depth_format;
         let sample_count = self.sample_count;
@@ -636,9 +645,9 @@ impl Graphics {
         }
     }
 
-    pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let resource_arc = self.resource_manager.upgrade().unwrap();
-        let mut resource_lock = resource_arc.write().unwrap();
+        let mut resource_lock = resource_arc.write().await;
         for model in resource_lock.models.iter_mut() {
             model.lock().update(delta_time);
         }
@@ -659,7 +668,7 @@ impl Graphics {
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         {
-            let resource_lock = resource_manager.read().unwrap();
+            let resource_lock = resource_manager.read().await;
             let thread_count = self.thread_pool.thread_count;
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
@@ -718,7 +727,7 @@ impl Graphics {
             }
         }
         self.thread_pool.wait().await;
-        let resource_lock = resource_manager.read().unwrap();
+        let resource_lock = resource_manager.read().await;
         let mut model_command_buffers = resource_lock
             .models
             .iter()
@@ -791,11 +800,11 @@ impl Graphics {
         ManuallyDrop::drop(&mut self.swapchain);
     }
 
-    fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
+    async fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade().expect(
             "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
         );
-        let resource_lock = resource_manager.read().unwrap();
+        let resource_lock = resource_manager.read().await;
         let total_texture_count = resource_lock.get_texture_count();
         drop(resource_lock);
         drop(resource_manager);
@@ -964,12 +973,12 @@ impl Graphics {
         Ok(())
     }*/
 
-    fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
+    async fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
-        let resource_lock = resource_manager.read().unwrap();
+        let resource_lock = resource_manager.read().await;
         let is_models_empty = resource_lock.models.is_empty() &&
             resource_lock.skinned_models.is_empty() &&
             resource_lock.terrains.is_empty();
@@ -1008,12 +1017,12 @@ impl Graphics {
         Ok(())
     }
 
-    fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
+    async fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for allocating descriptor set.");
-        let resource_lock = resource_manager.read().unwrap();
+        let resource_lock = resource_manager.read().await;
         let texture_count = resource_lock.get_texture_count();
         let mut ssbo_count = 1;
         resource_lock
@@ -1272,17 +1281,17 @@ impl Graphics {
         (fences, acquired_semaphores, complete_semaphores)
     }
 
-    fn create_image_from_raw(
+    async fn create_image_from_raw(
         image_data: Vec<u8>,
         buffer_size: DeviceSize,
         width: u32,
         height: u32,
         format: ImageFormat,
-        graphics: Arc<ShardedLock<Self>>,
+        graphics: Arc<RwLock<Self>>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<super::Image> {
-        let lock = graphics.read().unwrap();
+        let lock = graphics.read().await;
         let device = lock.logical_device.clone();
         let allocator = lock.allocator.clone();
         let image_format = match format {
