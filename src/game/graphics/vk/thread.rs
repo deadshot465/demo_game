@@ -41,7 +41,7 @@ impl Thread {
             Thread {
                 destroying,
                 worker: tokio::spawn(async move {
-                    let mut s1 = s1;
+                    let s1 = s1;
                     let mut receiver = receiver;
                     let d1 = d1;
                     let notify = n1;

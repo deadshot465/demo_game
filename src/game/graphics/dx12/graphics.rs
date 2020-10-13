@@ -2,8 +2,9 @@ use crate::game::graphics::dx12::{CommandQueue, DescriptorHeap, Pipeline, Resour
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::util::{get_nullptr, log_error};
 use crate::game::{Camera, ResourceManager};
-use crossbeam::sync::ShardedLock;
+use std::cell::RefCell;
 use std::mem::ManuallyDrop;
+use std::rc::Rc;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use winapi::ctypes::c_void;
@@ -35,7 +36,7 @@ type ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType> =
 
 #[allow(dead_code)]
 pub struct Graphics {
-    camera: Arc<ShardedLock<Camera>>,
+    camera: Rc<RefCell<Camera>>,
     resource_manager:
         ResourceManagerHandle<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>,
     debug: ComPtr<ID3D12Debug2>,
@@ -52,7 +53,7 @@ pub struct Graphics {
 impl Graphics {
     pub unsafe fn new(
         _window: &winit::window::Window,
-        camera: Arc<ShardedLock<Camera>>,
+        camera: Rc<RefCell<Camera>>,
         resource_manager: ResourceManagerHandle<
             Graphics,
             Resource,

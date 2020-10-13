@@ -1,6 +1,5 @@
 use ash::vk::{CommandBuffer, SamplerAddressMode};
 use async_trait::async_trait;
-use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use std::sync::Weak;
 use tokio::sync::RwLock;
@@ -55,7 +54,7 @@ where
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    pub async fn generate_terrain(&mut self) -> anyhow::Result<()> {
+    pub async fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
         let graphics = self
             .graphics
             .upgrade()
@@ -84,8 +83,8 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             texture_index = resource_lock.get_texture_count() - 1;
         }
         let mut terrain = Terrain::new(
-            0,
-            0,
+            grid_x,
+            grid_z,
             texture_index,
             image,
             graphics.clone(),
@@ -141,31 +140,32 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(90.0, 0.0, 0.0),
             Vec4::new(0.0, 0.0, 1.0, 1.0),
-        )?;*/
+        ).await?;*/
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
         Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
-        /*self.add_model(
+        self.add_model(
             "./models/mr.incredible/Mr.Incredible.glb",
-            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(0.0, 0.0, -400.0),
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
+        ).await?;
         self.add_model(
             "./models/bison/output.gltf",
-            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(0.0, 0.0, -400.0),
             Vec3A::new(400.0, 400.0, 400.0),
             Vec3A::new(0.0, 90.0, 90.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
+        ).await?;
         self.add_skinned_model(
             "./models/cesiumMan/CesiumMan.glb",
-            Vec3A::new(-1.5, 0.0, -1.5),
+            Vec3A::new(-3.5, 0.0, -400.0),
             Vec3A::new(2.0, 2.0, 2.0),
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;*/
-        self.generate_terrain().await?;
+        ).await?;
+        self.generate_terrain(0, -1).await?;
+        self.generate_terrain(-1, -1).await?;
         Ok(())
     }
 
@@ -176,12 +176,12 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    async fn render(&self, _delta_time: f64, handle: &tokio::runtime::Handle) -> anyhow::Result<()> {
+    async fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
         let graphics = self.graphics.upgrade()
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let mut graphics_lock = graphics.write().await;
-            graphics_lock.render(handle).await?;
+            graphics_lock.render().await?;
         }
         Ok(())
     }

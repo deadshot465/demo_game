@@ -8,10 +8,11 @@ use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec3A, Vec4};
 use image::GenericImageView;
 use parking_lot::Mutex;
+use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::ffi::{c_void, CString};
 use std::mem::ManuallyDrop;
-use std::ops::Deref;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
@@ -60,7 +61,7 @@ pub struct Graphics {
     depth_image: ManuallyDrop<super::Image>,
     msaa_image: ManuallyDrop<super::Image>,
     uniform_buffers: ManuallyDrop<UniformBuffers>,
-    camera: Arc<ShardedLock<Camera>>,
+    camera: Rc<RefCell<Camera>>,
     command_buffers: Vec<CommandBuffer>,
     fences: Vec<Fence>,
     acquired_semaphores: Vec<Semaphore>,
@@ -72,7 +73,7 @@ pub struct Graphics {
 impl Graphics {
     pub fn new(
         window: &winit::window::Window,
-        camera: Arc<ShardedLock<Camera>>,
+        camera: Rc<RefCell<Camera>>,
         resource_manager: Weak<
             RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>,
         >,
@@ -160,7 +161,7 @@ impl Graphics {
         );
 
         let view_projection = Self::create_view_projection(
-            camera.read().unwrap().deref(),
+            &*camera.borrow(),
             Arc::downgrade(&device),
             Arc::downgrade(&allocator),
         )?;
@@ -241,7 +242,7 @@ impl Graphics {
         })
     }
 
-    pub async fn begin_draw(&mut self, frame_buffer: Framebuffer, handle: &tokio::runtime::Handle) -> anyhow::Result<()> {
+    pub async fn begin_draw(&mut self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: [1.0, 1.0, 0.0, 1.0],
         };
@@ -278,7 +279,7 @@ impl Graphics {
             .build()];
         let mut inheritance_ptr = AtomicPtr::new(std::ptr::null_mut());
         {
-            let mut inheritance_info = Box::new(CommandBufferInheritanceInfo::builder()
+            let inheritance_info = Box::new(CommandBufferInheritanceInfo::builder()
                 .framebuffer(frame_buffer)
                 .render_pass(self.pipeline.read().unwrap().render_pass)
                 .build());
@@ -299,7 +300,7 @@ impl Graphics {
             );
 
             let command_buffers =
-                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0], handle)
+                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])
                 .await?;
             self.logical_device
                 .cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
@@ -591,7 +592,7 @@ impl Graphics {
         Ok(())
     }
 
-    pub async fn render(&mut self, handle: &tokio::runtime::Handle) -> anyhow::Result<u32> {
+    pub async fn render(&mut self) -> anyhow::Result<u32> {
         unsafe {
             let swapchain_loader = self.swapchain.swapchain_loader.clone();
             let result = swapchain_loader.acquire_next_image(
@@ -607,7 +608,7 @@ impl Graphics {
                 ));
             }
             let (image_index, _is_suboptimal) = result.unwrap();
-            self.begin_draw(self.frame_buffers[image_index as usize], handle).await?;
+            self.begin_draw(self.frame_buffers[image_index as usize]).await?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
@@ -656,6 +657,15 @@ impl Graphics {
         }
         drop(resource_lock);
         //self.update_dynamic_buffer(delta_time)?;
+
+        let vp_size = std::mem::size_of::<ViewProjection>();
+        let camera = self.camera.borrow();
+        let view_projection =
+            ViewProjection::new(camera.get_view_matrix(), camera.get_projection_matrix());
+        let mapped = self.uniform_buffers.view_projection.mapped_memory;
+        unsafe {
+            std::ptr::copy_nonoverlapping(&view_projection as *const _ as *const c_void, mapped, vp_size);
+        }
         Ok(())
     }
 
@@ -664,7 +674,6 @@ impl Graphics {
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
         viewport: Viewport,
         scissor: Rect2D,
-        handle: &tokio::runtime::Handle,
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         {
@@ -993,6 +1002,12 @@ impl Graphics {
         for model in resource_lock.skinned_models.iter() {
             let model_lock = model.lock();
             world_matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        for terrain in resource_lock.terrains.iter() {
+            let terrain_lock = terrain.lock();
+            let world_matrix = terrain_lock.model.get_world_matrix();
+            println!("{:?}", world_matrix);
+            world_matrices[terrain_lock.model.model_index] = world_matrix;
         }
         let buffer_size = std::mem::size_of::<Mat4>() * world_matrices.len();
         drop(resource_lock);

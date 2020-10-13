@@ -34,16 +34,18 @@ where
     const VERTEX_COUNT: u32 = 128;
 
     pub fn new(
-        grid_x: u32,
-        grid_z: u32,
+        grid_x: i32,
+        grid_z: i32,
         texture_index: usize,
         texture: Arc<ShardedLock<TextureType>>,
         graphics: Arc<RwLock<GraphicsType>>,
     ) -> Self {
-        let model = Self::generate_terrain(texture_index, texture, graphics);
+        let x = grid_x as f32 * Self::SIZE;
+        let z = grid_z as f32 * Self::SIZE;
+        let model = Self::generate_terrain(texture_index, texture, graphics, Vec3A::new(x, 0.0, z));
         Terrain {
-            x: grid_x as f32 * Self::SIZE,
-            z: grid_z as f32 * Self::SIZE,
+            x,
+            z,
             model,
             is_disposed: false,
         }
@@ -53,6 +55,7 @@ where
         texture_index: usize,
         texture: Arc<ShardedLock<TextureType>>,
         graphics: Arc<RwLock<GraphicsType>>,
+        position: Vec3A,
     ) -> Model<GraphicsType, BufferType, CommandType, TextureType> {
         let count = Self::VERTEX_COUNT * Self::VERTEX_COUNT;
         let mut vertices: Vec<Vertex> = vec![];
@@ -114,8 +117,9 @@ where
             command_pool: None,
             command_buffer: None,
         };
+        println!("{:?}", glam::Vec3::from(position));
         let model = Model {
-            position: Vec3A::zero(),
+            position,
             scale: Vec3A::one(),
             rotation: Vec3A::zero(),
             color: Vec4::one(),

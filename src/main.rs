@@ -4,12 +4,14 @@ use demo_game_rs::game::graphics::vk as VK;
 use demo_game_rs::game::Game;
 use env_logger::Builder;
 use log::LevelFilter;
+use std::time;
 #[cfg(target_os = "windows")]
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use winit::event::{Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(target_os = "windows")]
 use wio::com::ComPtr;
+use demo_game_rs::game::shared::camera::CameraType;
 
 fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
@@ -32,7 +34,10 @@ fn main() -> anyhow::Result<()> {
     log::info!("Using API: {}", &api);
     let event_loop = EventLoop::new();
     let mut rt = tokio::runtime::Runtime::new()?;
-    let handle = rt.handle().clone();
+    let mut last_frame_time = time::Instant::now();
+    let mut current_time = time::Instant::now();
+    let mut frame_count = 0_u32;
+    let mut delta_time = 0.0_f64;
     match api.as_str() {
         "VULKAN" => {
             let mut game = rt.block_on(async {
@@ -51,15 +56,20 @@ fn main() -> anyhow::Result<()> {
             });
             log::info!("Game content loaded.");
             event_loop.run(move |event, _target, control_flow| {
-                //*control_flow = ControlFlow::Poll;
                 let game = &mut game;
                 let rt = &mut rt;
-                let handle = &handle;
-                rt.block_on(async {
-                    game.update().await.unwrap();
-                    game.render(handle).await.unwrap();
-                });
                 match event {
+                    Event::NewEvents(_) => {
+                        delta_time = current_time.elapsed().as_secs_f64();
+                        current_time = time::Instant::now();
+                        frame_count += 1;
+                        let elapsed = last_frame_time.elapsed().as_secs_f64();
+                        if elapsed > 1.0 {
+                            game.window.read().unwrap().set_title(&format!("Demo Engine / FPS: {}", frame_count));
+                            frame_count = 0;
+                            last_frame_time = time::Instant::now();
+                        }
+                    },
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
                             *control_flow = ControlFlow::Exit;
@@ -73,9 +83,18 @@ fn main() -> anyhow::Result<()> {
                             ..
                         } => match virtual_key_code {
                             VirtualKeyCode::Escape => *control_flow = ControlFlow::Exit,
-                            _ => (),
+                            _ => {
+                                let mut camera = game.camera.borrow_mut();
+                                camera.update(CameraType::Watch(glam::Vec3A::zero()), virtual_key_code);
+                            }
                         },
                         _ => (),
+                    },
+                    Event::MainEventsCleared => {
+                        rt.block_on(async {
+                            game.update(delta_time).await.unwrap();
+                            game.render(delta_time).await.unwrap();
+                        });
                     },
                     _ => (),
                 }

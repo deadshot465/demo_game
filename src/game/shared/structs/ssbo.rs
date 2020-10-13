@@ -2,7 +2,6 @@ use ash::vk::{
     BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorSetAllocateInfo,
     DescriptorType, MemoryPropertyFlags, WriteDescriptorSet,
 };
-use crossbeam::sync::ShardedLock;
 use glam::Mat4;
 use std::sync::Arc;
 use tokio::sync::RwLock;

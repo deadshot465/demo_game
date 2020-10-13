@@ -50,10 +50,10 @@ impl SceneManager {
         Ok(())
     }
 
-    pub async fn render(&self, delta_time: f64, handle: &tokio::runtime::Handle) -> anyhow::Result<()> {
+    pub async fn render(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow().render(delta_time, handle).await?;
+            scene.borrow().render(delta_time).await?;
         }
         Ok(())
     }
