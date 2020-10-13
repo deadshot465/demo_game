@@ -46,13 +46,13 @@ impl Thread {
                     let d1 = d1;
                     let notify = n1;
                     'outer: loop {
-                        let mut work: Result<Box<dyn FnOnce() + Send>, crossbeam::queue::PopError>;
+                        let mut work: Option<Box<dyn FnOnce() + Send>>;
                         while receiver.recv().await.is_ok() {
                             if d1.load(Ordering::SeqCst) {
                                 break 'outer;
                             }
                             work = queue.pop();
-                            if let Ok(job) = work {
+                            if let Some(job) = work {
                                 job();
                                 s1.send(()).unwrap();
                             } else {
@@ -73,8 +73,8 @@ impl Thread {
 
     pub fn add_job(&self, work: impl FnOnce() + Send + 'static) {
         let result = self.task_queue.push(Box::new(work));
-        if let Err(e) = result {
-            log::error!("Error pushing new job into the queue: {}", e.to_string());
+        if let Err(_) = result {
+            log::error!("Error pushing new job into the queue: Queue is full.");
             return;
         }
         self.work_received.store(true, Ordering::SeqCst);
