@@ -712,6 +712,7 @@ impl Graphics {
                         device_clone,
                         pipeline_clone,
                         descriptor_set,
+                        None,
                     );
                 });
             }
@@ -754,6 +755,7 @@ impl Graphics {
                         device_clone,
                         pipeline_clone,
                         descriptor_set,
+                        Some(ShaderType::Terrain),
                     );
                 });
             }

@@ -359,6 +359,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         device: Arc<Device>,
         pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
         descriptor_set: DescriptorSet,
+        textured_shader_type: Option<ShaderType>,
     ) {
         let mut push_constant = push_constant;
         push_constant.object_color = self.color;
@@ -367,7 +368,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let inheritance = inheritance_info.load(Ordering::SeqCst).as_ref().unwrap();
             for mesh in self.meshes.iter() {
                 let shader_type = if !mesh.texture.is_empty() {
-                    ShaderType::BasicShader
+                    textured_shader_type.unwrap_or(ShaderType::BasicShader)
                 } else {
                     ShaderType::BasicShaderWithoutTexture
                 };
