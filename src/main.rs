@@ -1,6 +1,7 @@
 #[cfg(target_os = "windows")]
 use demo_game_rs::game::graphics::dx12 as DX12;
 use demo_game_rs::game::graphics::vk as VK;
+use demo_game_rs::game::shared::camera::CameraType;
 use demo_game_rs::game::Game;
 use env_logger::Builder;
 use log::LevelFilter;
@@ -11,7 +12,6 @@ use winit::event::{Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(target_os = "windows")]
 use wio::com::ComPtr;
-use demo_game_rs::game::shared::camera::CameraType;
 
 fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
@@ -50,7 +50,9 @@ fn main() -> anyhow::Result<()> {
                     )
                     .unwrap();
                 if game.initialize() {
-                    game.load_content().await.expect("Failed to load game content.");
+                    game.load_content()
+                        .await
+                        .expect("Failed to load game content.");
                 }
                 game
             });
@@ -65,11 +67,14 @@ fn main() -> anyhow::Result<()> {
                         frame_count += 1;
                         let elapsed = last_frame_time.elapsed().as_secs_f64();
                         if elapsed > 1.0 {
-                            game.window.read().unwrap().set_title(&format!("Demo Engine / FPS: {}", frame_count));
+                            game.window
+                                .read()
+                                .unwrap()
+                                .set_title(&format!("Demo Engine / FPS: {}", frame_count));
                             frame_count = 0;
                             last_frame_time = time::Instant::now();
                         }
-                    },
+                    }
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
                             *control_flow = ControlFlow::Exit;
@@ -85,7 +90,10 @@ fn main() -> anyhow::Result<()> {
                             VirtualKeyCode::Escape => *control_flow = ControlFlow::Exit,
                             _ => {
                                 let mut camera = game.camera.borrow_mut();
-                                camera.update(CameraType::Watch(glam::Vec3A::zero()), virtual_key_code);
+                                camera.update(
+                                    CameraType::Watch(glam::Vec3A::zero()),
+                                    virtual_key_code,
+                                );
                             }
                         },
                         _ => (),
@@ -95,7 +103,7 @@ fn main() -> anyhow::Result<()> {
                             game.update(delta_time).await.unwrap();
                             game.render(delta_time).await.unwrap();
                         });
-                    },
+                    }
                     _ => (),
                 }
             });

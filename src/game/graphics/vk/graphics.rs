@@ -31,7 +31,6 @@ use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
 use crate::game::{Camera, ResourceManager};
 
-#[allow(dead_code)]
 pub struct Graphics {
     pub dynamic_objects: DynamicBufferObject,
     pub logical_device: Arc<Device>,
@@ -257,11 +256,13 @@ impl Graphics {
         let render_area = Rect2D::builder().extent(extent).offset(Offset2D::default());
         let mut renderpass_ptr = AtomicPtr::new(std::ptr::null_mut());
         {
-            let renderpass_begin_info = Box::new(RenderPassBeginInfo::builder()
-                .render_pass(self.pipeline.read().unwrap().render_pass)
-                .clear_values(clear_values.as_slice())
-                .render_area(*render_area)
-                .framebuffer(frame_buffer));
+            let renderpass_begin_info = Box::new(
+                RenderPassBeginInfo::builder()
+                    .render_pass(self.pipeline.read().unwrap().render_pass)
+                    .clear_values(clear_values.as_slice())
+                    .render_area(*render_area)
+                    .framebuffer(frame_buffer),
+            );
             renderpass_ptr = AtomicPtr::new(Box::into_raw(renderpass_begin_info));
         }
         let renderpass_ptr = Arc::new(renderpass_ptr);
@@ -279,10 +280,12 @@ impl Graphics {
             .build()];
         let mut inheritance_ptr = AtomicPtr::new(std::ptr::null_mut());
         {
-            let inheritance_info = Box::new(CommandBufferInheritanceInfo::builder()
-                .framebuffer(frame_buffer)
-                .render_pass(self.pipeline.read().unwrap().render_pass)
-                .build());
+            let inheritance_info = Box::new(
+                CommandBufferInheritanceInfo::builder()
+                    .framebuffer(frame_buffer)
+                    .render_pass(self.pipeline.read().unwrap().render_pass)
+                    .build(),
+            );
             inheritance_ptr = AtomicPtr::new(Box::into_raw(inheritance_info));
         }
         let inheritance_ptr = Arc::new(inheritance_ptr);
@@ -299,8 +302,8 @@ impl Graphics {
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
 
-            let command_buffers =
-                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])
+            let command_buffers = self
+                .update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])
                 .await?;
             self.logical_device
                 .cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
@@ -458,7 +461,8 @@ impl Graphics {
                     g,
                     pool,
                     SamplerAddressMode::REPEAT,
-                ).await
+                )
+                .await
             });
             texture_handles.push(texture);
         }
@@ -503,12 +507,12 @@ impl Graphics {
                     image.height(),
                     buffer_size as usize,
                 )
-            },
+            }
             _ => {
                 let bytes = image.to_bytes();
                 buffer_size = bytes.len() as u32;
                 bytes
-            },
+            }
         };
         let width = image.width();
         let height = image.height();
@@ -530,7 +534,8 @@ impl Graphics {
                 graphics_clone,
                 command_pool_clone,
                 sampler_address_mode,
-            ).await
+            )
+            .await
         })
         .await??;
         let resource_manager = graphics.read().await.resource_manager.clone();
@@ -571,13 +576,16 @@ impl Graphics {
         let color_format: Format = self.swapchain.format.format;
         let depth_format = self.depth_format;
         let sample_count = self.sample_count;
-        self.pipeline.write().unwrap()
+        self.pipeline
+            .write()
+            .unwrap()
             .create_renderpass(color_format, depth_format, sample_count);
         self.create_graphics_pipeline(ShaderType::BasicShader).await;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)
             .await;
         self.create_graphics_pipeline(ShaderType::AnimatedModel)
             .await;
+        self.create_graphics_pipeline(ShaderType::Terrain).await;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
         self.frame_buffers = Self::create_frame_buffers(
@@ -608,7 +616,8 @@ impl Graphics {
                 ));
             }
             let (image_index, _is_suboptimal) = result.unwrap();
-            self.begin_draw(self.frame_buffers[image_index as usize]).await?;
+            self.begin_draw(self.frame_buffers[image_index as usize])
+                .await?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
@@ -664,7 +673,11 @@ impl Graphics {
             ViewProjection::new(camera.get_view_matrix(), camera.get_projection_matrix());
         let mapped = self.uniform_buffers.view_projection.mapped_memory;
         unsafe {
-            std::ptr::copy_nonoverlapping(&view_projection as *const _ as *const c_void, mapped, vp_size);
+            std::ptr::copy_nonoverlapping(
+                &view_projection as *const _ as *const c_void,
+                mapped,
+                vp_size,
+            );
         }
         Ok(())
     }
@@ -698,7 +711,7 @@ impl Graphics {
                         scissor,
                         device_clone,
                         pipeline_clone,
-                        descriptor_set
+                        descriptor_set,
                     );
                 });
             }
@@ -713,8 +726,13 @@ impl Graphics {
                     let model_lock = model_clone.lock();
                     let ptr = ptr_clone;
                     model_lock.render(
-                        ptr, push_constant, viewport, scissor,
-                        device_clone, pipeline_clone, descriptor_set
+                        ptr,
+                        push_constant,
+                        viewport,
+                        scissor,
+                        device_clone,
+                        pipeline_clone,
+                        descriptor_set,
                     );
                 });
             }
@@ -729,8 +747,13 @@ impl Graphics {
                     let terrain_lock = terrain_clone.lock();
                     let ptr = ptr_clone;
                     terrain_lock.model.render(
-                        ptr, push_constant, viewport, scissor,
-                        device_clone, pipeline_clone, descriptor_set
+                        ptr,
+                        push_constant,
+                        viewport,
+                        scissor,
+                        device_clone,
+                        pipeline_clone,
+                        descriptor_set,
                     );
                 });
             }
@@ -797,9 +820,7 @@ impl Graphics {
         }
         self.logical_device
             .free_command_buffers(self.command_pool, self.command_buffers.as_slice());
-        let pipeline = &mut *self.pipeline
-            .write()
-            .unwrap();
+        let pipeline = &mut *self.pipeline.write().unwrap();
         ManuallyDrop::drop(pipeline);
         self.logical_device
             .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
@@ -988,9 +1009,9 @@ impl Graphics {
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
         let resource_lock = resource_manager.read().await;
-        let is_models_empty = resource_lock.models.is_empty() &&
-            resource_lock.skinned_models.is_empty() &&
-            resource_lock.terrains.is_empty();
+        let is_models_empty = resource_lock.models.is_empty()
+            && resource_lock.skinned_models.is_empty()
+            && resource_lock.terrains.is_empty();
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
@@ -1006,7 +1027,6 @@ impl Graphics {
         for terrain in resource_lock.terrains.iter() {
             let terrain_lock = terrain.lock();
             let world_matrix = terrain_lock.model.get_world_matrix();
-            println!("{:?}", world_matrix);
             world_matrices[terrain_lock.model.model_index] = world_matrix;
         }
         let buffer_size = std::mem::size_of::<Mat4>() * world_matrices.len();
@@ -1180,6 +1200,7 @@ impl Graphics {
                     self.logical_device.clone(),
                     match shader_type {
                         ShaderType::AnimatedModel => "./shaders/basicShader_animated.spv",
+                        ShaderType::Terrain => "./shaders/terrain.spv",
                         _ => "./shaders/vert.spv",
                     },
                     ShaderStageFlags::VERTEX,
@@ -1204,7 +1225,9 @@ impl Graphics {
                 }
                 _ => (),
             }
-            self.pipeline.write().unwrap()
+            self.pipeline
+                .write()
+                .unwrap()
                 .create_graphic_pipelines(
                     descriptor_set_layout.as_slice(),
                     self.sample_count,

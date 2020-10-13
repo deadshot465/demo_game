@@ -1,5 +1,8 @@
 use ash::version::DeviceV1_0;
-use ash::vk::{CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags, CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags, DescriptorSet};
+use ash::vk::{
+    CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
+    CommandPool, DescriptorSet, IndexType, PipelineBindPoint, ShaderStageFlags,
+};
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::{Node, Scene};
@@ -19,8 +22,8 @@ use crate::game::shared::structs::{Mesh, Primitive, PushConstant, Vertex};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
-use downcast_rs::__std::collections::HashMap;
 use ash::Device;
+use downcast_rs::__std::collections::HashMap;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -375,8 +378,8 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                     .build();
                 let command_buffer = mesh.command_buffer.unwrap();
-                let result = device
-                    .begin_command_buffer(command_buffer, &command_buffer_begin_info);
+                let result =
+                    device.begin_command_buffer(command_buffer, &command_buffer_begin_info);
                 if let Err(e) = result {
                     log::error!(
                         "Error beginning secondary command buffer: {}",
@@ -385,11 +388,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 }
                 device.cmd_set_viewport(command_buffer, 0, &[viewport]);
                 device.cmd_set_scissor(command_buffer, 0, &[scissor]);
-                device.cmd_bind_pipeline(
-                    command_buffer,
-                    PipelineBindPoint::GRAPHICS,
-                    pipeline,
-                );
+                device.cmd_bind_pipeline(command_buffer, PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_bind_descriptor_sets(
                     command_buffer,
                     PipelineBindPoint::GRAPHICS,
@@ -413,12 +412,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                         0,
                         &casted[0..],
                     );
-                    device.cmd_bind_vertex_buffers(
-                        command_buffer,
-                        0,
-                        &vertex_buffers[0..],
-                        &[0],
-                    );
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers[0..], &[0]);
                     device.cmd_bind_index_buffer(
                         command_buffer,
                         index_buffer,
@@ -436,8 +430,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     vertex_offset_index += primitive.vertices.len() as i32;
                     index_offset_index += primitive.indices.len() as u32;
                 }
-                let result = device
-                    .end_command_buffer(command_buffer);
+                let result = device.end_command_buffer(command_buffer);
                 if let Err(e) = result {
                     log::error!("Error ending command buffer: {}", e.to_string());
                 }

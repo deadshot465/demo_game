@@ -1,4 +1,7 @@
-use ash::vk::{CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags, CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags, DescriptorSet};
+use ash::vk::{
+    CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
+    CommandPool, DescriptorSet, IndexType, PipelineBindPoint, ShaderStageFlags,
+};
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::animation::util::ReadOutputs;
@@ -20,8 +23,8 @@ use crate::game::structs::{Joint, PushConstant};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
 use ash::version::DeviceV1_0;
-use std::sync::atomic::{AtomicPtr, Ordering};
 use ash::Device;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -65,7 +68,7 @@ where
         let meshes = Self::process_model(&document, &buffers, images, texture_index_offset);
         let animations = Self::process_animation(&document, &buffers);
         for (name, _) in animations.iter() {
-            println!("{}", &name);
+            log::info!("Animation: {}", &name);
         }
         SkinnedModel {
             position,
@@ -192,7 +195,6 @@ where
                 .read_indices()
                 .unwrap()
                 .into_u32()
-                .map(|x| x)
                 .collect::<Vec<_>>();
             let positions = reader.read_positions();
             let normals = reader.read_normals();
@@ -585,10 +587,12 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         descriptor_set: DescriptorSet,
     ) {
         let pipeline_layout = pipeline
-            .read().unwrap()
+            .read()
+            .unwrap()
             .get_pipeline_layout(ShaderType::AnimatedModel);
         let pipeline = pipeline
-            .read().unwrap()
+            .read()
+            .unwrap()
             .get_pipeline(ShaderType::AnimatedModel, 0);
         let mut push_constant = push_constant;
         push_constant.object_color = self.color;
@@ -602,23 +606,17 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                         .build();
                     let command_buffer = primitive.command_buffer.unwrap();
-                    let result = device
-                        .begin_command_buffer(command_buffer, &command_buffer_begin_info);
+                    let result =
+                        device.begin_command_buffer(command_buffer, &command_buffer_begin_info);
                     if let Err(e) = result {
                         log::error!(
                             "Error beginning secondary command buffer: {}",
                             e.to_string()
                         );
                     }
-                    device
-                        .cmd_set_viewport(command_buffer, 0, &[viewport]);
-                    device
-                        .cmd_set_scissor(command_buffer, 0, &[scissor]);
-                    device.cmd_bind_pipeline(
-                        command_buffer,
-                        PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
+                    device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                    device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                    device.cmd_bind_pipeline(command_buffer, PipelineBindPoint::GRAPHICS, pipeline);
                     device.cmd_bind_descriptor_sets(
                         command_buffer,
                         PipelineBindPoint::GRAPHICS,
@@ -648,12 +646,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                             &[],
                         );
                     }
-                    device.cmd_bind_vertex_buffers(
-                        command_buffer,
-                        0,
-                        &vertex_buffers[0..],
-                        &[0],
-                    );
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers[0..], &[0]);
                     device.cmd_bind_index_buffer(
                         command_buffer,
                         index_buffer,
@@ -668,8 +661,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         0,
                         0,
                     );
-                    let result = device
-                        .end_command_buffer(command_buffer);
+                    let result = device.end_command_buffer(command_buffer);
                     if let Err(e) = result {
                         log::error!("Error ending command buffer: {}", e.to_string());
                     }
@@ -690,11 +682,12 @@ where
 {
     fn from(model: &SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>) -> Self {
         loop {
-            if model.skinned_meshes.iter().all(|mesh| {
+            let is_buffer_completed = model.skinned_meshes.iter().all(|mesh| {
                 mesh.primitives.iter().all(|primitive| {
                     primitive.vertex_buffer.is_some() && primitive.index_buffer.is_some()
                 })
-            }) {
+            });
+            if is_buffer_completed {
                 break;
             }
         }

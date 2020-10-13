@@ -62,12 +62,11 @@ impl Camera {
     }
 
     pub fn get_view_matrix(&self) -> Mat4 {
-        let matrix = Mat4::look_at_rh(
+        Mat4::look_at_rh(
             Vec3::from(self.position),
             Vec3::from(self.target),
             Vec3::new(0.0, -1.0, 0.0),
-        );
-        matrix
+        )
     }
 
     pub fn get_projection_matrix(&self) -> Mat4 {
@@ -85,7 +84,7 @@ impl Camera {
             VirtualKeyCode::S => self.position = Vec3A::new(x, y - 2.0, z),
             VirtualKeyCode::Q => self.position = Vec3A::new(x, y, z - 2.0),
             VirtualKeyCode::E => self.position = Vec3A::new(x, y, z + 2.0),
-            _ => ()
+            _ => (),
         }
     }
 

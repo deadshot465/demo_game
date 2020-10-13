@@ -25,5 +25,5 @@ pub trait Scene {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()>;
-    async fn wait_for_all_tasks(&mut self);
+    async fn wait_for_all_tasks(&mut self) -> anyhow::Result<()>;
 }

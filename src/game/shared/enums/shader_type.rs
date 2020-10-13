@@ -4,6 +4,7 @@ pub enum ShaderType {
     BasicShaderForMesh,
     BasicShaderWithoutTexture,
     AnimatedModel,
+    Terrain,
 }
 
 impl ToString for ShaderType {
@@ -13,6 +14,7 @@ impl ToString for ShaderType {
             ShaderType::BasicShaderForMesh => "BasicShaderForMesh".to_string(),
             ShaderType::BasicShaderWithoutTexture => "BasicShaderWithoutTexture".to_string(),
             ShaderType::AnimatedModel => "AnimatedModel".to_string(),
+            ShaderType::Terrain => "Terrain".to_string(),
         }
     }
 }

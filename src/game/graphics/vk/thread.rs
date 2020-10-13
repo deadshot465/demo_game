@@ -73,7 +73,7 @@ impl Thread {
 
     pub fn add_job(&self, work: impl FnOnce() + Send + 'static) {
         let result = self.task_queue.push(Box::new(work));
-        if let Err(_) = result {
+        if result.is_err() {
             log::error!("Error pushing new job into the queue: Queue is full.");
             return;
         }
