@@ -28,6 +28,7 @@ pub struct FeatureSupport {
     pub shader_sampled_image_array_dynamic_indexing: bool,
     pub runtime_descriptor_array: bool,
     pub descriptor_binding_partially_bound: bool,
+    pub multi_draw_indirect: bool,
 }
 
 pub struct PhysicalDevice {
@@ -83,6 +84,7 @@ impl PhysicalDevice {
                 descriptor_binding_partially_bound: indexing_feature
                     .descriptor_binding_partially_bound
                     == TRUE,
+                multi_draw_indirect: features.multi_draw_indirect == TRUE,
             };
 
             log::info!("Geometry shader: {}", feature_support.geometry_shader);
@@ -106,6 +108,10 @@ impl PhysicalDevice {
             log::info!(
                 "Descriptor binding partially bound: {}",
                 feature_support.descriptor_binding_partially_bound
+            );
+            log::info!(
+                "Multi draw indirect: {}",
+                feature_support.multi_draw_indirect
             );
 
             PhysicalDevice {

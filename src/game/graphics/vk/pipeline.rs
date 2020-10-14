@@ -40,6 +40,7 @@ impl Pipeline {
                 ShaderType::AnimatedModel,
                 ShaderType::AnimatedModel.to_string(),
             ),
+            (ShaderType::Terrain, ShaderType::Terrain.to_string()),
         ];
         for (shader_type, type_name) in shader_types.iter() {
             for count in 0..BlendMode::END.0 {

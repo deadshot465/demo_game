@@ -29,7 +29,7 @@ void main()
 {
     vec4 position = vec4(inPosition, 1.0);
     gl_Position = mvp.projection * mvp.view * modelMatrices[pco.model_index] * position;
-    
+
     outNormal = vec4(inNormal, 0.0);
     outNormal = transpose(inverse(modelMatrices[pco.model_index])) * outNormal;
     outTexCoord = inTexCoord;

@@ -2,9 +2,9 @@ use ash::vk::{
     BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorSetAllocateInfo,
     DescriptorType, MemoryPropertyFlags, WriteDescriptorSet,
 };
-use crossbeam::sync::ShardedLock;
 use glam::Mat4;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::game::graphics::vk::{Buffer, Graphics};
 use crate::game::shared::traits::Disposable;
@@ -19,11 +19,12 @@ pub struct SSBO {
 }
 
 impl SSBO {
-    pub fn new(graphics: Arc<ShardedLock<Graphics>>, data: &[Mat4; 500]) -> Self {
-        let graphics_lock = graphics.read().unwrap();
+    pub async fn new(graphics: Arc<RwLock<Graphics>>, data: &[Mat4; 500]) -> Self {
+        let graphics_lock = graphics.read().await;
         let device = graphics_lock.logical_device.clone();
         let allocator = graphics_lock.allocator.clone();
         let buffer_size = std::mem::size_of::<Mat4>() * 500;
+        let descriptor_set_layout = graphics_lock.ssbo_descriptor_set_layout;
         let mut buffer = Buffer::new(
             Arc::downgrade(&device),
             buffer_size as u64,
@@ -38,7 +39,7 @@ impl SSBO {
                 mapped,
                 buffer_size,
             );
-            let layouts = vec![graphics_lock.ssbo_descriptor_set_layout];
+            let layouts = vec![descriptor_set_layout];
             let allocate_info = DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(*graphics_lock.descriptor_pool.lock())
                 .set_layouts(layouts.as_slice());

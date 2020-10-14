@@ -1,28 +1,30 @@
-import io
 import os
 import shutil
 
+file_names = {
+    'basicShader.vert': 'vert.spv',
+    'basicShader_mesh.vert': 'basicShader_mesh.spv',
+    'basicShader_noTexture.frag': 'basicShader_noTexture.spv',
+    'basicShader.frag': 'frag.spv',
+    'terrain.vert': 'terrain.spv'
+}
+
+# Compile shaders
 os.chdir('./shaders')
-os.system('glslangValidator -V basicShader.vert')
-os.system('glslangValidator -V basicShader_mesh.vert -o basicShader_mesh.spv')
-os.system('glslangValidator -V basicShader_noTexture.frag -o basicShader_noTexture.spv')
-os.system('glslangValidator -V basicShader_animated.vert -o basicShader_animated.spv')
-os.system('glslangValidator -V basicShader.frag')
+for x, y in file_names.items():
+    os.system('glslangValidator -V {} -o {}'.format(x, y))
+
+# Copy shaders to debug folder
 os.chdir('../')
-shutil.copyfile('./shaders/vert.spv', './target/debug/shaders/vert.spv')
-shutil.copyfile('./shaders/basicShader_mesh.spv', './target/debug/shaders/basicShader_mesh.spv')
-shutil.copyfile('./shaders/basicShader_noTexture.spv', './target/debug/shaders/basicShader_noTexture.spv')
-shutil.copyfile('./shaders/basicShader_animated.spv', './target/debug/shaders/basicShader_animated.spv')
-shutil.copyfile('./shaders/frag.spv', './target/debug/shaders/frag.spv')
+for x, y in file_names.items():
+    shutil.copyfile('./shaders/' + y, './target/debug/shaders/' + y)
 shutil.copyfile('./.env', './target/debug/.env')
 shutil.rmtree('./target/debug/models')
 shutil.copytree('./models', './target/debug/models')
 
-shutil.copyfile('./shaders/vert.spv', './target/release/shaders/vert.spv')
-shutil.copyfile('./shaders/basicShader_mesh.spv', './target/release/shaders/basicShader_mesh.spv')
-shutil.copyfile('./shaders/basicShader_noTexture.spv', './target/release/shaders/basicShader_noTexture.spv')
-shutil.copyfile('./shaders/basicShader_animated.spv', './target/release/shaders/basicShader_animated.spv')
-shutil.copyfile('./shaders/frag.spv', './target/release/shaders/frag.spv')
+# Copy shaders to release folder
+for x, y in file_names.items():
+    shutil.copyfile('./shaders/' + y, './target/release/shaders/' + y)
 shutil.copyfile('./.env', './target/release/.env')
 shutil.rmtree('./target/release/models')
 shutil.copytree('./models', './target/release/models')

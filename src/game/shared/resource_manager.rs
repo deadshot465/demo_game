@@ -13,6 +13,8 @@ type ModelList<GraphicsType, BufferType, CommandType, TextureType> =
     Vec<Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>>>;
 type SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType> =
     Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>;
+type TerrainList<GraphicsType, BufferType, CommandType, TextureType> =
+    Vec<Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>>;
 
 pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -24,7 +26,7 @@ where
     pub models: ModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub skinned_models: SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
-    pub terrains: Vec<Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>>,
+    pub terrains: TerrainList<GraphicsType, BufferType, CommandType, TextureType>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -131,8 +133,10 @@ where
         texture_wrapped
     }
 
-    pub fn add_terrain(&mut self, terrain: Terrain<GraphicsType, BufferType, CommandType, TextureType>)
-        -> Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>> {
+    pub fn add_terrain(
+        &mut self,
+        terrain: Terrain<GraphicsType, BufferType, CommandType, TextureType>,
+    ) -> Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>> {
         let terrain_wrapped = Arc::new(Mutex::new(terrain));
         self.terrains.push(terrain_wrapped.clone());
         terrain_wrapped

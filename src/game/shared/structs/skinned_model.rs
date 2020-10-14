@@ -1,4 +1,7 @@
-use ash::vk::{CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags, CommandPool, IndexType, PipelineBindPoint, ShaderStageFlags, DescriptorSet};
+use ash::vk::{
+    CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
+    CommandPool, DescriptorSet, IndexType, PipelineBindPoint, ShaderStageFlags,
+};
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::animation::util::ReadOutputs;
@@ -7,6 +10,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
@@ -19,8 +23,8 @@ use crate::game::structs::{Joint, PushConstant};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
 use ash::version::DeviceV1_0;
-use std::sync::atomic::{AtomicPtr, Ordering};
 use ash::Device;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -38,7 +42,7 @@ where
     pub model_name: String,
     pub model_index: usize,
     pub animations: HashMap<String, Animation>,
-    graphics: Weak<ShardedLock<GraphicsType>>,
+    graphics: Weak<RwLock<GraphicsType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -54,7 +58,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<ShardedLock<GraphicsType>>,
+        graphics: Weak<RwLock<GraphicsType>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -64,7 +68,7 @@ where
         let meshes = Self::process_model(&document, &buffers, images, texture_index_offset);
         let animations = Self::process_animation(&document, &buffers);
         for (name, _) in animations.iter() {
-            println!("{}", &name);
+            log::info!("Animation: {}", &name);
         }
         SkinnedModel {
             position,
@@ -191,7 +195,6 @@ where
                 .read_indices()
                 .unwrap()
                 .into_u32()
-                .map(|x| x)
                 .collect::<Vec<_>>();
             let positions = reader.read_positions();
             let normals = reader.read_normals();
@@ -397,9 +400,9 @@ where
 }
 
 impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn new(
+    pub async fn new(
         file_name: &'static str,
-        graphics: Weak<ShardedLock<Graphics>>,
+        graphics: Weak<RwLock<Graphics>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -413,7 +416,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let thread_count: usize;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_lock = graphics_clone.read().unwrap();
+                let graphics_lock = graphics_clone.read().await;
                 thread_count = graphics_lock.thread_pool.thread_count;
                 command_pool = graphics_lock.thread_pool.threads[model_index % thread_count]
                     .command_pool
@@ -445,7 +448,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 texture_index_offset,
             );
             {
-                let graphics_lock = graphics_clone.read().unwrap();
+                let graphics_lock = graphics_clone.read().await;
                 for mesh in loaded_model.skinned_meshes.iter_mut() {
                     for primitive in mesh.primitives.iter_mut() {
                         primitive.command_pool = Some(command_pool.clone());
@@ -466,7 +469,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
 
     async fn create_buffers(
         &mut self,
-        graphics: Arc<ShardedLock<Graphics>>,
+        graphics: Arc<RwLock<Graphics>>,
         command_pool: Arc<Mutex<CommandPool>>,
     ) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
@@ -507,7 +510,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let graphics_clone = graphics.clone();
             entry.push(tokio::spawn(async move {
                 let buffer = [Mat4::identity(); 500];
-                SSBO::new(graphics_clone, &buffer)
+                SSBO::new(graphics_clone, &buffer).await
             }));
         }
         for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
@@ -584,10 +587,12 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         descriptor_set: DescriptorSet,
     ) {
         let pipeline_layout = pipeline
-            .read().unwrap()
+            .read()
+            .unwrap()
             .get_pipeline_layout(ShaderType::AnimatedModel);
         let pipeline = pipeline
-            .read().unwrap()
+            .read()
+            .unwrap()
             .get_pipeline(ShaderType::AnimatedModel, 0);
         let mut push_constant = push_constant;
         push_constant.object_color = self.color;
@@ -601,23 +606,17 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                         .build();
                     let command_buffer = primitive.command_buffer.unwrap();
-                    let result = device
-                        .begin_command_buffer(command_buffer, &command_buffer_begin_info);
+                    let result =
+                        device.begin_command_buffer(command_buffer, &command_buffer_begin_info);
                     if let Err(e) = result {
                         log::error!(
                             "Error beginning secondary command buffer: {}",
                             e.to_string()
                         );
                     }
-                    device
-                        .cmd_set_viewport(command_buffer, 0, &[viewport]);
-                    device
-                        .cmd_set_scissor(command_buffer, 0, &[scissor]);
-                    device.cmd_bind_pipeline(
-                        command_buffer,
-                        PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
+                    device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                    device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                    device.cmd_bind_pipeline(command_buffer, PipelineBindPoint::GRAPHICS, pipeline);
                     device.cmd_bind_descriptor_sets(
                         command_buffer,
                         PipelineBindPoint::GRAPHICS,
@@ -647,12 +646,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                             &[],
                         );
                     }
-                    device.cmd_bind_vertex_buffers(
-                        command_buffer,
-                        0,
-                        &vertex_buffers[0..],
-                        &[0],
-                    );
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers[0..], &[0]);
                     device.cmd_bind_index_buffer(
                         command_buffer,
                         index_buffer,
@@ -667,8 +661,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         0,
                         0,
                     );
-                    let result = device
-                        .end_command_buffer(command_buffer);
+                    let result = device.end_command_buffer(command_buffer);
                     if let Err(e) = result {
                         log::error!("Error ending command buffer: {}", e.to_string());
                     }
@@ -689,11 +682,12 @@ where
 {
     fn from(model: &SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>) -> Self {
         loop {
-            if model.skinned_meshes.iter().all(|mesh| {
+            let is_buffer_completed = model.skinned_meshes.iter().all(|mesh| {
                 mesh.primitives.iter().all(|primitive| {
                     primitive.vertex_buffer.is_some() && primitive.index_buffer.is_some()
                 })
-            }) {
+            });
+            if is_buffer_completed {
                 break;
             }
         }

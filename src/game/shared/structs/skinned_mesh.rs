@@ -127,8 +127,6 @@ where
         if !self.is_disposed {
             self.dispose();
             log::info!("Successfully dropped skinned mesh.");
-        } else {
-            log::warn!("Skinned mesh is already dropped.");
         }
     }
 }

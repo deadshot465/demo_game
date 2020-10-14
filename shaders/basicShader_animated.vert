@@ -41,7 +41,7 @@ void main()
         inWeight.w * jointMatrices[int(inJoint.w)];
 
     gl_Position = mvp.projection * mvp.view * modelMatrices[pco.model_index] * skinMatrix * position;
-    
+
     outNormal = vec4(inNormal, 0.0);
     outNormal = transpose(inverse(modelMatrices[pco.model_index])) * outNormal;
     outTexCoord = inTexCoord;

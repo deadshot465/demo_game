@@ -1,4 +1,5 @@
 use glam::{Mat4, Vec3, Vec3A};
+use winit::event::VirtualKeyCode;
 
 const MIN_DISTANCE: f32 = 5.0;
 const MAX_DISTANCE: f32 = 15.0;
@@ -21,30 +22,33 @@ pub struct Camera {
     pub height: f64,
     pub current_type: CameraType,
     pub projection: Mat4,
+    default_position: Vec3A,
 }
 
 impl Camera {
     pub fn new(width: f64, height: f64) -> Self {
         let mut camera = Camera {
-            position: Vec3A::new(0.0, 10.0, -15.0),
+            position: Vec3A::new(0.0, 10.0, -400.0),
             target: Vec3A::new(0.0, 0.0, 0.0),
             width,
             height,
-            current_type: CameraType::Watch(Vec3A::new(0.0, 10.0, -15.0)),
+            current_type: CameraType::Watch(Vec3A::new(0.0, 0.0, 0.0)),
             projection: Mat4::identity(),
+            default_position: Vec3A::new(0.0, 10.0, -400.0),
         };
-        camera.set_perspective(30.0_f32.to_radians(), (width / height) as f32, 0.1, 100.0);
+        camera.set_perspective(70.0_f32.to_radians(), (width / height) as f32, 0.1, 1000.0);
         camera
     }
 
-    pub fn update(&mut self, camera_type: CameraType) {
-        match camera_type {
+    pub fn update(&mut self, _camera_type: CameraType, key: VirtualKeyCode) {
+        /*match camera_type {
             CameraType::Watch(pos) => self.watch(pos),
             CameraType::Directional(pos) => self.directional(pos),
             CameraType::Chase(pos) => self.chase(pos),
             CameraType::TPS(pos, angle) => self.tps(pos, angle),
             CameraType::FPS(pos, angle) => self.fps(pos, angle),
-        }
+        }*/
+        self.move_camera(key);
     }
 
     pub fn set_orthographic(&mut self, width: f32, height: f32, near: f32, far: f32) -> Mat4 {
@@ -69,8 +73,23 @@ impl Camera {
         self.projection
     }
 
+    fn move_camera(&mut self, key: VirtualKeyCode) {
+        let x: f32 = self.position.x();
+        let y: f32 = self.position.y();
+        let z: f32 = self.position.z();
+        match key {
+            VirtualKeyCode::A => self.position = Vec3A::new(x - 2.0, y, z),
+            VirtualKeyCode::D => self.position = Vec3A::new(x + 2.0, y, z),
+            VirtualKeyCode::W => self.position = Vec3A::new(x, y + 2.0, z),
+            VirtualKeyCode::S => self.position = Vec3A::new(x, y - 2.0, z),
+            VirtualKeyCode::Q => self.position = Vec3A::new(x, y, z - 2.0),
+            VirtualKeyCode::E => self.position = Vec3A::new(x, y, z + 2.0),
+            _ => (),
+        }
+    }
+
     fn watch(&mut self, player_pos: Vec3A) {
-        self.position = Vec3A::new(0.0, 10.0, -15.0);
+        self.position = self.default_position;
         self.target = player_pos;
     }
 
