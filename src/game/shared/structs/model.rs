@@ -405,7 +405,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 let mut index_offset_index = 0;
                 for primitive in mesh.primitives.iter() {
                     push_constant.texture_index = primitive.texture_index.unwrap_or_default();
-                    let casted = bytemuck::cast::<PushConstant, [u8; 48]>(push_constant);
+                    let casted = bytemuck::cast::<PushConstant, [u8; 64]>(push_constant);
                     device.cmd_push_constants(
                         command_buffer,
                         pipeline_layout,

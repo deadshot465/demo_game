@@ -2,6 +2,7 @@
 use demo_game_rs::game::graphics::dx12 as DX12;
 use demo_game_rs::game::graphics::vk as VK;
 use demo_game_rs::game::shared::camera::CameraType;
+use demo_game_rs::game::shared::structs::PushConstant;
 use demo_game_rs::game::Game;
 use env_logger::Builder;
 use log::LevelFilter;
@@ -14,6 +15,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use wio::com::ComPtr;
 
 fn main() -> anyhow::Result<()> {
+    //println!("{}", std::mem::size_of::<PushConstant>());
+    //return Ok(());
     dotenv::dotenv().ok();
     let log_level = dotenv::var("LOG").unwrap();
     Builder::new()

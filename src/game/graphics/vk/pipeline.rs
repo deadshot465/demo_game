@@ -26,22 +26,7 @@ impl Pipeline {
         if std::fs::create_dir("./caches").is_err() {
             log::warn!("The 'caches' directory already exists.");
         }
-        let shader_types = vec![
-            (ShaderType::BasicShader, ShaderType::BasicShader.to_string()),
-            (
-                ShaderType::BasicShaderForMesh,
-                ShaderType::BasicShaderForMesh.to_string(),
-            ),
-            (
-                ShaderType::BasicShaderWithoutTexture,
-                ShaderType::BasicShaderWithoutTexture.to_string(),
-            ),
-            (
-                ShaderType::AnimatedModel,
-                ShaderType::AnimatedModel.to_string(),
-            ),
-            (ShaderType::Terrain, ShaderType::Terrain.to_string()),
-        ];
+        let shader_types = ShaderType::get_all_shader_type_pairs();
         for (shader_type, type_name) in shader_types.iter() {
             for count in 0..BlendMode::END.0 {
                 let mut file_name = type_name.clone();

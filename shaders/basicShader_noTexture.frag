@@ -14,11 +14,13 @@ layout (push_constant) uniform PushConstant
     uint texture_index;
     vec4 object_color;
     uint model_index;
+    vec4 sky_color;
 } pco;
 
 layout (location = 1) in vec4 inNormal;
 layout (location = 2) in vec2 inTexCoord;
 layout (location = 3) in vec4 fragPos;
+layout (location = 4) in float visibility;
 
 layout (location = 0) out vec4 fragColor;
 
@@ -41,4 +43,5 @@ void main()
 
     //vec4 result = (ambient + diffuse) * vec4(1.0, 0.0, 0.0, 1.0);
     fragColor = pco.object_color;
+    fragColor = mix(pco.sky_color, fragColor, visibility);
 }

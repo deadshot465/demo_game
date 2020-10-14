@@ -626,7 +626,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         &[],
                     );
                     push_constant.texture_index = primitive.texture_index;
-                    let casted = bytemuck::cast::<PushConstant, [u8; 48]>(push_constant);
+                    let casted = bytemuck::cast::<PushConstant, [u8; 64]>(push_constant);
                     device.cmd_push_constants(
                         command_buffer,
                         pipeline_layout,

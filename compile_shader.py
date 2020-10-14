@@ -3,7 +3,7 @@ import shutil
 
 file_names = {
     'basicShader.vert': 'vert.spv',
-    'basicShader_mesh.vert': 'basicShader_mesh.spv',
+    'basicShader_animated.vert': 'basicShader_animated.spv',
     'basicShader_noTexture.frag': 'basicShader_noTexture.spv',
     'basicShader.frag': 'frag.spv',
     'terrain.vert': 'terrain.spv'

@@ -67,6 +67,7 @@ pub struct Graphics {
     complete_semaphores: Vec<Semaphore>,
     sample_count: SampleCountFlags,
     depth_format: Format,
+    sky_color: Vec4,
 }
 
 impl Graphics {
@@ -198,6 +199,7 @@ impl Graphics {
         let (fences, acquired_semaphores, complete_semaphores) =
             Self::create_sync_object(device.as_ref(), swapchain.swapchain_images.len() as u32);
 
+        let sky_color: Vec4 = Vec4::new(0.5, 0.5, 0.5, 1.0);
         Ok(Graphics {
             entry,
             instance,
@@ -215,7 +217,10 @@ impl Graphics {
             msaa_image: ManuallyDrop::new(msaa_image),
             descriptor_set_layout: DescriptorSetLayout::null(),
             uniform_buffers: ManuallyDrop::new(uniform_buffers),
-            push_constant: PushConstant::new(0, Vec4::new(0.0, 1.0, 1.0, 1.0), 0),
+            push_constant: PushConstant::new(
+                0, Vec4::new(0.0, 1.0, 1.0, 1.0), 0,
+                sky_color
+            ),
             camera,
             resource_manager,
             dynamic_objects: DynamicBufferObject {
@@ -238,12 +243,13 @@ impl Graphics {
             allocator,
             thread_pool,
             ssbo_descriptor_set_layout,
+            sky_color,
         })
     }
 
     pub async fn begin_draw(&mut self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
-            float32: [1.0, 1.0, 0.0, 1.0],
+            float32: self.sky_color.into(),
         };
         let clear_depth = ClearDepthStencilValue::builder().depth(1.0).stencil(0);
         let clear_values = vec![
@@ -621,15 +627,19 @@ impl Graphics {
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
+            let command_buffers = vec![self.command_buffers[0]];
+            let complete_semaphores = vec![self.complete_semaphores[self.current_index]];
+            let acquired_semaphores = vec![self.acquired_semaphores[self.current_index]];
             let submit_info = vec![SubmitInfo::builder()
-                .command_buffers(&[self.command_buffers[0]])
-                .signal_semaphores(&[self.complete_semaphores[self.current_index]])
+                .command_buffers(command_buffers.as_slice())
+                .signal_semaphores(complete_semaphores.as_slice())
                 .wait_dst_stage_mask(wait_stages.as_slice())
-                .wait_semaphores(&[self.acquired_semaphores[self.current_index]])
+                .wait_semaphores(acquired_semaphores.as_slice())
                 .build()];
 
+            let fences = vec![self.fences[self.current_index]];
             self.logical_device
-                .reset_fences(&[self.fences[self.current_index]])
+                .reset_fences(fences.as_slice())
                 .expect("Failed to reset fences.");
             self.logical_device
                 .queue_submit(
@@ -639,17 +649,18 @@ impl Graphics {
                 )
                 .expect("Failed to submit the queue.");
 
+            let image_indices = vec![image_index];
+            let swapchain = vec![self.swapchain.swapchain];
             let present_info = PresentInfoKHR::builder()
-                .wait_semaphores(&[self.complete_semaphores[self.current_index]])
-                .image_indices(&[image_index])
-                .swapchains(&[self.swapchain.swapchain])
-                .build();
+                .wait_semaphores(complete_semaphores.as_slice())
+                .image_indices(image_indices.as_slice())
+                .swapchains(swapchain.as_slice());
 
             swapchain_loader
                 .queue_present(*self.present_queue.lock(), &present_info)
                 .expect("Failed to present with the swapchain.");
             self.logical_device
-                .wait_for_fences(&[self.fences[self.current_index]], true, u64::MAX)
+                .wait_for_fences(fences.as_slice(), true, u64::MAX)
                 .expect("Failed to wait for fences.");
             Ok(image_index)
         }
@@ -1318,6 +1329,7 @@ impl Graphics {
                 );
             }
         }
+        log::info!("Sync objects successfully created.");
         (fences, acquired_semaphores, complete_semaphores)
     }
 
