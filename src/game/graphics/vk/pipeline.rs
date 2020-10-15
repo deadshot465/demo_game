@@ -298,7 +298,10 @@ impl Pipeline {
                         .primitive_restart_enable(false)
                         .topology(PrimitiveTopology::TRIANGLE_LIST);
                     let rs_info = PipelineRasterizationStateCreateInfo::builder()
-                        .cull_mode(CullModeFlags::BACK)
+                        .cull_mode(match shader_type {
+                            ShaderType::Terrain => CullModeFlags::NONE,
+                            _ => CullModeFlags::BACK
+                        })
                         .depth_bias_clamp(0.0)
                         .depth_bias_constant_factor(0.0)
                         .depth_bias_enable(false)

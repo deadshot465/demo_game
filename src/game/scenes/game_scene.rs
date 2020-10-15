@@ -1,7 +1,7 @@
 use ash::vk::CommandBuffer;
 use async_trait::async_trait;
 use glam::{Vec3A, Vec4};
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -10,6 +10,7 @@ use crate::game::shared::structs::{Model, SkinnedModel, Terrain};
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::traits::Disposable;
 use crate::game::ResourceManager;
+use crate::game::shared::util::HeightGenerator;
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -23,6 +24,7 @@ where
         Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
     model_count: usize,
+    height_generator: Arc<RwLock<HeightGenerator>>,
     model_tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     skinned_model_tasks:
         Vec<JoinHandle<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
@@ -47,8 +49,9 @@ where
             graphics,
             resource_manager,
             scene_name: String::from("GAME_SCENE"),
-            model_tasks: vec![],
             model_count: 0,
+            height_generator: Arc::new(RwLock::new(HeightGenerator::new())),
+            model_tasks: vec![],
             skinned_model_tasks: vec![],
             terrain_tasks: vec![],
         }
@@ -58,12 +61,17 @@ where
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
     pub async fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
         let model_index = self.model_count;
+        let mut height_generator = self.height_generator.write().await;
+        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
+        height_generator.set_offsets(grid_x, grid_z, vertex_count as i32);
+        drop(height_generator);
         let terrain = Terrain::new(
             grid_x,
             grid_z,
             model_index,
             self.resource_manager.clone(),
             self.graphics.clone(),
+            self.height_generator.clone(),
         )
         .await?;
         self.terrain_tasks.push(terrain);
@@ -75,6 +83,14 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
 #[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {}
+
+    fn get_scene_name(&self) -> &str {
+        self.scene_name.as_str()
+    }
+
+    fn set_scene_name(&mut self, scene_name: &str) {
+        self.scene_name = scene_name.to_string();
+    }
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
         /*self.add_skinned_model(
@@ -102,7 +118,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
         self.add_model(
             "./models/mr.incredible/Mr.Incredible.glb",
-            Vec3A::new(0.0, 0.0, -400.0),
+            Vec3A::new(0.0, 0.0, 0.0),
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
@@ -110,7 +126,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         .await?;
         self.add_model(
             "./models/bison/output.gltf",
-            Vec3A::new(0.0, 0.0, -400.0),
+            Vec3A::new(0.0, 0.0, 0.0),
             Vec3A::new(400.0, 400.0, 400.0),
             Vec3A::new(0.0, 90.0, 90.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
@@ -118,14 +134,14 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         .await?;
         self.add_skinned_model(
             "./models/cesiumMan/CesiumMan.glb",
-            Vec3A::new(-3.5, 0.0, -400.0),
+            Vec3A::new(-3.5, 0.0, 0.0),
             Vec3A::new(2.0, 2.0, 2.0),
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )
         .await?;
-        self.generate_terrain(0, -1).await?;
-        self.generate_terrain(-1, -1).await?;
+        self.generate_terrain(0, 0).await?;
+        //self.generate_terrain(0, 1).await?;
         Ok(())
     }
 
@@ -146,14 +162,6 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             graphics_lock.render().await?;
         }
         Ok(())
-    }
-
-    fn get_scene_name(&self) -> &str {
-        self.scene_name.as_str()
-    }
-
-    fn set_scene_name(&mut self, scene_name: &str) {
-        self.scene_name = scene_name.to_string();
     }
 
     async fn add_model(

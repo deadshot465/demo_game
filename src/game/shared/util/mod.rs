@@ -1,3 +1,8 @@
+pub mod height_generator;
+pub mod perlin_noise;
+pub use height_generator::HeightGenerator;
+pub use perlin_noise::PerlinNoise;
+
 use anyhow::Context;
 use ash::version::DeviceV1_0;
 use ash::vk::{

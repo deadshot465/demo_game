@@ -11,6 +11,7 @@ use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use crate::game::shared::util::height_generator::HeightGenerator;
 
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -33,8 +34,8 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Disposable + Clone,
 {
-    const SIZE: f32 = 800.0;
-    const VERTEX_COUNT: u32 = 128;
+    pub const SIZE: f32 = 1600.0;
+    pub const VERTEX_COUNT: u32 = 256;
 }
 
 impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
@@ -44,6 +45,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         model_index: usize,
         resource_manager: Weak<RwLock<ResourceManager<Graphics, Buffer, CommandBuffer, Image>>>,
         graphics: Weak<RwLock<Graphics>>,
+        height_generator: Arc<RwLock<HeightGenerator>>,
     ) -> anyhow::Result<JoinHandle<Self>> {
         log::info!("Generating terrain...");
         let graphics_arc = graphics.upgrade().unwrap();
@@ -89,7 +91,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 graphics.clone(),
                 command_pool,
                 command_buffer,
-            );
+                height_generator,
+            ).await;
             log::info!("Terrain successfully generated.");
             generated_terrain
                 .create_buffers(graphics_arc.clone())
@@ -113,7 +116,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    fn create_terrain(
+    async fn create_terrain(
         grid_x: i32,
         grid_z: i32,
         texture_index: usize,
@@ -122,6 +125,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         graphics: Weak<RwLock<Graphics>>,
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandBuffer,
+        height_generator: Arc<RwLock<HeightGenerator>>,
     ) -> Self {
         let x = grid_x as f32 * Self::SIZE;
         let z = grid_z as f32 * Self::SIZE;
@@ -133,7 +137,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(x, 0.0, z),
             command_pool,
             command_buffer,
-        );
+            height_generator,
+        ).await;
         Terrain {
             x,
             z,
@@ -142,7 +147,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    fn generate_terrain(
+    async fn generate_terrain(
         model_index: usize,
         texture_index: usize,
         texture: Arc<ShardedLock<Image>>,
@@ -150,18 +155,20 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         position: Vec3A,
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandBuffer,
+        height_generator: Arc<RwLock<HeightGenerator>>,
     ) -> Model<Graphics, Buffer, CommandBuffer, Image> {
         let count = Self::VERTEX_COUNT * Self::VERTEX_COUNT;
         let mut vertices: Vec<Vertex> = vec![];
         vertices.reserve(count as usize);
         let indices_count = 6 * (Self::VERTEX_COUNT - 1) * (Self::VERTEX_COUNT - 1);
         let mut indices: Vec<u32> = vec![0; indices_count as usize];
+        let generator = height_generator.read().await;
         for i in 0..Self::VERTEX_COUNT {
             for j in 0..Self::VERTEX_COUNT {
                 let vertex = Vertex {
                     position: Vec3A::new(
                         (j as f32 / (Self::VERTEX_COUNT - 1) as f32) * Self::SIZE,
-                        0.0,
+                        generator.generate_height(j as f32, i as f32),
                         (i as f32 / (Self::VERTEX_COUNT - 1) as f32) * Self::SIZE,
                     ),
                     normal: Vec3A::new(0.0, -1.0, 0.0),
