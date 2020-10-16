@@ -238,17 +238,22 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
             command_pool: Some(command_pool),
             command_buffer: Some(command_buffer),
         };
-        Model {
+        let mut model = Model {
             position,
             scale: Vec3A::one(),
             rotation: Vec3A::zero(),
-            model_metadata: ModelMetaData::new(Mat4::identity(), Vec4::one()),
+            model_metadata: ModelMetaData {
+                world_matrix: Mat4::identity(),
+                object_color: Vec4::one(),
+            },
             meshes: vec![mesh],
             is_disposed: false,
             model_name: get_random_string(7),
             model_index,
             graphics,
-        }
+        };
+        model.model_metadata.world_matrix = model.get_world_matrix();
+        model
     }
 }
 

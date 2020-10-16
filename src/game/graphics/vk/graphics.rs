@@ -31,6 +31,13 @@ use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
 use crate::game::{Camera, ResourceManager};
 
+const SSBO_DATA_COUNT: usize = 50;
+
+struct PrimarySSBOData {
+    world_matrices: [Mat4; SSBO_DATA_COUNT],
+    object_colors: [Vec4; SSBO_DATA_COUNT],
+}
+
 pub struct Graphics {
     pub dynamic_objects: DynamicBufferObject,
     pub logical_device: Arc<Device>,
@@ -167,7 +174,7 @@ impl Graphics {
         )?;
         let directional_light = Directional::new(
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-            Vec3A::new(0.0, -5.0, 0.0),
+            Vec3A::new(-200.0, 200.0, 0.0),
             0.1,
             0.5,
         );
@@ -218,8 +225,7 @@ impl Graphics {
             descriptor_set_layout: DescriptorSetLayout::null(),
             uniform_buffers: ManuallyDrop::new(uniform_buffers),
             push_constant: PushConstant::new(
-                0, Vec4::new(0.0, 1.0, 1.0, 1.0), 0,
-                sky_color
+                0, 0, sky_color
             ),
             camera,
             resource_manager,
@@ -875,7 +881,7 @@ impl Graphics {
                 .binding(2)
                 .descriptor_count(1)
                 .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                .stage_flags(ShaderStageFlags::VERTEX)
+                .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT)
                 .build(),
         );
 
@@ -1028,21 +1034,28 @@ impl Graphics {
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
-        let mut world_matrices = vec![Mat4::identity(); 50];
+        let mut model_metadata = PrimarySSBOData {
+            world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
+            object_colors: [Vec4::zero(); SSBO_DATA_COUNT]
+        };
         for model in resource_lock.models.iter() {
             let model_lock = model.lock();
-            world_matrices[model_lock.model_index] = model_lock.get_world_matrix();
+            model_metadata.world_matrices[model_lock.model_index] = model_lock.model_metadata.world_matrix;
+            model_metadata.object_colors[model_lock.model_index] = model_lock.model_metadata.object_color;
         }
         for model in resource_lock.skinned_models.iter() {
             let model_lock = model.lock();
-            world_matrices[model_lock.model_index] = model_lock.get_world_matrix();
+            model_metadata.world_matrices[model_lock.model_index] = model_lock.model_metadata.world_matrix;
+            model_metadata.object_colors[model_lock.model_index] = model_lock.model_metadata.object_color;
         }
         for terrain in resource_lock.terrains.iter() {
             let terrain_lock = terrain.lock();
-            let world_matrix = terrain_lock.model.get_world_matrix();
-            world_matrices[terrain_lock.model.model_index] = world_matrix;
+            let world_matrix = terrain_lock.model.model_metadata.world_matrix;
+            let object_color = terrain_lock.model.model_metadata.object_color;
+            model_metadata.world_matrices[terrain_lock.model.model_index] = world_matrix;
+            model_metadata.object_colors[terrain_lock.model.model_index] = object_color;
         }
-        let buffer_size = std::mem::size_of::<Mat4>() * world_matrices.len();
+        let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);
         drop(resource_manager);
         let mut buffer = super::Buffer::new(
@@ -1055,7 +1068,7 @@ impl Graphics {
         unsafe {
             let mapped = buffer.map_memory(buffer_size as u64, 0);
             std::ptr::copy_nonoverlapping(
-                world_matrices.as_ptr() as *const std::ffi::c_void,
+                &model_metadata as *const _ as *const std::ffi::c_void,
                 mapped,
                 buffer_size,
             );

@@ -72,6 +72,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             self.resource_manager.clone(),
             self.graphics.clone(),
             self.height_generator.clone(),
+            0.5, 0.5, 0.5
         )
         .await?;
         self.terrain_tasks.push(terrain);
@@ -191,7 +192,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
-            model.color = color;
+            model.model_metadata.world_matrix = model.get_world_matrix();
+            model.model_metadata.object_color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
             let mut lock = resource_manager.write().await;
@@ -243,7 +245,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
-            model.color = color;
+            model.model_metadata.world_matrix = model.get_world_matrix();
+            model.model_metadata.object_color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
             let mut lock = resource_manager.write().await;

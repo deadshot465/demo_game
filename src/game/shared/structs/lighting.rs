@@ -4,7 +4,7 @@ use glam::{Vec3A, Vec4};
 #[derive(Copy, Clone, Debug)]
 pub struct Directional {
     diffuse: Vec4,
-    light_direction: Vec3A,
+    light_position: Vec3A,
     ambient_intensity: f32,
     specular_intensity: f32,
 }
@@ -12,13 +12,13 @@ pub struct Directional {
 impl Directional {
     pub fn new(
         diffuse: Vec4,
-        light_direction: Vec3A,
+        light_position: Vec3A,
         ambient_intensity: f32,
         specular_intensity: f32,
     ) -> Self {
         Directional {
             diffuse,
-            light_direction,
+            light_position,
             ambient_intensity,
             specular_intensity,
         }

@@ -16,6 +16,7 @@ use wio::com::ComPtr;
 
 fn main() -> anyhow::Result<()> {
     //println!("{}", std::mem::size_of::<PushConstant>());
+    //println!("{}", std::mem::size_of::<usize>());
     //return Ok(());
     dotenv::dotenv().ok();
     let log_level = dotenv::var("LOG").unwrap();

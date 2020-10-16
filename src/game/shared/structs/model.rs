@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Primitive, PushConstant, Vertex};
+use crate::game::shared::structs::{Mesh, Primitive, PushConstant, Vertex, ModelMetaData};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
@@ -35,7 +35,7 @@ where
     pub position: Vec3A,
     pub scale: Vec3A,
     pub rotation: Vec3A,
-    pub color: Vec4,
+    pub model_metadata: ModelMetaData,
     pub meshes: Vec<Mesh<BufferType, CommandType, TextureType>>,
     pub is_disposed: bool,
     pub model_name: String,
@@ -69,17 +69,22 @@ where
         let y: f32 = rotation.y();
         let z: f32 = rotation.z();
 
-        Model {
+        let mut model = Model {
             position,
             scale,
             rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
-            color,
+            model_metadata: ModelMetaData {
+                world_matrix: Mat4::identity(),
+                object_color: color
+            },
             graphics,
             meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
             model_index: 0,
-        }
+        };
+        model.model_metadata.world_matrix = model.get_world_matrix();
+        model
     }
 
     fn process_model(
@@ -362,7 +367,6 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         textured_shader_type: Option<ShaderType>,
     ) {
         let mut push_constant = push_constant;
-        push_constant.object_color = self.color;
         push_constant.model_index = self.model_index;
         unsafe {
             let inheritance = inheritance_info.load(Ordering::SeqCst).as_ref().unwrap();
@@ -405,7 +409,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 let mut index_offset_index = 0;
                 for primitive in mesh.primitives.iter() {
                     push_constant.texture_index = primitive.texture_index.unwrap_or_default();
-                    let casted = bytemuck::cast::<PushConstant, [u8; 64]>(push_constant);
+                    let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
                     device.cmd_push_constants(
                         command_buffer,
                         pipeline_layout,
@@ -463,7 +467,7 @@ where
             position: model.position,
             scale: model.scale,
             rotation: model.rotation,
-            color: model.color,
+            model_metadata: model.model_metadata,
             graphics: model.graphics.clone(),
             meshes: model.meshes.to_vec(),
             is_disposed: true,

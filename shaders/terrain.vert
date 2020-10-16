@@ -7,13 +7,14 @@ layout (binding = 0) uniform ModelViewProjection
 } mvp;
 
 layout (std430, binding = 2) readonly buffer ModelMatrices {
-    mat4 modelMatrices[];
+    mat4 world_matrices[50];
+    vec4 object_colors[];
 };
 
 layout (push_constant) uniform PushConstant
 {
     uint texture_index;
-    vec4 object_color;
+    uint padding0;
     uint model_index;
     vec4 sky_color;
 } pco;
@@ -32,14 +33,14 @@ const float gradient = 1.5;
 
 void main()
 {
-    vec4 worldPosition = modelMatrices[pco.model_index] * vec4(inPosition, 1.0);
+    vec4 worldPosition = world_matrices[pco.model_index] * vec4(inPosition, 1.0);
     vec4 positionRelativeToCamera = mvp.view * worldPosition;
     gl_Position = mvp.projection * positionRelativeToCamera;
 
     outNormal = vec4(inNormal, 0.0);
-    outNormal = transpose(inverse(modelMatrices[pco.model_index])) * outNormal;
+    outNormal = transpose(inverse(world_matrices[pco.model_index])) * outNormal;
     outTexCoord = inTexCoord * 40.0;
-    fragPos = modelMatrices[pco.model_index] * vec4(inPosition.xyz, 1.0);
+    fragPos = worldPosition;
 
     float distance = length(positionRelativeToCamera.xyz);
     visibility = exp(-pow((distance * density), gradient));

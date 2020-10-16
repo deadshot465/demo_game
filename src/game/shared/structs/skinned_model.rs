@@ -15,10 +15,7 @@ use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{
-    generate_joint_transforms, Animation, Channel, ChannelOutputs, SkinnedMesh, SkinnedPrimitive,
-    SkinnedVertex, Vertex, SSBO,
-};
+use crate::game::shared::structs::{generate_joint_transforms, Animation, Channel, ChannelOutputs, SkinnedMesh, SkinnedPrimitive, SkinnedVertex, Vertex, SSBO, ModelMetaData};
 use crate::game::structs::{Joint, PushConstant};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
@@ -36,7 +33,7 @@ where
     pub position: Vec3A,
     pub scale: Vec3A,
     pub rotation: Vec3A,
-    pub color: Vec4,
+    pub model_metadata: ModelMetaData,
     pub skinned_meshes: Vec<SkinnedMesh<BufferType, CommandType, TextureType>>,
     pub is_disposed: bool,
     pub model_name: String,
@@ -70,18 +67,23 @@ where
         for (name, _) in animations.iter() {
             log::info!("Animation: {}", &name);
         }
-        SkinnedModel {
+        let mut model = SkinnedModel {
             position,
             scale,
             rotation,
-            color,
+            model_metadata: ModelMetaData {
+                world_matrix: Mat4::identity(),
+                object_color: color
+            },
             skinned_meshes: meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
             model_index: 0,
             animations,
             graphics,
-        }
+        };
+        model.model_metadata.world_matrix = model.get_world_matrix();
+        model
     }
 
     fn process_model(
@@ -595,7 +597,6 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             .unwrap()
             .get_pipeline(ShaderType::AnimatedModel, 0);
         let mut push_constant = push_constant;
-        push_constant.object_color = self.color;
         push_constant.model_index = self.model_index;
         unsafe {
             let inheritance = inheritance_info.load(Ordering::SeqCst).as_ref().unwrap();
@@ -626,7 +627,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                         &[],
                     );
                     push_constant.texture_index = primitive.texture_index;
-                    let casted = bytemuck::cast::<PushConstant, [u8; 64]>(push_constant);
+                    let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
                     device.cmd_push_constants(
                         command_buffer,
                         pipeline_layout,
@@ -695,7 +696,7 @@ where
             position: model.position,
             scale: model.scale,
             rotation: model.rotation,
-            color: model.color,
+            model_metadata: model.model_metadata,
             skinned_meshes: model.skinned_meshes.to_vec(),
             is_disposed: true,
             model_name: model.model_name.clone(),

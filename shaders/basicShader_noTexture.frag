@@ -3,16 +3,21 @@
 layout (binding = 1) uniform DirectionalLight
 {
     vec4 diffuse;
-    vec3 light_direction;
+    vec3 light_position;
     float padding0;
     float ambient_intensity;
     float specular_intensity;
-} direction_light;
+} directional_light;
+
+layout (std430, binding = 2) readonly buffer ModelMatrices {
+    mat4 world_matrices[50];
+    vec4 object_colors[];
+};
 
 layout (push_constant) uniform PushConstant
 {
     uint texture_index;
-    vec4 object_color;
+    uint padding0;
     uint model_index;
     vec4 sky_color;
 } pco;
@@ -33,15 +38,16 @@ void main()
     }*/
 
     // Ambient
-    vec4 ambient = direction_light.diffuse * direction_light.ambient_intensity;
+    vec4 ambient = directional_light.diffuse * directional_light.ambient_intensity;
 
     // Diffuse Light
-    vec4 light_direction = normalize(vec4(-direction_light.light_direction, 0.0));
+    vec4 light_direction = vec4(directional_light.light_position, 1.0) - fragPos;
+    light_direction = normalize(light_direction);
     vec4 normal = normalize(inNormal);
     float intensity = max(dot(normal, light_direction), 0.0);
-    vec4 diffuse = direction_light.diffuse * intensity;
+    vec4 diffuse = directional_light.diffuse * intensity;
 
-    //vec4 result = (ambient + diffuse) * vec4(1.0, 0.0, 0.0, 1.0);
-    fragColor = pco.object_color;
+    vec4 result = (ambient + diffuse) * vec4(1.0, 1.0, 1.0, 1.0);
+    fragColor = object_colors[pco.model_index] * result;
     fragColor = mix(pco.sky_color, fragColor, visibility);
 }
