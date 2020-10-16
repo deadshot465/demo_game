@@ -1,7 +1,6 @@
 use ash::version::DeviceV1_0;
 use ash::vk::{CommandPool, CommandPoolCreateFlags};
 use crossbeam::queue::ArrayQueue;
-use crossbeam::utils::Backoff;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

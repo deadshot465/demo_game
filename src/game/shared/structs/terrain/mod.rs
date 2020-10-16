@@ -1,11 +1,11 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::structs::{Mesh, Model, Primitive, Vertex};
+use crate::game::shared::structs::{Mesh, Model, Primitive, Vertex, ModelMetaData};
 use crate::game::shared::traits::{Disposable, GraphicsBase};
 use crate::game::shared::util::get_random_string;
 use crate::game::ResourceManager;
 use ash::vk::{CommandBuffer, CommandPool, SamplerAddressMode};
 use crossbeam::sync::ShardedLock;
-use glam::{Vec2, Vec3A, Vec4};
+use glam::{Vec2, Vec3A, Vec4, Mat4};
 use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
@@ -35,8 +35,8 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Disposable + Clone,
 {
-    pub const SIZE: f32 = 1600.0;
-    pub const VERTEX_COUNT: u32 = 256;
+    pub const SIZE: f32 = 800.0;
+    pub const VERTEX_COUNT: u32 = 128;
 }
 
 impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
@@ -47,6 +47,9 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         resource_manager: Weak<RwLock<ResourceManager<Graphics, Buffer, CommandBuffer, Image>>>,
         graphics: Weak<RwLock<Graphics>>,
         height_generator: Arc<RwLock<HeightGenerator>>,
+        size_ratio_x: f32,
+        size_ratio_z: f32,
+        vertex_count_ratio: f32,
     ) -> anyhow::Result<JoinHandle<Self>> {
         log::info!("Generating terrain...");
         let graphics_arc = graphics.upgrade().unwrap();
@@ -95,6 +98,9 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                     command_pool,
                     command_buffer,
                     height_generator,
+                    size_ratio_x,
+                    size_ratio_z,
+                    vertex_count_ratio,
                 ).await;
                 log::info!("Terrain successfully generated.");
                 generated_terrain
@@ -130,9 +136,12 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandBuffer,
         height_generator: Arc<RwLock<HeightGenerator>>,
+        size_ratio_x: f32,
+        size_ratio_z: f32,
+        vertex_count_ratio: f32,
     ) -> Self {
-        let x = grid_x as f32 * Self::SIZE;
-        let z = grid_z as f32 * Self::SIZE;
+        let x = grid_x as f32 * Self::SIZE * size_ratio_x;
+        let z = grid_z as f32 * Self::SIZE * size_ratio_z;
         let model = Self::generate_terrain(
             model_index,
             texture_index,
@@ -142,6 +151,9 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
             command_pool,
             command_buffer,
             height_generator,
+            size_ratio_x,
+            size_ratio_z,
+            vertex_count_ratio,
         ).await;
         Terrain {
             x,
@@ -160,36 +172,40 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandBuffer,
         height_generator: Arc<RwLock<HeightGenerator>>,
+        size_ratio_x: f32,
+        size_ratio_z: f32,
+        vertex_count_ratio: f32,
     ) -> Model<Graphics, Buffer, CommandBuffer, Image> {
-        let count = Self::VERTEX_COUNT * Self::VERTEX_COUNT;
+        let vertex_count = (Self::VERTEX_COUNT as f32 * vertex_count_ratio) as u32;
+        let count = vertex_count * vertex_count;
         let mut vertices: Vec<Vertex> = vec![];
         vertices.reserve(count as usize);
-        let indices_count = 6 * (Self::VERTEX_COUNT - 1) * (Self::VERTEX_COUNT - 1);
+        let indices_count = 6 * (vertex_count - 1) * (vertex_count - 1);
         let mut indices: Vec<u32> = vec![0; indices_count as usize];
         let generator = height_generator.read().await;
-        for i in 0..Self::VERTEX_COUNT {
-            for j in 0..Self::VERTEX_COUNT {
+        for i in 0..vertex_count {
+            for j in 0..vertex_count {
                 let vertex = Vertex {
                     position: Vec3A::new(
-                        (j as f32 / (Self::VERTEX_COUNT - 1) as f32) * Self::SIZE,
+                        (j as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_x,
                         generator.generate_height(j as f32, i as f32),
-                        (i as f32 / (Self::VERTEX_COUNT - 1) as f32) * Self::SIZE,
+                        (i as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_z,
                     ),
                     normal: Vec3A::new(0.0, -1.0, 0.0),
                     uv: Vec2::new(
-                        j as f32 / (Self::VERTEX_COUNT - 1) as f32,
-                        i as f32 / (Self::VERTEX_COUNT - 1) as f32,
+                        j as f32 / (vertex_count - 1) as f32,
+                        i as f32 / (vertex_count - 1) as f32,
                     ),
                 };
                 vertices.push(vertex);
             }
         }
         let mut pointer = 0;
-        for gz in 0..Self::VERTEX_COUNT - 1 {
-            for gx in 0..Self::VERTEX_COUNT - 1 {
-                let top_left = (gz * Self::VERTEX_COUNT) + gx;
+        for gz in 0..vertex_count - 1 {
+            for gx in 0..vertex_count - 1 {
+                let top_left = (gz * vertex_count) + gx;
                 let top_right = top_left + 1;
-                let bottom_left = ((gz + 1) * Self::VERTEX_COUNT) + gx;
+                let bottom_left = ((gz + 1) * vertex_count) + gx;
                 let bottom_right = bottom_left + 1;
 
                 indices[pointer] = top_left;
@@ -226,7 +242,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
             position,
             scale: Vec3A::one(),
             rotation: Vec3A::zero(),
-            color: Vec4::one(),
+            model_metadata: ModelMetaData::new(Mat4::identity(), Vec4::one()),
             meshes: vec![mesh],
             is_disposed: false,
             model_name: get_random_string(7),
