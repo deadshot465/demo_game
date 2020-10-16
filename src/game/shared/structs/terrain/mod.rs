@@ -11,6 +11,7 @@ use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use tokio::runtime::Handle;
 use crate::game::shared::util::height_generator::HeightGenerator;
 
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
@@ -81,24 +82,27 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 .clone();
             command_buffer = graphics_lock.create_secondary_command_buffer(command_pool.clone());
         }
-        let terrain = tokio::spawn(async move {
-            let mut generated_terrain = Terrain::create_terrain(
-                grid_x,
-                grid_z,
-                texture_index,
-                model_index,
-                image,
-                graphics.clone(),
-                command_pool,
-                command_buffer,
-                height_generator,
-            ).await;
-            log::info!("Terrain successfully generated.");
-            generated_terrain
-                .create_buffers(graphics_arc.clone())
-                .await
-                .unwrap();
-            generated_terrain
+
+        let terrain = tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async move {
+                let mut generated_terrain = Terrain::create_terrain(
+                    grid_x,
+                    grid_z,
+                    texture_index,
+                    model_index,
+                    image,
+                    graphics.clone(),
+                    command_pool,
+                    command_buffer,
+                    height_generator,
+                ).await;
+                log::info!("Terrain successfully generated.");
+                generated_terrain
+                    .create_buffers(graphics_arc.clone())
+                    .await
+                    .unwrap();
+                generated_terrain
+            })
         });
         Ok(terrain)
     }

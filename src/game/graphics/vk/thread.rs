@@ -128,7 +128,6 @@ impl ThreadPool {
     }
 
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
-        let backoff = Backoff::new();
         loop {
             if let Some(pool) = self
                 .threads
@@ -137,7 +136,6 @@ impl ThreadPool {
             {
                 return pool.command_pool.clone();
             }
-            backoff.spin();
         }
     }
 }
