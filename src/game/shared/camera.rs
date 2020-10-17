@@ -84,27 +84,27 @@ impl Camera {
             VirtualKeyCode::A => {
                 self.position = Vec3A::new(x - 2.0, y, z);
                 self.target = Vec3A::new(tx - 2.0, ty, tz);
-            },
+            }
             VirtualKeyCode::D => {
                 self.position = Vec3A::new(x + 2.0, y, z);
                 self.target = Vec3A::new(tx + 2.0, ty, tz);
-            },
+            }
             VirtualKeyCode::W => {
                 self.position = Vec3A::new(x, y + 2.0, z);
                 self.target = Vec3A::new(tx, ty + 2.0, tz);
-            },
+            }
             VirtualKeyCode::S => {
                 self.position = Vec3A::new(x, y - 2.0, z);
                 self.target = Vec3A::new(tx, ty - 2.0, tz);
-            },
+            }
             VirtualKeyCode::Q => {
                 self.position = Vec3A::new(x, y, z - 2.0);
                 self.target = Vec3A::new(tx, ty, tz - 2.0);
-            },
+            }
             VirtualKeyCode::E => {
                 self.position = Vec3A::new(x, y, z + 2.0);
                 self.target = Vec3A::new(tx, ty, tz + 2.0);
-            },
+            }
             _ => (),
         }
     }

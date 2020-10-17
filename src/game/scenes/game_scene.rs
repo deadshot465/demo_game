@@ -1,16 +1,15 @@
 use ash::vk::CommandBuffer;
-use async_trait::async_trait;
+use crossbeam::channel::*;
+use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use std::sync::{Arc, Weak};
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{Model, SkinnedModel, Terrain};
 use crate::game::shared::traits::{GraphicsBase, Scene};
+use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
 use crate::game::ResourceManager;
-use crate::game::shared::util::HeightGenerator;
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -19,16 +18,16 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
-    graphics: Weak<RwLock<GraphicsType>>,
+    graphics: Weak<ShardedLock<GraphicsType>>,
     resource_manager:
-        Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+        Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
     model_count: usize,
-    height_generator: Arc<RwLock<HeightGenerator>>,
-    model_tasks: Vec<JoinHandle<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
+    height_generator: Arc<ShardedLock<HeightGenerator>>,
+    model_tasks: Vec<Receiver<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     skinned_model_tasks:
-        Vec<JoinHandle<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
-    terrain_tasks: Vec<JoinHandle<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>,
+        Vec<Receiver<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
+    terrain_tasks: Vec<Receiver<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -41,16 +40,16 @@ where
 {
     pub fn new(
         resource_manager: Weak<
-            RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
+            ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
         >,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<ShardedLock<GraphicsType>>,
     ) -> Self {
         GameScene {
             graphics,
             resource_manager,
             scene_name: String::from("GAME_SCENE"),
             model_count: 0,
-            height_generator: Arc::new(RwLock::new(HeightGenerator::new())),
+            height_generator: Arc::new(ShardedLock::new(HeightGenerator::new())),
             model_tasks: vec![],
             skinned_model_tasks: vec![],
             terrain_tasks: vec![],
@@ -59,9 +58,12 @@ where
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    pub async fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
+    pub fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
         let model_index = self.model_count;
-        let mut height_generator = self.height_generator.write().await;
+        let mut height_generator = self
+            .height_generator
+            .write()
+            .expect("Failed to lock height generator.");
         let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
         height_generator.set_offsets(grid_x, grid_z, vertex_count as i32);
         drop(height_generator);
@@ -72,16 +74,16 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             self.resource_manager.clone(),
             self.graphics.clone(),
             self.height_generator.clone(),
-            0.5, 0.5, 0.5
-        )
-        .await?;
+            0.5,
+            0.5,
+            0.5,
+        )?;
         self.terrain_tasks.push(terrain);
         self.model_count += 1;
         Ok(())
     }
 }
 
-#[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {}
 
@@ -93,7 +95,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    async fn load_content(&mut self) -> anyhow::Result<()> {
+    fn load_content(&mut self) -> anyhow::Result<()> {
         /*self.add_skinned_model(
             "./models/nathan/Nathan.glb",
             Vec3A::new(-1.5, 0.0, -1.5),
@@ -123,49 +125,47 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )
-        .await?;
+        )?;
         self.add_model(
             "./models/bison/output.gltf",
             Vec3A::new(0.0, 0.0, 0.0),
             Vec3A::new(400.0, 400.0, 400.0),
             Vec3A::new(0.0, 90.0, 90.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )
-        .await?;
+        )?;
         self.add_skinned_model(
             "./models/cesiumMan/CesiumMan.glb",
             Vec3A::new(-3.5, 0.0, 0.0),
             Vec3A::new(2.0, 2.0, 2.0),
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )
-        .await?;
-        self.generate_terrain(0, 0).await?;
-        //self.generate_terrain(0, 1).await?;
+        )?;
+        self.generate_terrain(0, 0)?;
         Ok(())
     }
 
-    async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let graphics_arc = self.graphics.upgrade().unwrap();
-        let mut graphics_lock = graphics_arc.write().await;
-        graphics_lock.update(delta_time).await?;
+        let mut graphics_lock = graphics_arc
+            .write()
+            .expect("Failed to lock graphics handle.");
+        graphics_lock.update(delta_time)?;
         Ok(())
     }
 
-    async fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
+    fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
         let graphics = self
             .graphics
             .upgrade()
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
-            let mut graphics_lock = graphics.write().await;
-            graphics_lock.render().await?;
+            let mut graphics_lock = graphics.write().expect("Failed to lock graphics handle.");
+            graphics_lock.render()?;
         }
         Ok(())
     }
 
-    async fn add_model(
+    fn add_model(
         &mut self,
         file_name: &'static str,
         position: Vec3A,
@@ -178,7 +178,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
-        let lock = resource_manager.read().await;
+        let lock = resource_manager
+            .read()
+            .expect("Failed to lock resource manager.");
         let item = lock
             .models
             .iter()
@@ -196,7 +198,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.model_metadata.object_color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
-            let mut lock = resource_manager.write().await;
+            let mut lock = resource_manager
+                .write()
+                .expect("Failed to lock resource manager.");
             lock.add_model(model);
             drop(lock);
         } else {
@@ -209,8 +213,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 rotation,
                 color,
                 self.model_count,
-            )
-            .await?;
+            )?;
             self.model_tasks.push(task);
         }
         self.model_count += 1;
@@ -218,7 +221,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    async fn add_skinned_model(
+    fn add_skinned_model(
         &mut self,
         file_name: &'static str,
         position: Vec3A,
@@ -231,7 +234,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
-        let lock = resource_manager.read().await;
+        let lock = resource_manager
+            .read()
+            .expect("Failed to lock resource manager.");
         let item = lock
             .skinned_models
             .iter()
@@ -249,7 +254,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.model_metadata.object_color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
-            let mut lock = resource_manager.write().await;
+            let mut lock = resource_manager
+                .write()
+                .expect("Failed to lock resource manager.");
             lock.add_skinned_model(model);
             drop(lock);
         } else {
@@ -262,8 +269,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 rotation,
                 color,
                 self.model_count,
-            )
-            .await?;
+            )?;
             self.skinned_model_tasks.push(task);
         }
         self.model_count += 1;
@@ -271,7 +277,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    async fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
+    fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
         let model_tasks = &mut self.model_tasks;
         let skinned_model_tasks = &mut self.skinned_model_tasks;
         let terrain_tasks = &mut self.terrain_tasks;
@@ -279,15 +285,15 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let mut skinned_models = vec![];
         let mut terrains = vec![];
         for task in model_tasks.iter_mut() {
-            let model = task.await?;
+            let model = task.recv()?;
             models.push(model);
         }
         for task in skinned_model_tasks.iter_mut() {
-            let model = task.await?;
+            let model = task.recv()?;
             skinned_models.push(model);
         }
         for task in terrain_tasks.iter_mut() {
-            let terrain = task.await?;
+            let terrain = task.recv()?;
             terrains.push(terrain);
         }
         let rm = self.resource_manager.upgrade();
@@ -297,7 +303,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             ));
         }
         let rm = rm.unwrap();
-        let mut lock = rm.write().await;
+        let mut lock = rm.write().expect("Failed to lock resource manager.");
         for model in models.into_iter() {
             lock.add_model(model);
         }

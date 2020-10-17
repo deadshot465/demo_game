@@ -2,6 +2,7 @@ use ash::vk::{
     CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
     CommandPool, DescriptorSet, IndexType, PipelineBindPoint, ShaderStageFlags,
 };
+use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::animation::util::ReadOutputs;
@@ -10,12 +11,13 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{generate_joint_transforms, Animation, Channel, ChannelOutputs, SkinnedMesh, SkinnedPrimitive, SkinnedVertex, Vertex, SSBO, ModelMetaData};
+use crate::game::shared::structs::{
+    generate_joint_transforms, Animation, Channel, ChannelOutputs, ModelMetaData, SkinnedMesh,
+    SkinnedPrimitive, SkinnedVertex, Vertex, SSBO,
+};
 use crate::game::structs::{Joint, PushConstant};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
@@ -39,7 +41,7 @@ where
     pub model_name: String,
     pub model_index: usize,
     pub animations: HashMap<String, Animation>,
-    graphics: Weak<RwLock<GraphicsType>>,
+    graphics: Weak<ShardedLock<GraphicsType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -55,7 +57,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<ShardedLock<GraphicsType>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -404,23 +406,26 @@ where
 }
 
 impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
-    pub async fn new(
+    pub fn new(
         file_name: &'static str,
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<ShardedLock<Graphics>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
         model_index: usize,
-    ) -> anyhow::Result<JoinHandle<Self>> {
+    ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading skinned model from glTF {}...", file_name);
         let graphics_arc = graphics.upgrade().unwrap();
-        let model = tokio::spawn(async move {
+        let (model_send, model_recv) = bounded(5);
+        rayon::spawn(move || {
             let graphics_clone = graphics_arc;
             let thread_count: usize;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_lock = graphics_clone.read().await;
+                let graphics_lock = graphics_clone
+                    .read()
+                    .expect("Failed to lock graphics handle.");
                 thread_count = graphics_lock.thread_pool.thread_count;
                 command_pool = graphics_lock.thread_pool.threads[model_index % thread_count]
                     .command_pool
@@ -431,14 +436,14 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 model_index,
                 command_pool
             );
-            let (document, buffers, images) = read_raw_data(file_name).unwrap();
+            let (document, buffers, images) =
+                read_raw_data(file_name).expect("Failed to read raw data from glTF.");
             let (textures, texture_index_offset) = Graphics::create_gltf_textures(
                 images,
                 graphics_clone.clone(),
                 command_pool.clone(),
             )
-            .await
-            .unwrap();
+            .expect("Failed to create glTF textures.");
             let mut loaded_model = Self::create_model(
                 file_name,
                 document,
@@ -452,7 +457,9 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 texture_index_offset,
             );
             {
-                let graphics_lock = graphics_clone.read().await;
+                let graphics_lock = graphics_clone
+                    .read()
+                    .expect("Failed to lock graphics handle.");
                 for mesh in loaded_model.skinned_meshes.iter_mut() {
                     for primitive in mesh.primitives.iter_mut() {
                         primitive.command_pool = Some(command_pool.clone());
@@ -463,17 +470,18 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
             loaded_model
-                .create_buffers(graphics_clone.clone(), command_pool.clone())
-                .await
-                .unwrap();
-            loaded_model
+                .create_buffers(graphics_clone, command_pool)
+                .expect("Failed to create buffers for skinned model.");
+            model_send
+                .send(loaded_model)
+                .expect("Failed to send model result.");
         });
-        Ok(model)
+        Ok(model_recv)
     }
 
-    async fn create_buffers(
+    fn create_buffers(
         &mut self,
-        graphics: Arc<RwLock<Graphics>>,
+        graphics: Arc<ShardedLock<Graphics>>,
         command_pool: Arc<Mutex<CommandPool>>,
     ) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
@@ -483,11 +491,16 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 let vertices = primitive.vertices.clone();
                 let indices = primitive.indices.clone();
                 let cmd_pool = command_pool.clone();
-                let handle = tokio::spawn(async move {
-                    Graphics::create_buffer(graphics_clone, vertices, indices, cmd_pool).await
+                let (buffer_send, buffer_recv) = bounded(5);
+                rayon::spawn(move || {
+                    let result =
+                        Graphics::create_buffer(graphics_clone, vertices, indices, cmd_pool);
+                    buffer_send
+                        .send(result)
+                        .expect("Failed to send buffer result.");
                 });
                 let entry = handles.entry(index).or_insert_with(Vec::new);
-                (*entry).push(handle);
+                (*entry).push(buffer_recv);
             }
         }
         for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
@@ -498,7 +511,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 .zip(mesh_handles.iter_mut())
                 .collect::<Vec<_>>();
             for (primitive, handle) in zipped {
-                let (vertex_buffer, index_buffer) = handle.await??;
+                let (vertex_buffer, index_buffer) = handle.recv()??;
                 primitive.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
                 primitive.index_buffer = Some(ManuallyDrop::new(index_buffer));
             }
@@ -506,45 +519,36 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    pub async fn create_ssbo(&mut self) {
+    pub fn create_ssbo(&mut self) -> anyhow::Result<()> {
         let mut ssbo_handles = HashMap::new();
-        let graphics = self.graphics.upgrade().unwrap();
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle.");
         for (index, _) in self.skinned_meshes.iter_mut().enumerate() {
             let entry = ssbo_handles.entry(index).or_insert_with(Vec::new);
             let graphics_clone = graphics.clone();
-            entry.push(tokio::spawn(async move {
+            let (ssbo_send, ssbo_recv) = bounded(5);
+            rayon::spawn(move || {
                 let buffer = [Mat4::identity(); 500];
-                SSBO::new(graphics_clone, &buffer).await
-            }));
+                ssbo_send
+                    .send(SSBO::new(graphics_clone, &buffer))
+                    .expect("Failed to send SSBO result.");
+            });
+            entry.push(ssbo_recv);
         }
         for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
-            let ssbos = ssbo_handles.get_mut(&index).unwrap();
-            let item = ssbos.get_mut(0).unwrap().await.unwrap();
+            let ssbos = ssbo_handles
+                .get_mut(&index)
+                .expect("Failed to get SSBO handle.");
+            let item = ssbos
+                .get_mut(0)
+                .expect("Failed to get ssbo result.")
+                .recv()??;
             mesh.ssbo = Some(item);
         }
+        Ok(())
     }
-
-    /*pub fn create_sampler_resource(&mut self) {
-        let graphics_arc = self.graphics.upgrade().unwrap();
-        let graphics_lock = graphics_arc.read().unwrap();
-        for mesh in self.skinned_meshes.iter_mut() {
-            for primitive in mesh.primitives.iter_mut() {
-                if primitive.texture.is_none() {
-                    continue;
-                }
-                let texture_clone = primitive.texture
-                    .clone()
-                    .unwrap();
-                let texture = texture_clone.read().unwrap();
-                let sampler_resource = create_sampler_resource(
-                    Arc::downgrade(&graphics_lock.logical_device),
-                    graphics_lock.sampler_descriptor_set_layout,
-                    *graphics_lock.descriptor_pool.lock(), &*texture
-                );
-                primitive.sampler_resource = Some(sampler_resource);
-            }
-        }
-    }*/
 
     pub fn update(&mut self, delta_time: f64) {
         let mut keys = self.animations.keys();

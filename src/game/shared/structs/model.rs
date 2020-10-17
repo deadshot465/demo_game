@@ -3,6 +3,7 @@ use ash::vk::{
     CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
     CommandPool, DescriptorSet, IndexType, PipelineBindPoint, ShaderStageFlags,
 };
+use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::{Node, Scene};
@@ -13,12 +14,10 @@ use std::sync::{
     atomic::{AtomicPtr, Ordering},
     Arc, Weak,
 };
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Primitive, PushConstant, Vertex, ModelMetaData};
+use crate::game::shared::structs::{Mesh, ModelMetaData, Primitive, PushConstant, Vertex};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
@@ -40,7 +39,7 @@ where
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
-    pub graphics: Weak<RwLock<GraphicsType>>,
+    pub graphics: Weak<ShardedLock<GraphicsType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -56,7 +55,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<ShardedLock<GraphicsType>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -255,23 +254,26 @@ where
 }
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
-    pub async fn new(
+    pub fn new(
         file_name: &'static str,
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<ShardedLock<Graphics>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
         model_index: usize,
-    ) -> anyhow::Result<JoinHandle<Self>> {
+    ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading model {}...", file_name);
         let graphics_arc = graphics.upgrade().unwrap();
-        let model = tokio::spawn(async move {
+        let (model_send, model_recv) = bounded(5);
+        rayon::spawn(move || {
             let graphics_clone = graphics_arc;
             let thread_count: usize;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_lock = graphics_clone.read().await;
+                let graphics_lock = graphics_clone
+                    .read()
+                    .expect("Failed to lock graphics handle.");
                 thread_count = graphics_lock.thread_pool.thread_count;
                 command_pool = graphics_lock.thread_pool.threads[model_index % thread_count]
                     .command_pool
@@ -282,14 +284,14 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 model_index,
                 command_pool
             );
-            let (document, buffers, images) = read_raw_data(file_name).unwrap();
+            let (document, buffers, images) =
+                read_raw_data(file_name).expect("Failed to read raw data from glTF.");
             let (textures, texture_index_offset) = Graphics::create_gltf_textures(
                 images,
                 graphics_clone.clone(),
                 command_pool.clone(),
             )
-            .await
-            .unwrap();
+            .expect("Failed to create glTF textures.");
             let mut loaded_model = Self::create_model(
                 file_name,
                 document,
@@ -303,7 +305,9 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 texture_index_offset,
             );
             {
-                let graphics_lock = graphics_clone.read().await;
+                let graphics_lock = graphics_clone
+                    .read()
+                    .expect("Failed to lock graphics handle.");
                 for mesh in loaded_model.meshes.iter_mut() {
                     let command_buffer =
                         graphics_lock.create_secondary_command_buffer(command_pool.clone());
@@ -312,13 +316,17 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 }
                 drop(graphics_lock);
             }
-            loaded_model.create_buffers(graphics_clone).await.unwrap();
             loaded_model
+                .create_buffers(graphics_clone)
+                .expect("Failed to create buffers for model.");
+            model_send
+                .send(loaded_model)
+                .expect("Failed to send model result.");
         });
-        Ok(model)
+        Ok(model_recv)
     }
 
-    async fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);
@@ -339,15 +347,19 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let cmd_pool = mesh.command_pool.clone().unwrap();
             let pool = cmd_pool.clone();
             let g = graphics.clone();
-            let buffer_result =
-                tokio::spawn(
-                    async move { Graphics::create_buffer(g, vertices, indices, pool).await },
-                );
-            handles.insert(index, buffer_result);
+            let (buffer_send, buffer_recv) = bounded(5);
+            rayon::spawn(move || {
+                let result = Graphics::create_buffer(g, vertices, indices, pool)
+                    .expect("Failed to create buffers for model.");
+                buffer_send
+                    .send(result)
+                    .expect("Failed to send buffer result.");
+            });
+            handles.insert(index, buffer_recv);
         }
         for (index, mesh) in self.meshes.iter_mut().enumerate() {
             if let Some(result) = handles.get_mut(&index) {
-                let (vertex_buffer, index_buffer) = result.await??;
+                let (vertex_buffer, index_buffer) = result.recv()?;
                 mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
                 mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
             }

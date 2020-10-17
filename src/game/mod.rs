@@ -9,7 +9,6 @@ use crossbeam::sync::ShardedLock;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 #[cfg(target_os = "windows")]
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
 use winit::{event_loop::EventLoop, window::WindowBuilder};
@@ -32,9 +31,9 @@ where
 {
     pub window: Arc<ShardedLock<winit::window::Window>>,
     pub resource_manager:
-        Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+        Arc<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     pub camera: Rc<RefCell<Camera>>,
-    pub graphics: Arc<RwLock<GraphicsType>>,
+    pub graphics: Arc<ShardedLock<GraphicsType>>,
     pub scene_manager: SceneManager,
 }
 
@@ -51,13 +50,13 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             .build(event_loop)
             .expect("Failed to create window.");
         let camera = Rc::new(RefCell::new(Camera::new(width, height)));
-        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
+        let resource_manager = Arc::new(ShardedLock::new(ResourceManager::new()));
         let graphics = Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager))?;
         Ok(Game {
             window: Arc::new(ShardedLock::new(window)),
             resource_manager,
             camera,
-            graphics: Arc::new(RwLock::new(graphics)),
+            graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
         })
     }
@@ -73,25 +72,28 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         true
     }
 
-    pub async fn load_content(&mut self) -> anyhow::Result<()> {
-        self.scene_manager.load_content().await?;
-        self.scene_manager.wait_for_all_tasks().await?;
-        let mut lock = self.graphics.write().await;
-        lock.initialize().await?;
+    pub fn load_content(&mut self) -> anyhow::Result<()> {
+        self.scene_manager.load_content()?;
+        self.scene_manager.wait_for_all_tasks()?;
+        let mut lock = self.graphics.write().expect("Failed to graphics handle.");
+        lock.initialize()?;
         drop(lock);
-        let mut lock = self.resource_manager.write().await;
-        lock.create_ssbo().await;
+        let mut lock = self
+            .resource_manager
+            .write()
+            .expect("Failed to lock resource manager.");
+        lock.create_ssbo()?;
         drop(lock);
         Ok(())
     }
 
-    pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        self.scene_manager.update(delta_time).await?;
+    pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        self.scene_manager.update(delta_time)?;
         Ok(())
     }
 
-    pub async fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        self.scene_manager.render(delta_time).await?;
+    pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        self.scene_manager.render(delta_time)?;
         Ok(())
     }
 }
@@ -105,14 +107,14 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             .build(event_loop)
             .expect("Failed to create window.");
         let camera = Rc::new(RefCell::new(Camera::new(width, height)));
-        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
+        let resource_manager = Arc::new(ShardedLock::new(ResourceManager::new()));
         let graphics =
             DX12::Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager));
         Game {
             window: Arc::new(ShardedLock::new(window)),
             resource_manager,
             camera,
-            graphics: Arc::new(RwLock::new(graphics)),
+            graphics: Arc::new(ShardedLock::new(graphics)),
             scene_manager: SceneManager::new(),
         }
     }
@@ -121,7 +123,7 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
         true
     }
 
-    pub async fn load_content(&mut self) {}
+    pub fn load_content(&mut self) {}
 
     pub fn update(&self) {}
 

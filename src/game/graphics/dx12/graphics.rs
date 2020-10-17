@@ -2,11 +2,11 @@ use crate::game::graphics::dx12::{CommandQueue, DescriptorHeap, Pipeline, Resour
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::util::{get_nullptr, log_error};
 use crate::game::{Camera, ResourceManager};
+use crossbeam::sync::ShardedLock;
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
-use tokio::sync::RwLock;
 use winapi::ctypes::c_void;
 use winapi::shared::basetsd::SIZE_T;
 use winapi::shared::dxgi1_2::IDXGIFactory2;
@@ -32,7 +32,7 @@ use winit::platform::windows::WindowExtWindows;
 use wio::com::ComPtr;
 
 type ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType> =
-    Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>;
+    Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>;
 
 #[allow(dead_code)]
 pub struct Graphics {

@@ -156,13 +156,13 @@ impl Pipeline {
         }
     }
 
-    pub async fn create_graphic_pipelines(
+    pub fn create_graphic_pipelines(
         &mut self,
         descriptor_set_layout: &[DescriptorSetLayout],
         sample_count: SampleCountFlags,
         shaders: Vec<Shader>,
         shader_type: ShaderType,
-    ) {
+    ) -> anyhow::Result<()> {
         let push_constant_range = vec![PushConstantRange::builder()
             .stage_flags(ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX)
             .offset(0)
@@ -279,7 +279,8 @@ impl Pipeline {
                 let render_pass = self.render_pass;
                 let device = self.logical_device.clone();
                 let caches = self.pipeline_caches.get(&shader_type).cloned().unwrap();
-                worker_threads.push(tokio::spawn(async move {
+                let (pipeline_send, pipeline_recv) = crossbeam::channel::bounded(5);
+                rayon::spawn(move || {
                     let attr_desc = match shader_type {
                         ShaderType::AnimatedModel => SkinnedVertex::get_attribute_description(0),
                         _ => Vertex::get_attribute_description(0),
@@ -300,7 +301,7 @@ impl Pipeline {
                     let rs_info = PipelineRasterizationStateCreateInfo::builder()
                         .cull_mode(match shader_type {
                             ShaderType::Terrain => CullModeFlags::NONE,
-                            _ => CullModeFlags::BACK
+                            _ => CullModeFlags::BACK,
                         })
                         .depth_bias_clamp(0.0)
                         .depth_bias_constant_factor(0.0)
@@ -369,14 +370,17 @@ impl Pipeline {
                     let pipeline = device
                         .create_graphics_pipelines(pipeline_cache, pipeline_info.as_slice(), None)
                         .expect("Failed to create graphics pipeline.");
-                    (pipeline[0], pipeline_cache)
-                }));
+                    pipeline_send
+                        .send((pipeline[0], pipeline_cache))
+                        .expect("Failed to send graphics pipeline.");
+                });
+                worker_threads.push(pipeline_recv);
             }
         }
 
         let mut pipelines = vec![];
         for (index, worker) in worker_threads.into_iter().enumerate() {
-            let (pipeline, cache) = worker.await.unwrap();
+            let (pipeline, cache) = worker.recv()?;
             pipelines.push(pipeline);
             unsafe {
                 let cache_data = self
@@ -394,6 +398,7 @@ impl Pipeline {
         }
         self.graphic_pipelines.insert(shader_type, pipelines);
         log::info!("Graphic pipelines successfully created.");
+        Ok(())
     }
 
     pub fn get_pipeline(&self, shader_type: ShaderType, index: usize) -> ash::vk::Pipeline {

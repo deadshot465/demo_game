@@ -1,5 +1,5 @@
-use rand::prelude::*;
 use crate::game::shared::util::PerlinNoise;
+use rand::prelude::*;
 
 /// TODO: Offset is not working so tiling is currently not possible.
 pub struct HeightGenerator {
@@ -7,6 +7,12 @@ pub struct HeightGenerator {
     perlin_noise: PerlinNoise,
     x_offset: i32,
     z_offset: i32,
+}
+
+impl Default for HeightGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HeightGenerator {
@@ -64,25 +70,23 @@ impl HeightGenerator {
     }
 
     fn get_smooth_noise(&self, x: f32, z: f32) -> f32 {
-        let corners = (
-            self.get_noise(x - 1.0, z - 1.0)
-                + self.get_noise(x + 1.0, z - 1.0)
-                + self.get_noise(x - 1.0, z + 1.0)
-                + self.get_noise(x + 1.0, z + 1.0)
-        ) / 16.0;
-        let sides = (
-            self.get_noise(x - 1.0, z)
-                + self.get_noise(x + 1.0, z)
-                + self.get_noise(x, z - 1.0)
-                + self.get_noise(x, z + 1.0)
-        ) / 8.0;
+        let corners = (self.get_noise(x - 1.0, z - 1.0)
+            + self.get_noise(x + 1.0, z - 1.0)
+            + self.get_noise(x - 1.0, z + 1.0)
+            + self.get_noise(x + 1.0, z + 1.0))
+            / 16.0;
+        let sides = (self.get_noise(x - 1.0, z)
+            + self.get_noise(x + 1.0, z)
+            + self.get_noise(x, z - 1.0)
+            + self.get_noise(x, z + 1.0))
+            / 8.0;
         let center = self.get_noise(x, z) / 4.0;
         corners + sides + center
     }
 
     fn get_noise(&self, x: f32, z: f32) -> f32 {
         let mut rng = rand::rngs::StdRng::seed_from_u64(
-            (x * 49362.0 + z * 325176.0 + (self.seed as f32)) as u64
+            (x * 49362.0 + z * 325176.0 + (self.seed as f32)) as u64,
         );
         let x = rng.gen_range(0.0_f64, 1.0_f64) * 2.0 - 1.0;
         let z = rng.gen_range(0.0_f64, 1.0_f64) * 2.0 - 1.0;

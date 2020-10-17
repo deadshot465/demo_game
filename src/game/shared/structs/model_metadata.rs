@@ -9,7 +9,12 @@ pub struct ModelMetaData {
 }
 
 impl ModelMetaData {
-    pub fn new(world_matrix: Mat4, object_color: Vec4, reflectivity: f32, shine_damper: f32) -> Self {
+    pub fn new(
+        world_matrix: Mat4,
+        object_color: Vec4,
+        reflectivity: f32,
+        shine_damper: f32,
+    ) -> Self {
         ModelMetaData {
             world_matrix,
             object_color,

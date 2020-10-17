@@ -10,11 +10,17 @@ pub struct PerlinNoise {
     permutations: [u8; 512],
 }
 
+impl Default for PerlinNoise {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerlinNoise {
     pub fn new() -> Self {
         let mut permutation_lookup = [0_u8; 256];
-        for i in 0..256 {
-            permutation_lookup[i] = i as u8;
+        for (i, item) in permutation_lookup.iter_mut().enumerate() {
+            *item = i as u8;
         }
         let mut rng = rand::thread_rng();
         permutation_lookup.shuffle(&mut rng);
@@ -34,13 +40,9 @@ impl PerlinNoise {
             49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254,
             138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180
         ];*/
-        for i in 0..256 {
-            permutations[256 + i] = permutation_lookup[i];
-            permutations[i] = permutation_lookup[i];
-        }
-        PerlinNoise {
-            permutations
-        }
+        permutations[256..(256 + 256)].clone_from_slice(&permutation_lookup[..256]);
+        permutations[..256].clone_from_slice(&permutation_lookup[..256]);
+        PerlinNoise { permutations }
     }
 
     pub fn noise(&self, mut x: f64, mut y: f64) -> f64 {
@@ -203,7 +205,7 @@ impl PerlinNoise {
             0xD => -y + z,
             0xE => y - x,
             0xF => -y - z,
-            _ => 0.0
+            _ => 0.0,
         }
     }
 }

@@ -54,9 +54,7 @@ fn main() -> anyhow::Result<()> {
                     )
                     .unwrap();
                 if game.initialize() {
-                    game.load_content()
-                        .await
-                        .expect("Failed to load game content.");
+                    game.load_content().expect("Failed to load game content.");
                 }
                 game
             });
@@ -73,7 +71,7 @@ fn main() -> anyhow::Result<()> {
                         if elapsed > 1.0 {
                             game.window
                                 .read()
-                                .unwrap()
+                                .expect("Failed to lock window handle.")
                                 .set_title(&format!("Demo Engine / FPS: {}", frame_count));
                             frame_count = 0;
                             last_frame_time = time::Instant::now();
@@ -104,8 +102,8 @@ fn main() -> anyhow::Result<()> {
                     },
                     Event::MainEventsCleared => {
                         rt.block_on(async {
-                            game.update(delta_time).await.unwrap();
-                            game.render(delta_time).await.unwrap();
+                            game.update(delta_time).expect("Failed to update the game.");
+                            game.render(delta_time).expect("Failed to render the game.");
                         });
                     }
                     _ => (),
@@ -124,7 +122,7 @@ fn main() -> anyhow::Result<()> {
                             DX12::Resource,
                         >::new("Demo game", 1280.0, 720.0, &event_loop);
                     if game.initialize() {
-                        game.load_content().await;
+                        game.load_content();
                     }
                     game
                 });

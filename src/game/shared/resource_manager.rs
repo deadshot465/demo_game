@@ -189,11 +189,12 @@ where
 }
 
 impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
-    pub async fn create_ssbo(&mut self) {
+    pub fn create_ssbo(&mut self) -> anyhow::Result<()> {
         for model in self.skinned_models.iter_mut() {
             let mut model_lock = model.lock();
-            model_lock.create_ssbo().await
+            model_lock.create_ssbo()?;
         }
+        Ok(())
     }
 }
 

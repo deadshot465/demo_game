@@ -15,8 +15,6 @@ use std::mem::ManuallyDrop;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Weak};
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 use vk_mem::*;
 
 use crate::game::enums::ShaderType;
@@ -59,7 +57,7 @@ pub struct Graphics {
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager:
-        Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+        Weak<ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
@@ -84,7 +82,7 @@ impl Graphics {
         window: &winit::window::Window,
         camera: Rc<RefCell<Camera>>,
         resource_manager: Weak<
-            RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>,
+            ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>,
         >,
     ) -> anyhow::Result<Self> {
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
@@ -226,9 +224,7 @@ impl Graphics {
             msaa_image: ManuallyDrop::new(msaa_image),
             descriptor_set_layout: DescriptorSetLayout::null(),
             uniform_buffers: ManuallyDrop::new(uniform_buffers),
-            push_constant: PushConstant::new(
-                0, 0, sky_color
-            ),
+            push_constant: PushConstant::new(0, 0, sky_color),
             camera,
             resource_manager,
             dynamic_objects: DynamicBufferObject {
@@ -255,7 +251,7 @@ impl Graphics {
         })
     }
 
-    pub async fn begin_draw(&mut self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
+    pub fn begin_draw(&mut self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
         };
@@ -316,9 +312,8 @@ impl Graphics {
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
 
-            let command_buffers = self
-                .update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])
-                .await?;
+            let command_buffers =
+                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])?;
             self.logical_device
                 .cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
             self.logical_device
@@ -333,16 +328,18 @@ impl Graphics {
         Ok(())
     }
 
-    pub async fn create_buffer<VertexType: 'static + Send>(
-        graphics: Arc<RwLock<Self>>,
+    pub fn create_buffer<VertexType: 'static + Send>(
+        graphics: Arc<ShardedLock<Self>>,
         vertices: Vec<VertexType>,
         indices: Vec<u32>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
     ) -> anyhow::Result<(super::Buffer, super::Buffer)> {
+        use crossbeam::channel::*;
+
         let device: Arc<ash::Device>;
         let allocator: Arc<ShardedLock<vk_mem::Allocator>>;
         {
-            let lock = graphics.read().await;
+            let lock = graphics.read().expect("Failed to lock graphics handle.");
             device = lock.logical_device.clone();
             allocator = lock.allocator.clone();
             drop(lock);
@@ -354,7 +351,8 @@ impl Graphics {
 
         let device_handle1 = device.clone();
         let allocator_handle1 = allocator.clone();
-        let vertices_handle = tokio::spawn(async move {
+        let (vertices_send, vertices_recv) = bounded(5);
+        rayon::spawn(move || {
             let device_handle = device_handle1;
             let allocator_handle = allocator_handle1;
             let mut vertex_staging = super::Buffer::new(
@@ -379,14 +377,16 @@ impl Graphics {
                 MemoryPropertyFlags::DEVICE_LOCAL,
                 Arc::downgrade(&allocator_handle),
             );
-            (vertex_staging, vertex_buffer)
+            vertices_send
+                .send((vertex_staging, vertex_buffer))
+                .expect("Failed to create vertex buffer.");
         });
 
         let device_handle2 = device.clone();
-        let allocator_handle2 = allocator.clone();
-        let indices_handle = tokio::spawn(async move {
+        let (indices_send, indices_recv) = bounded(5);
+        rayon::spawn(move || {
             let device_handle = device_handle2;
-            let allocator_handle = allocator_handle2;
+            let allocator_handle = allocator;
             let mut index_staging = super::Buffer::new(
                 Arc::downgrade(&device_handle),
                 index_buffer_size,
@@ -409,12 +409,14 @@ impl Graphics {
                 MemoryPropertyFlags::DEVICE_LOCAL,
                 Arc::downgrade(&allocator_handle),
             );
-            (index_staging, index_buffer)
+            indices_send
+                .send((index_staging, index_buffer))
+                .expect("Failed to create index buffer.");
         });
 
-        let (vertex_staging, vertex_buffer) = vertices_handle.await?;
-        let (index_staging, index_buffer) = indices_handle.await?;
-        let graphics_lock = graphics.read().await;
+        let (vertex_staging, vertex_buffer) = vertices_recv.recv()?;
+        let (index_staging, index_buffer) = indices_recv.recv()?;
+        let graphics_lock = graphics.read().expect("Failed to lock graphics handle.");
         let pool_lock = command_pool.lock();
         vertex_buffer.copy_buffer(
             &vertex_staging,
@@ -439,9 +441,9 @@ impl Graphics {
         Ok((vertex_buffer, index_buffer))
     }
 
-    pub async fn create_gltf_textures(
+    pub fn create_gltf_textures(
         images: Vec<gltf::image::Data>,
-        graphics: Arc<RwLock<Self>>,
+        graphics: Arc<ShardedLock<Self>>,
         command_pool: Arc<Mutex<CommandPool>>,
     ) -> anyhow::Result<(Vec<Arc<ShardedLock<super::Image>>>, usize)> {
         let mut textures = vec![];
@@ -449,7 +451,6 @@ impl Graphics {
         use gltf::image::Format;
         for image in images.iter() {
             let buffer_size = image.width * image.height * 4;
-            let texture: JoinHandle<anyhow::Result<super::Image>>;
             let pool = command_pool.clone();
             let g = graphics.clone();
             let width = image.width;
@@ -461,8 +462,12 @@ impl Graphics {
                 }
                 _ => image.pixels.to_vec(),
             };
-            texture = tokio::spawn(async move {
-                Self::create_image_from_raw(
+
+            use crossbeam::channel::*;
+
+            let (texture_send, texture_recv) = bounded(5);
+            rayon::spawn(move || {
+                let result = Self::create_image_from_raw(
                     pixels,
                     buffer_size as u64,
                     width,
@@ -475,22 +480,27 @@ impl Graphics {
                     g,
                     pool,
                     SamplerAddressMode::REPEAT,
-                )
-                .await
+                );
+                texture_send
+                    .send(result)
+                    .expect("Failed to send texture result.");
             });
-            texture_handles.push(texture);
+            texture_handles.push(texture_recv);
         }
         for handle in texture_handles.into_iter() {
-            textures.push(handle.await??);
+            textures.push(handle.recv()??);
         }
-        let graphics_lock = graphics.read().await;
+        let graphics_lock = graphics.read().expect("Failed to lock graphics handle.");
         let resource_manager = graphics_lock.resource_manager.clone();
         drop(graphics_lock);
         let texture_index_offset: usize;
         match resource_manager.upgrade() {
             Some(rm) => {
-                texture_index_offset = rm.read().await.get_texture_count();
-                let mut rm_lock = rm.write().await;
+                texture_index_offset = rm
+                    .read()
+                    .expect("Failed to lock resource manager.")
+                    .get_texture_count();
+                let mut rm_lock = rm.write().expect("Failed to lock resource manager.");
                 let textures_ptrs = textures
                     .into_iter()
                     .map(|img| rm_lock.add_texture(img))
@@ -504,9 +514,9 @@ impl Graphics {
         }
     }
 
-    pub async fn create_image_from_file(
+    pub fn create_image_from_file(
         file_name: &str,
-        graphics: Arc<RwLock<Graphics>>,
+        graphics: Arc<ShardedLock<Graphics>>,
         command_pool: Arc<Mutex<CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<Arc<ShardedLock<super::Image>>> {
@@ -532,10 +542,11 @@ impl Graphics {
         let height = image.height();
         let color_type = image.color();
         let graphics_clone = graphics.clone();
-        let command_pool_clone = command_pool.clone();
+        use crossbeam::channel::*;
         use image::ColorType;
-        let texture = tokio::spawn(async move {
-            Self::create_image_from_raw(
+        let (texture_send, texture_recv) = bounded(5);
+        rayon::spawn(move || {
+            let result = Self::create_image_from_raw(
                 bytes,
                 buffer_size as u64,
                 width,
@@ -546,16 +557,22 @@ impl Graphics {
                     _ => ImageFormat::ColorType(color_type),
                 },
                 graphics_clone,
-                command_pool_clone,
+                command_pool,
                 sampler_address_mode,
-            )
-            .await
-        })
-        .await??;
-        let resource_manager = graphics.read().await.resource_manager.clone();
+            );
+            texture_send
+                .send(result)
+                .expect("Failed to send texture result.");
+        });
+        let texture = texture_recv.recv()??;
+        let resource_manager = graphics
+            .read()
+            .expect("Failed to lock graphics handle.")
+            .resource_manager
+            .clone();
         match resource_manager.upgrade() {
             Some(rm) => {
-                let mut rm_lock = rm.write().await;
+                let mut rm_lock = rm.write().expect("Failed to lock resource manager.");
                 let image = rm_lock.add_texture(texture);
                 Ok(image)
             }
@@ -582,11 +599,11 @@ impl Graphics {
         }
     }
 
-    pub async fn initialize(&mut self) -> anyhow::Result<()> {
-        self.create_descriptor_set_layout().await?;
+    pub fn initialize(&mut self) -> anyhow::Result<()> {
+        self.create_descriptor_set_layout()?;
         //self.create_dynamic_model_buffers()?;
-        self.create_primary_ssbo().await?;
-        self.allocate_descriptor_set().await?;
+        self.create_primary_ssbo()?;
+        self.allocate_descriptor_set()?;
         let color_format: Format = self.swapchain.format.format;
         let depth_format = self.depth_format;
         let sample_count = self.sample_count;
@@ -594,12 +611,10 @@ impl Graphics {
             .write()
             .unwrap()
             .create_renderpass(color_format, depth_format, sample_count);
-        self.create_graphics_pipeline(ShaderType::BasicShader).await;
-        self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)
-            .await;
-        self.create_graphics_pipeline(ShaderType::AnimatedModel)
-            .await;
-        self.create_graphics_pipeline(ShaderType::Terrain).await;
+        self.create_graphics_pipeline(ShaderType::BasicShader)?;
+        self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
+        self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
+        self.create_graphics_pipeline(ShaderType::Terrain)?;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
         self.frame_buffers = Self::create_frame_buffers(
@@ -614,7 +629,7 @@ impl Graphics {
         Ok(())
     }
 
-    pub async fn render(&mut self) -> anyhow::Result<u32> {
+    pub fn render(&mut self) -> anyhow::Result<u32> {
         unsafe {
             let swapchain_loader = self.swapchain.swapchain_loader.clone();
             let result = swapchain_loader.acquire_next_image(
@@ -630,8 +645,7 @@ impl Graphics {
                 ));
             }
             let (image_index, _is_suboptimal) = result.unwrap();
-            self.begin_draw(self.frame_buffers[image_index as usize])
-                .await?;
+            self.begin_draw(self.frame_buffers[image_index as usize])?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
@@ -674,9 +688,11 @@ impl Graphics {
         }
     }
 
-    pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let resource_arc = self.resource_manager.upgrade().unwrap();
-        let mut resource_lock = resource_arc.write().await;
+        let mut resource_lock = resource_arc
+            .write()
+            .expect("Failed to lock resource manager.");
         for model in resource_lock.models.iter_mut() {
             model.lock().update(delta_time);
         }
@@ -701,7 +717,7 @@ impl Graphics {
         Ok(())
     }
 
-    pub async fn update_secondary_command_buffers(
+    pub fn update_secondary_command_buffers(
         &mut self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
         viewport: Viewport,
@@ -709,7 +725,9 @@ impl Graphics {
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         {
-            let resource_lock = resource_manager.read().await;
+            let resource_lock = resource_manager
+                .read()
+                .expect("Failed to lock resource manager.");
             let thread_count = self.thread_pool.thread_count;
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
@@ -720,20 +738,22 @@ impl Graphics {
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count].add_job(move || {
-                    let model_lock = model_clone.lock();
-                    let ptr = ptr_clone;
-                    model_lock.render(
-                        ptr,
-                        push_constant,
-                        viewport,
-                        scissor,
-                        device_clone,
-                        pipeline_clone,
-                        descriptor_set,
-                        None,
-                    );
-                });
+                self.thread_pool.threads[model_index % thread_count]
+                    .add_job(move || {
+                        let model_lock = model_clone.lock();
+                        let ptr = ptr_clone;
+                        model_lock.render(
+                            ptr,
+                            push_constant,
+                            viewport,
+                            scissor,
+                            device_clone,
+                            pipeline_clone,
+                            descriptor_set,
+                            None,
+                        );
+                    })
+                    .expect("Failed to add work to the queue.");
             }
             for model in resource_lock.skinned_models.iter() {
                 let model_clone = model.clone();
@@ -742,19 +762,21 @@ impl Graphics {
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count].add_job(move || {
-                    let model_lock = model_clone.lock();
-                    let ptr = ptr_clone;
-                    model_lock.render(
-                        ptr,
-                        push_constant,
-                        viewport,
-                        scissor,
-                        device_clone,
-                        pipeline_clone,
-                        descriptor_set,
-                    );
-                });
+                self.thread_pool.threads[model_index % thread_count]
+                    .add_job(move || {
+                        let model_lock = model_clone.lock();
+                        let ptr = ptr_clone;
+                        model_lock.render(
+                            ptr,
+                            push_constant,
+                            viewport,
+                            scissor,
+                            device_clone,
+                            pipeline_clone,
+                            descriptor_set,
+                        );
+                    })
+                    .expect("Failed to add work to the queue.");
             }
             for terrain in resource_lock.terrains.iter() {
                 let terrain_clone = terrain.clone();
@@ -763,24 +785,28 @@ impl Graphics {
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count].add_job(move || {
-                    let terrain_lock = terrain_clone.lock();
-                    let ptr = ptr_clone;
-                    terrain_lock.model.render(
-                        ptr,
-                        push_constant,
-                        viewport,
-                        scissor,
-                        device_clone,
-                        pipeline_clone,
-                        descriptor_set,
-                        Some(ShaderType::Terrain),
-                    );
-                });
+                self.thread_pool.threads[model_index % thread_count]
+                    .add_job(move || {
+                        let terrain_lock = terrain_clone.lock();
+                        let ptr = ptr_clone;
+                        terrain_lock.model.render(
+                            ptr,
+                            push_constant,
+                            viewport,
+                            scissor,
+                            device_clone,
+                            pipeline_clone,
+                            descriptor_set,
+                            Some(ShaderType::Terrain),
+                        );
+                    })
+                    .expect("Failed to add work to the queue.");
             }
         }
-        self.thread_pool.wait().await;
-        let resource_lock = resource_manager.read().await;
+        self.thread_pool.wait()?;
+        let resource_lock = resource_manager
+            .read()
+            .expect("Failed to lock resource manager.");
         let mut model_command_buffers = resource_lock
             .models
             .iter()
@@ -851,11 +877,13 @@ impl Graphics {
         ManuallyDrop::drop(&mut self.swapchain);
     }
 
-    async fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
+    fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade().expect(
             "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
         );
-        let resource_lock = resource_manager.read().await;
+        let resource_lock = resource_manager
+            .read()
+            .expect("Failed to lock resource manager.");
         let total_texture_count = resource_lock.get_texture_count();
         drop(resource_lock);
         drop(resource_manager);
@@ -1024,12 +1052,14 @@ impl Graphics {
         Ok(())
     }*/
 
-    async fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
+    fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
-        let resource_lock = resource_manager.read().await;
+        let resource_lock = resource_manager
+            .read()
+            .expect("Failed to lock resource manager.");
         let is_models_empty = resource_lock.models.is_empty()
             && resource_lock.skinned_models.is_empty()
             && resource_lock.terrains.is_empty();
@@ -1093,12 +1123,14 @@ impl Graphics {
         Ok(())
     }
 
-    async fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
+    fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for allocating descriptor set.");
-        let resource_lock = resource_manager.read().await;
+        let resource_lock = resource_manager
+            .read()
+            .expect("Failed to lock resource manager.");
         let texture_count = resource_lock.get_texture_count();
         let mut ssbo_count = 1;
         resource_lock
@@ -1234,49 +1266,42 @@ impl Graphics {
         }
     }
 
-    async fn create_graphics_pipeline(&mut self, shader_type: ShaderType) {
-        unsafe {
-            let shaders = vec![
-                super::Shader::new(
-                    self.logical_device.clone(),
-                    match shader_type {
-                        ShaderType::AnimatedModel => "./shaders/basicShader_animated.spv",
-                        ShaderType::Terrain => "./shaders/terrain.spv",
-                        _ => "./shaders/vert.spv",
-                    },
-                    ShaderStageFlags::VERTEX,
-                ),
-                super::Shader::new(
-                    self.logical_device.clone(),
-                    match shader_type {
-                        ShaderType::BasicShader => "./shaders/frag.spv",
-                        ShaderType::BasicShaderWithoutTexture => {
-                            "./shaders/basicShader_noTexture.spv"
-                        }
-                        _ => "./shaders/frag.spv",
-                    },
-                    ShaderStageFlags::FRAGMENT,
-                ),
-            ];
+    fn create_graphics_pipeline(&mut self, shader_type: ShaderType) -> anyhow::Result<()> {
+        let shaders = vec![
+            super::Shader::new(
+                self.logical_device.clone(),
+                match shader_type {
+                    ShaderType::AnimatedModel => "./shaders/basicShader_animated.spv",
+                    ShaderType::Terrain => "./shaders/terrain.spv",
+                    _ => "./shaders/vert.spv",
+                },
+                ShaderStageFlags::VERTEX,
+            ),
+            super::Shader::new(
+                self.logical_device.clone(),
+                match shader_type {
+                    ShaderType::BasicShader => "./shaders/frag.spv",
+                    ShaderType::BasicShaderWithoutTexture => "./shaders/basicShader_noTexture.spv",
+                    _ => "./shaders/frag.spv",
+                },
+                ShaderStageFlags::FRAGMENT,
+            ),
+        ];
 
-            let mut descriptor_set_layout = vec![self.descriptor_set_layout];
-            match shader_type {
-                ShaderType::AnimatedModel => {
-                    descriptor_set_layout.push(self.ssbo_descriptor_set_layout);
-                }
-                _ => (),
+        let mut descriptor_set_layout = vec![self.descriptor_set_layout];
+        match shader_type {
+            ShaderType::AnimatedModel => {
+                descriptor_set_layout.push(self.ssbo_descriptor_set_layout);
             }
-            self.pipeline
-                .write()
-                .unwrap()
-                .create_graphic_pipelines(
-                    descriptor_set_layout.as_slice(),
-                    self.sample_count,
-                    shaders,
-                    shader_type,
-                )
-                .await;
+            _ => (),
         }
+        self.pipeline.write().unwrap().create_graphic_pipelines(
+            descriptor_set_layout.as_slice(),
+            self.sample_count,
+            shaders,
+            shader_type,
+        )?;
+        Ok(())
     }
 
     fn allocate_command_buffers(
@@ -1361,17 +1386,17 @@ impl Graphics {
         (fences, acquired_semaphores, complete_semaphores)
     }
 
-    async fn create_image_from_raw(
+    fn create_image_from_raw(
         image_data: Vec<u8>,
         buffer_size: DeviceSize,
         width: u32,
         height: u32,
         format: ImageFormat,
-        graphics: Arc<RwLock<Self>>,
+        graphics: Arc<ShardedLock<Self>>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<super::Image> {
-        let lock = graphics.read().await;
+        let lock = graphics.read().expect("Failed to lock graphics handle.");
         let device = lock.logical_device.clone();
         let allocator = lock.allocator.clone();
         let image_format = match format {

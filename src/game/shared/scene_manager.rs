@@ -27,34 +27,34 @@ impl SceneManager {
         }
     }
 
-    pub async fn load_content(&self) -> anyhow::Result<()> {
+    pub fn load_content(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().load_content().await?;
+            scene.borrow_mut().load_content()?;
         }
         Ok(())
     }
 
-    pub async fn wait_for_all_tasks(&self) -> anyhow::Result<()> {
+    pub fn wait_for_all_tasks(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().wait_for_all_tasks().await?;
+            scene.borrow_mut().wait_for_all_tasks()?;
         }
         Ok(())
     }
 
-    pub async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+    pub fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().update(delta_time).await?;
+            scene.borrow_mut().update(delta_time)?;
         }
         Ok(())
     }
 
-    pub async fn render(&self, delta_time: f64) -> anyhow::Result<()> {
+    pub fn render(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow().render(delta_time).await?;
+            scene.borrow().render(delta_time)?;
         }
         Ok(())
     }

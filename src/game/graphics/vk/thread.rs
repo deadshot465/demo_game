@@ -1,98 +1,106 @@
 use ash::version::DeviceV1_0;
 use ash::vk::{CommandPool, CommandPoolCreateFlags};
+use crossbeam::channel::*;
 use crossbeam::queue::ArrayQueue;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::broadcast::*;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
+use std::thread::JoinHandle;
 
 #[allow(dead_code)]
 pub struct Thread {
     pub command_pool: Arc<Mutex<ash::vk::CommandPool>>,
     destroying: Arc<AtomicBool>,
     work_received: AtomicBool,
-    worker: JoinHandle<()>,
+    worker: Option<JoinHandle<anyhow::Result<()>>>,
     task_queue: Arc<ArrayQueue<Box<dyn FnOnce() + Send + 'static>>>,
-    sender: Sender<()>,
-    notify: Arc<Notify>,
+    work_sender: Sender<()>,
+    complete_receiver: Receiver<()>,
 }
 
 impl Thread {
     pub fn new(device: &ash::Device, queue_index: u32) -> Self {
-        let task_queue = Arc::new(ArrayQueue::new(20));
-        let queue = task_queue.clone();
-        let (sender, receiver) = channel::<()>(100);
-        let s1 = sender.clone();
+        let task_queue = Arc::new(ArrayQueue::new(100));
+        let (sender, receiver) = bounded::<()>(100);
+        let (complete_sender, complete_receiver) = bounded::<()>(100);
         let destroying = Arc::new(AtomicBool::new(false));
-        let d1 = destroying.clone();
         let pool_info = ash::vk::CommandPoolCreateInfo::builder()
             .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_index)
             .build();
-        let notify = Arc::new(Notify::new());
-        let n1 = notify.clone();
+        let sender_clone = sender.clone();
+        let destroying_clone = destroying.clone();
+        let queue = task_queue.clone();
         unsafe {
             let command_pool = device
                 .create_command_pool(&pool_info, None)
                 .expect("Failed to create command pool for thread.");
             Thread {
                 destroying,
-                worker: tokio::spawn(async move {
-                    let s1 = s1;
-                    let mut receiver = receiver;
-                    let d1 = d1;
-                    let notify = n1;
+                worker: Some(std::thread::spawn(move || {
+                    let sender = sender_clone;
+                    let complete_sender = complete_sender;
+                    let receiver = receiver;
+                    let destroying = destroying_clone;
                     'outer: loop {
                         let mut work: Option<Box<dyn FnOnce() + Send>>;
-                        while receiver.recv().await.is_ok() {
-                            if d1.load(Ordering::SeqCst) {
+                        while receiver.recv().is_ok() {
+                            if destroying.load(Ordering::SeqCst) {
                                 break 'outer;
                             }
                             work = queue.pop();
                             if let Some(job) = work {
                                 job();
-                                s1.send(()).unwrap();
+                                sender.send(())?;
                             } else {
-                                notify.notify();
+                                complete_sender.send(())?;
                                 break;
                             }
                         }
                     }
-                }),
+                    Ok(())
+                })),
                 task_queue: task_queue.clone(),
-                sender,
+                work_sender: sender,
                 command_pool: Arc::new(Mutex::new(command_pool)),
-                notify,
+                complete_receiver,
                 work_received: AtomicBool::new(false),
             }
         }
     }
 
-    pub fn add_job(&self, work: impl FnOnce() + Send + 'static) {
-        let result = self.task_queue.push(Box::new(work));
-        if result.is_err() {
-            log::error!("Error pushing new job into the queue: Queue is full.");
-            return;
+    pub fn add_job(&self, work: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
+        match self.task_queue.push(Box::new(work)) {
+            Ok(_) => (),
+            Err(_) => log::error!("Failed to push work into the queue."),
         }
         self.work_received.store(true, Ordering::SeqCst);
-        self.sender.send(()).unwrap();
+        self.work_sender.send(())?;
+        Ok(())
     }
 
-    pub async fn wait(&self) {
+    pub fn wait(&self) -> anyhow::Result<()> {
         if !self.work_received.load(Ordering::SeqCst) {
-            return;
+            return Ok(());
         }
-        self.notify.notified().await;
+        self.complete_receiver.recv()?;
         self.work_received.store(false, Ordering::SeqCst);
+        Ok(())
     }
+}
 
-    pub async fn dispose(&mut self) {
+impl Drop for Thread {
+    fn drop(&mut self) {
         self.destroying.store(true, Ordering::SeqCst);
-        self.sender.send(()).unwrap();
-        let worker = &mut self.worker;
-        worker.await.expect("Failed to dispose worker thread.");
+        self.work_sender
+            .send(())
+            .expect("Failed to send work to the worker thread.");
+        if let Some(worker) = self.worker.take() {
+            match worker.join() {
+                Ok(_) => (),
+                Err(_) => log::error!("Failed to join work thread."),
+            }
+        }
     }
 }
 
@@ -120,10 +128,11 @@ impl ThreadPool {
         }
     }
 
-    pub async fn wait(&self) {
+    pub fn wait(&self) -> anyhow::Result<()> {
         for thread in self.threads.iter() {
-            thread.wait().await;
+            thread.wait()?;
         }
+        Ok(())
     }
 
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
