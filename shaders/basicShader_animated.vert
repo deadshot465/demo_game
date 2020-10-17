@@ -8,7 +8,9 @@ layout (binding = 0) uniform ModelViewProjection
 
 layout (std430, binding = 2) readonly buffer ModelMatrices {
     mat4 world_matrices[50];
-    vec4 object_colors[];
+    vec4 object_colors[50];
+    float reflectivities[50];
+    float shine_dampers[];
 };
 
 layout (push_constant) uniform PushConstant
@@ -33,6 +35,7 @@ layout (location = 1) out vec4 outNormal;
 layout (location = 2) out vec2 outTexCoord;
 layout (location = 3) out vec4 fragPos;
 layout (location = 4) out float visibility;
+layout (location = 5) out vec4 toCameraDirection;
 
 const float density = 0.007;
 const float gradient = 1.5;
@@ -52,6 +55,7 @@ void main()
     outNormal = transpose(inverse(world_matrices[pco.model_index])) * outNormal;
     outTexCoord = inTexCoord;
     fragPos = worldPosition;
+    toCameraDirection = (inverse(mvp.view) * vec4(0.0, 0.0, 0.0, 1.0)) - worldPosition;
 
     float distance = length(positionRelativeToCamera.xyz);
     visibility = exp(-pow((distance * density), gradient));

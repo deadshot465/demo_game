@@ -73,7 +73,9 @@ where
             rotation,
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
-                object_color: color
+                object_color: color,
+                reflectivity: 1.0,
+                shine_damper: 10.0,
             },
             skinned_meshes: meshes,
             is_disposed: false,

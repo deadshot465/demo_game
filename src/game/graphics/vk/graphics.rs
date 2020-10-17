@@ -36,6 +36,8 @@ const SSBO_DATA_COUNT: usize = 50;
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
     object_colors: [Vec4; SSBO_DATA_COUNT],
+    reflectivities: [f32; SSBO_DATA_COUNT],
+    shine_dampers: [f32; SSBO_DATA_COUNT],
 }
 
 pub struct Graphics {
@@ -1036,24 +1038,37 @@ impl Graphics {
         }
         let mut model_metadata = PrimarySSBOData {
             world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
-            object_colors: [Vec4::zero(); SSBO_DATA_COUNT]
+            object_colors: [Vec4::zero(); SSBO_DATA_COUNT],
+            reflectivities: [0.0; SSBO_DATA_COUNT],
+            shine_dampers: [0.0; SSBO_DATA_COUNT],
         };
         for model in resource_lock.models.iter() {
             let model_lock = model.lock();
-            model_metadata.world_matrices[model_lock.model_index] = model_lock.model_metadata.world_matrix;
-            model_metadata.object_colors[model_lock.model_index] = model_lock.model_metadata.object_color;
+            let metadata = model_lock.model_metadata;
+            model_metadata.world_matrices[model_lock.model_index] = metadata.world_matrix;
+            model_metadata.object_colors[model_lock.model_index] = metadata.object_color;
+            model_metadata.reflectivities[model_lock.model_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[model_lock.model_index] = metadata.shine_damper;
         }
         for model in resource_lock.skinned_models.iter() {
             let model_lock = model.lock();
-            model_metadata.world_matrices[model_lock.model_index] = model_lock.model_metadata.world_matrix;
-            model_metadata.object_colors[model_lock.model_index] = model_lock.model_metadata.object_color;
+            let metadata = model_lock.model_metadata;
+            model_metadata.world_matrices[model_lock.model_index] = metadata.world_matrix;
+            model_metadata.object_colors[model_lock.model_index] = metadata.object_color;
+            model_metadata.reflectivities[model_lock.model_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[model_lock.model_index] = metadata.shine_damper;
         }
         for terrain in resource_lock.terrains.iter() {
             let terrain_lock = terrain.lock();
-            let world_matrix = terrain_lock.model.model_metadata.world_matrix;
-            let object_color = terrain_lock.model.model_metadata.object_color;
+            let metadata = terrain_lock.model.model_metadata;
+            let world_matrix = metadata.world_matrix;
+            let object_color = metadata.object_color;
+            let reflectivity = metadata.reflectivity;
+            let shine_damper = metadata.shine_damper;
             model_metadata.world_matrices[terrain_lock.model.model_index] = world_matrix;
             model_metadata.object_colors[terrain_lock.model.model_index] = object_color;
+            model_metadata.reflectivities[terrain_lock.model.model_index] = reflectivity;
+            model_metadata.shine_dampers[terrain_lock.model.model_index] = shine_damper;
         }
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);

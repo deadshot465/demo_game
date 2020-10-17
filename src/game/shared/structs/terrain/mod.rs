@@ -245,6 +245,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
                 object_color: Vec4::one(),
+                reflectivity: 0.0,
+                shine_damper: 0.0,
             },
             meshes: vec![mesh],
             is_disposed: false,

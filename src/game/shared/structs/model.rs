@@ -75,7 +75,9 @@ where
             rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
-                object_color: color
+                object_color: color,
+                reflectivity: 1.0,
+                shine_damper: 10.0,
             },
             graphics,
             meshes,
