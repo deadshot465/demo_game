@@ -27,6 +27,7 @@ use crate::game::shared::util::interpolate_alpha;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
 use crate::game::{Camera, ResourceManager};
+use ash::prelude::VkResult;
 
 const SSBO_DATA_COUNT: usize = 50;
 
@@ -46,7 +47,6 @@ pub struct Graphics {
     pub pipeline: Arc<ShardedLock<ManuallyDrop<super::Pipeline>>>,
     pub descriptor_sets: Vec<DescriptorSet>,
     pub push_constant: PushConstant,
-    pub current_index: usize,
     pub descriptor_set_layout: DescriptorSetLayout,
     pub ssbo_descriptor_set_layout: DescriptorSetLayout,
     pub descriptor_pool: Arc<Mutex<DescriptorPool>>,
@@ -59,6 +59,7 @@ pub struct Graphics {
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager: ResourceManagerHandle,
+    pub is_initialized: bool,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
@@ -70,9 +71,9 @@ pub struct Graphics {
     uniform_buffers: ManuallyDrop<UniformBuffers>,
     camera: Rc<RefCell<Camera>>,
     command_buffers: Vec<CommandBuffer>,
-    fences: Vec<Fence>,
-    acquired_semaphores: Vec<Semaphore>,
-    complete_semaphores: Vec<Semaphore>,
+    fence: Fence,
+    acquired_semaphore: Semaphore,
+    completed_semaphore: Semaphore,
     sample_count: SampleCountFlags,
     depth_format: Format,
     sky_color: Vec4,
@@ -203,10 +204,8 @@ impl Graphics {
             command_pool,
             swapchain.swapchain_images.len() as u32,
         );
-        let (fences, acquired_semaphores, complete_semaphores) = Initializer::create_sync_object(
-            device.as_ref(),
-            swapchain.swapchain_images.len() as u32,
-        );
+        let (fence, acquired_semaphore, completed_semaphore) =
+            Initializer::create_sync_object(device.as_ref());
 
         let sky_color: Vec4 = Vec4::new(0.5, 0.5, 0.5, 1.0);
         Ok(Graphics {
@@ -240,20 +239,20 @@ impl Graphics {
             pipeline: Arc::new(ShardedLock::new(ManuallyDrop::new(pipeline))),
             command_buffers,
             frame_buffers: vec![],
-            fences,
-            acquired_semaphores,
-            complete_semaphores,
-            current_index: 0,
+            fence,
+            acquired_semaphore,
+            completed_semaphore,
             sample_count,
             depth_format,
             allocator,
             thread_pool,
             ssbo_descriptor_set_layout,
             sky_color,
+            is_initialized: false,
         })
     }
 
-    pub fn begin_draw(&mut self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
+    pub async fn begin_draw(&self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
         };
@@ -323,9 +322,11 @@ impl Graphics {
                 &*renderpass_ptr.load(Ordering::SeqCst),
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
-
-            let command_buffers =
-                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])?;
+            println!("Begin secondary command buffers...");
+            let command_buffers = self
+                .update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])
+                .await?;
+            println!("End secondary command buffers...");
             self.logical_device
                 .cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
             self.logical_device
@@ -604,32 +605,59 @@ impl Graphics {
             &self.msaa_image,
             self.logical_device.as_ref(),
         );
+        self.is_initialized = true;
         Ok(())
     }
 
-    pub fn render(&mut self) -> anyhow::Result<u32> {
+    pub async fn render(&self) -> anyhow::Result<()> {
         unsafe {
-            let swapchain_loader = self.swapchain.swapchain_loader.clone();
-            let result = swapchain_loader.acquire_next_image(
-                self.swapchain.swapchain,
-                u64::MAX,
-                self.acquired_semaphores[self.current_index],
-                Fence::null(),
-            );
-            if let Err(e) = result {
-                return Err(anyhow::anyhow!(
-                    "Error acquiring swapchain image: {}",
-                    e.to_string()
-                ));
+            println!("Render started...");
+
+            let fences = vec![self.fence];
+            self.logical_device
+                .wait_for_fences(fences.as_slice(), true, 1_000_000_000)
+                .expect("Failed to wait for fences.");
+            println!("Successfully waited for fence.");
+            self.logical_device
+                .reset_fences(fences.as_slice())
+                .expect("Failed to reset fences.");
+            println!("Successfully reset fence.");
+            let result: VkResult<(u32, bool)>;
+            {
+                let swapchain_loader = &self.swapchain.swapchain_loader;
+                result = swapchain_loader.acquire_next_image(
+                    self.swapchain.swapchain,
+                    u64::MAX,
+                    self.acquired_semaphore,
+                    Fence::null(),
+                );
             }
-            let (image_index, _is_suboptimal) = result.unwrap();
-            self.begin_draw(self.frame_buffers[image_index as usize])?;
+            let mut image_index = 0_u32;
+            let mut is_suboptimal = false;
+            match result {
+                Ok(index) => {
+                    image_index = index.0;
+                    is_suboptimal = index.1;
+                }
+                Err(e) => match e {
+                    ash::vk::Result::ERROR_OUT_OF_DATE_KHR | ash::vk::Result::SUBOPTIMAL_KHR => {
+                        return Err(anyhow::anyhow!("Swapchain is out of date or suboptimal."));
+                    }
+                    _ => (),
+                },
+            }
+            if is_suboptimal {
+                return Err(anyhow::anyhow!("Swapchain is suboptimal."));
+            }
+            println!("Begin drawing...");
+            self.begin_draw(self.frame_buffers[image_index as usize])
+                .await?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
             let command_buffers = vec![self.command_buffers[0]];
-            let complete_semaphores = vec![self.complete_semaphores[self.current_index]];
-            let acquired_semaphores = vec![self.acquired_semaphores[self.current_index]];
+            let complete_semaphores = vec![self.completed_semaphore];
+            let acquired_semaphores = vec![self.acquired_semaphore];
             let submit_info = vec![SubmitInfo::builder()
                 .command_buffers(command_buffers.as_slice())
                 .signal_semaphores(complete_semaphores.as_slice())
@@ -637,15 +665,11 @@ impl Graphics {
                 .wait_semaphores(acquired_semaphores.as_slice())
                 .build()];
 
-            let fences = vec![self.fences[self.current_index]];
-            self.logical_device
-                .reset_fences(fences.as_slice())
-                .expect("Failed to reset fences.");
             self.logical_device
                 .queue_submit(
                     *self.graphics_queue.lock(),
                     submit_info.as_slice(),
-                    self.fences[self.current_index],
+                    fences[0],
                 )
                 .expect("Failed to submit the queue.");
 
@@ -655,14 +679,14 @@ impl Graphics {
                 .wait_semaphores(complete_semaphores.as_slice())
                 .image_indices(image_indices.as_slice())
                 .swapchains(swapchain.as_slice());
-
-            swapchain_loader
-                .queue_present(*self.present_queue.lock(), &present_info)
-                .expect("Failed to present with the swapchain.");
-            self.logical_device
-                .wait_for_fences(fences.as_slice(), true, u64::MAX)
-                .expect("Failed to wait for fences.");
-            Ok(image_index)
+            {
+                let swapchain_loader = &self.swapchain.swapchain_loader;
+                swapchain_loader
+                    .queue_present(*self.present_queue.lock(), &present_info)
+                    .expect("Failed to present with the swapchain.");
+            }
+            println!("Render ended...");
+            Ok(())
         }
     }
 
@@ -693,18 +717,21 @@ impl Graphics {
         Ok(())
     }
 
-    pub fn update_secondary_command_buffers(
-        &mut self,
+    pub async fn update_secondary_command_buffers(
+        &self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
         viewport: Viewport,
         scissor: Rect2D,
     ) -> anyhow::Result<Vec<CommandBuffer>> {
-        let resource_manager = self.resource_manager.upgrade().unwrap();
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager.");
         {
-            let resource_lock = resource_manager.read();
             let thread_count = self.thread_pool.thread_count;
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
+            let resource_lock = resource_manager.read();
             for model in resource_lock.models.iter() {
                 let model_clone = model.clone();
                 let model_index = model_clone.lock().model_index;
@@ -777,61 +804,13 @@ impl Graphics {
                     .expect("Failed to add work to the queue.");
             }
         }
-        self.thread_pool.wait()?;
+        self.thread_pool.wait().await;
         let resource_lock = resource_manager.read();
-        let mut model_command_buffers = resource_lock
-            .models
-            .iter()
-            .map(|model| {
-                let mesh_command_buffers = model
-                    .lock()
-                    .meshes
-                    .iter()
-                    .map(|mesh| mesh.command_buffer.unwrap())
-                    .collect::<Vec<_>>();
-                mesh_command_buffers
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-        let mut skinned_model_command_buffers = resource_lock
-            .skinned_models
-            .iter()
-            .map(|model| {
-                let primitive_command_buffers = model
-                    .lock()
-                    .skinned_meshes
-                    .iter()
-                    .map(|mesh| {
-                        mesh.primitives
-                            .iter()
-                            .map(|primitive| primitive.command_buffer.unwrap())
-                            .collect::<Vec<_>>()
-                    })
-                    .flatten()
-                    .collect::<Vec<_>>();
-                primitive_command_buffers
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-        let mut terrain_command_buffers = resource_lock
-            .terrains
-            .iter()
-            .map(|terrain| {
-                let mesh_command_buffers = terrain
-                    .lock()
-                    .model
-                    .meshes
-                    .iter()
-                    .map(|mesh| mesh.command_buffer.unwrap())
-                    .collect::<Vec<_>>();
-                mesh_command_buffers
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-        model_command_buffers.append(&mut skinned_model_command_buffers);
-        model_command_buffers.append(&mut terrain_command_buffers);
-        Ok(model_command_buffers)
+        let command_buffers = resource_lock.command_buffers.to_vec();
+        Ok(command_buffers)
     }
+
+    pub fn recreate_swapchain(&mut self) {}
 
     unsafe fn dispose(&mut self) {
         for buffer in self.frame_buffers.iter() {
@@ -1306,15 +1285,11 @@ impl Drop for Graphics {
                 .device_wait_idle()
                 .expect("Failed to wait for device to idle.");
             self.dispose();
-            for semaphore in self.complete_semaphores.iter() {
-                self.logical_device.destroy_semaphore(*semaphore, None);
-            }
-            for semaphore in self.acquired_semaphores.iter() {
-                self.logical_device.destroy_semaphore(*semaphore, None);
-            }
-            for fence in self.fences.iter() {
-                self.logical_device.destroy_fence(*fence, None);
-            }
+            self.logical_device
+                .destroy_semaphore(self.completed_semaphore, None);
+            self.logical_device
+                .destroy_semaphore(self.acquired_semaphore, None);
+            self.logical_device.destroy_fence(self.fence, None);
             for thread in self.thread_pool.threads.iter() {
                 self.logical_device
                     .destroy_command_pool(*thread.command_pool.lock(), None);

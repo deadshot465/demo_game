@@ -12,6 +12,16 @@ pub struct Vertex {
     pub uv: Vec2,
 }
 
+impl Default for Vertex {
+    fn default() -> Self {
+        Vertex {
+            position: Vec3A::zero(),
+            normal: Vec3A::zero(),
+            uv: Vec2::zero(),
+        }
+    }
+}
+
 impl Vertex {
     pub fn new(position: Vec3A, normal: Vec3A, uv: Vec2) -> Self {
         Vertex {

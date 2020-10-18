@@ -440,36 +440,22 @@ impl Initializer {
         }
     }
 
-    pub fn create_sync_object(
-        device: &ash::Device,
-        image_count: u32,
-    ) -> (Vec<Fence>, Vec<Semaphore>, Vec<Semaphore>) {
-        let fence_info = FenceCreateInfo::builder();
+    pub fn create_sync_object(device: &ash::Device) -> (Fence, Semaphore, Semaphore) {
+        let fence_info = FenceCreateInfo::builder().flags(FenceCreateFlags::SIGNALED);
         let semaphore_info = SemaphoreCreateInfo::builder();
-        let mut fences = vec![];
-        let mut acquired_semaphores = vec![];
-        let mut complete_semaphores = vec![];
         unsafe {
-            for _ in 0..image_count {
-                fences.push(
-                    device
-                        .create_fence(&fence_info, None)
-                        .expect("Failed to create fence."),
-                );
-                acquired_semaphores.push(
-                    device
-                        .create_semaphore(&semaphore_info, None)
-                        .expect("Failed to create semaphore."),
-                );
-                complete_semaphores.push(
-                    device
-                        .create_semaphore(&semaphore_info, None)
-                        .expect("Failed to create semaphore."),
-                );
-            }
+            let fence = device
+                .create_fence(&fence_info, None)
+                .expect("Failed to create fence.");
+            let acquired_semaphore = device
+                .create_semaphore(&semaphore_info, None)
+                .expect("Failed to create semaphore.");
+            let completed_semaphore = device
+                .create_semaphore(&semaphore_info, None)
+                .expect("Failed to create semaphore.");
+            log::info!("Sync objects successfully created.");
+            (fence, acquired_semaphore, completed_semaphore)
         }
-        log::info!("Sync objects successfully created.");
-        (fences, acquired_semaphores, complete_semaphores)
     }
 
     pub fn create_image_from_file(

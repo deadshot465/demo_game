@@ -585,6 +585,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
         descriptor_set: DescriptorSet,
     ) {
+        println!("Rendering model...{}", &self.get_name());
         let pipeline_layout = pipeline
             .read()
             .expect("Failed to lock pipeline when acquiring pipeline layout.")
@@ -666,6 +667,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
         }
+        println!("Rendering model finished...{}", &self.get_name());
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::game::structs::PrimitiveType;
 use glam::{Vec3A, Vec4};
 
 pub trait Scene {
@@ -18,6 +19,15 @@ pub trait Scene {
     fn add_skinned_model(
         &mut self,
         file_name: &'static str,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+    ) -> anyhow::Result<()>;
+    fn add_geometric_primitive(
+        &mut self,
+        primitive_type: PrimitiveType,
+        texture_name: Option<&'static str>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,

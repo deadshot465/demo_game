@@ -27,6 +27,7 @@ where
     pub skinned_models: SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
     pub terrains: TerrainList<GraphicsType, BufferType, CommandType, TextureType>,
+    pub command_buffers: Vec<CommandType>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -77,6 +78,7 @@ where
             skinned_models: vec![],
             textures: vec![],
             terrains: vec![],
+            command_buffers: vec![],
         }
     }
 
@@ -104,12 +106,7 @@ where
         &mut self,
         model: Model<GraphicsType, BufferType, CommandType, TextureType>,
     ) -> Arc<Mutex<Model<GraphicsType, BufferType, CommandType, TextureType>>> {
-        let name = model.model_name.clone();
         let model = Arc::new(Mutex::new(model));
-        let mut model_lock = model.lock();
-        model_lock.model_index = self.models.len();
-        model_lock.model_name = name;
-        drop(model_lock);
         self.models.push(model.clone());
         model
     }
@@ -118,12 +115,7 @@ where
         &mut self,
         model: SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>,
     ) {
-        let name = model.model_name.clone();
         let model = Arc::new(Mutex::new(model));
-        let mut model_lock = model.lock();
-        model_lock.model_index = self.models.len();
-        model_lock.model_name = name;
-        drop(model_lock);
         self.skinned_models.push(model);
     }
 
@@ -195,6 +187,61 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
             model_lock.create_ssbo()?;
         }
         Ok(())
+    }
+
+    pub fn get_all_command_buffers(&mut self) {
+        let mut model_command_buffers = self
+            .models
+            .iter()
+            .map(|model| {
+                let mesh_command_buffers = model
+                    .lock()
+                    .meshes
+                    .iter()
+                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .collect::<Vec<_>>();
+                mesh_command_buffers
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        let mut skinned_model_command_buffers = self
+            .skinned_models
+            .iter()
+            .map(|model| {
+                let primitive_command_buffers = model
+                    .lock()
+                    .skinned_meshes
+                    .iter()
+                    .map(|mesh| {
+                        mesh.primitives
+                            .iter()
+                            .map(|primitive| primitive.command_buffer.unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>();
+                primitive_command_buffers
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        let mut terrain_command_buffers = self
+            .terrains
+            .iter()
+            .map(|terrain| {
+                let mesh_command_buffers = terrain
+                    .lock()
+                    .model
+                    .meshes
+                    .iter()
+                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .collect::<Vec<_>>();
+                mesh_command_buffers
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        model_command_buffers.append(&mut skinned_model_command_buffers);
+        model_command_buffers.append(&mut terrain_command_buffers);
+        self.command_buffers = model_command_buffers;
     }
 }
 

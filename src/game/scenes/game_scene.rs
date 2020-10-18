@@ -6,7 +6,9 @@ use parking_lot::RwLock;
 use std::sync::{Arc, Weak};
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::structs::{Model, SkinnedModel, Terrain};
+use crate::game::shared::structs::{
+    GeometricPrimitive, Model, PrimitiveType, SkinnedModel, Terrain,
+};
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
@@ -29,6 +31,8 @@ where
     skinned_model_tasks:
         Vec<Receiver<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
     terrain_tasks: Vec<Receiver<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>,
+    geometric_primitive_tasks:
+        Vec<Receiver<GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -54,6 +58,7 @@ where
             model_tasks: vec![],
             skinned_model_tasks: vec![],
             terrain_tasks: vec![],
+            geometric_primitive_tasks: vec![],
         }
     }
 }
@@ -140,6 +145,14 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )?;
+        self.add_geometric_primitive(
+            PrimitiveType::Rect,
+            None,
+            Vec3A::zero(),
+            Vec3A::one(),
+            Vec3A::zero(),
+            Vec4::new(0.0, 0.0, 1.0, 1.0),
+        )?;
         self.generate_terrain(0, 0)?;
         Ok(())
     }
@@ -157,7 +170,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .upgrade()
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
-            let mut graphics_lock = graphics.write();
+            let graphics_lock = graphics.read();
             graphics_lock.render()?;
         }
         Ok(())
@@ -267,13 +280,39 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    fn add_geometric_primitive(
+        &mut self,
+        primitive_type: PrimitiveType,
+        texture_name: Option<&'static str>,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+    ) -> anyhow::Result<()> {
+        let task = GeometricPrimitive::new(
+            self.graphics.clone(),
+            primitive_type,
+            texture_name,
+            self.model_count,
+            position,
+            scale,
+            rotation,
+            color,
+        )?;
+        self.geometric_primitive_tasks.push(task);
+        self.model_count += 1;
+        Ok(())
+    }
+
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
         let model_tasks = &mut self.model_tasks;
         let skinned_model_tasks = &mut self.skinned_model_tasks;
         let terrain_tasks = &mut self.terrain_tasks;
+        let primitive_tasks = &mut self.geometric_primitive_tasks;
         let mut models = vec![];
         let mut skinned_models = vec![];
         let mut terrains = vec![];
+        let mut primitives = vec![];
         for task in model_tasks.iter_mut() {
             let model = task.recv()?;
             models.push(model);
@@ -285,6 +324,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         for task in terrain_tasks.iter_mut() {
             let terrain = task.recv()?;
             terrains.push(terrain);
+        }
+        for task in primitive_tasks.iter_mut() {
+            let primitive = task.recv()?;
+            primitives.push(primitive);
         }
         let rm = self.resource_manager.upgrade();
         if rm.is_none() {
@@ -303,11 +346,16 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         for terrain in terrains.into_iter() {
             lock.add_terrain(terrain);
         }
+        for primitive in primitives.iter_mut() {
+            lock.add_model(primitive.model.take().unwrap());
+            primitive.is_disposed = true;
+        }
         drop(lock);
         drop(rm);
         self.model_tasks.clear();
         self.skinned_model_tasks.clear();
         self.terrain_tasks.clear();
+        self.geometric_primitive_tasks.clear();
         Ok(())
     }
 }

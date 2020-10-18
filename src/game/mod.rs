@@ -81,6 +81,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         let mut lock = self.resource_manager.write();
         lock.create_ssbo()?;
+        lock.get_all_command_buffers();
         drop(lock);
         Ok(())
     }

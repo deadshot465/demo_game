@@ -372,6 +372,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         descriptor_set: DescriptorSet,
         textured_shader_type: Option<ShaderType>,
     ) {
+        println!("Rendering model...{}", &self.get_name());
         let mut push_constant = push_constant;
         push_constant.model_index = self.model_index;
         unsafe {
@@ -453,6 +454,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
         }
+        println!("Rendering model finished...{}", &self.get_name());
     }
 }
 
