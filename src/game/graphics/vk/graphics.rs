@@ -6,8 +6,7 @@ use ash::{
 };
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec3A, Vec4};
-use image::GenericImageView;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::ffi::{c_void, CString};
@@ -30,6 +29,9 @@ use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buf
 use crate::game::{Camera, ResourceManager};
 
 const SSBO_DATA_COUNT: usize = 50;
+
+type ResourceManagerHandle =
+    Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>;
 
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -56,8 +58,7 @@ pub struct Graphics {
     pub compute_queue: Arc<Mutex<Queue>>,
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
-    pub resource_manager:
-        Weak<ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+    pub resource_manager: ResourceManagerHandle,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
@@ -81,9 +82,7 @@ impl Graphics {
     pub fn new(
         window: &winit::window::Window,
         camera: Rc<RefCell<Camera>>,
-        resource_manager: Weak<
-            ShardedLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>,
-        >,
+        resource_manager: ResourceManagerHandle,
     ) -> anyhow::Result<Self> {
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
         let entry = Entry::new()?;
@@ -167,7 +166,7 @@ impl Graphics {
             Arc::downgrade(&allocator),
         );
 
-        let view_projection = Self::create_view_projection(
+        let view_projection = Initializer::create_view_projection(
             &*camera.borrow(),
             Arc::downgrade(&device),
             Arc::downgrade(&allocator),
@@ -178,13 +177,14 @@ impl Graphics {
             0.1,
             0.5,
         );
-        let directional = Self::create_directional_light(
+        let directional = Initializer::create_directional_light(
             &directional_light,
             Arc::downgrade(&device),
             Arc::downgrade(&allocator),
         )?;
 
-        let ssbo_descriptor_set_layout = Self::create_ssbo_descriptor_set_layout(device.as_ref());
+        let ssbo_descriptor_set_layout =
+            Initializer::create_ssbo_descriptor_set_layout(device.as_ref());
         let uniform_buffers = UniformBuffers::new(view_projection, directional);
         let min_alignment = physical_device
             .device_properties
@@ -198,13 +198,15 @@ impl Graphics {
             std::mem::size_of::<Mat4>()
         };
         let pipeline = super::Pipeline::new(device.clone());
-        let command_buffers = Self::allocate_command_buffers(
+        let command_buffers = Initializer::allocate_command_buffers(
             device.as_ref(),
             command_pool,
             swapchain.swapchain_images.len() as u32,
         );
-        let (fences, acquired_semaphores, complete_semaphores) =
-            Self::create_sync_object(device.as_ref(), swapchain.swapchain_images.len() as u32);
+        let (fences, acquired_semaphores, complete_semaphores) = Initializer::create_sync_object(
+            device.as_ref(),
+            swapchain.swapchain_images.len() as u32,
+        );
 
         let sky_color: Vec4 = Vec4::new(0.5, 0.5, 0.5, 1.0);
         Ok(Graphics {
@@ -268,7 +270,12 @@ impl Graphics {
         {
             let renderpass_begin_info = Box::new(
                 RenderPassBeginInfo::builder()
-                    .render_pass(self.pipeline.read().unwrap().render_pass)
+                    .render_pass(
+                        self.pipeline
+                            .read()
+                            .expect("Failed to lock pipeline for beginning the renderpass.")
+                            .render_pass,
+                    )
                     .clear_values(clear_values.as_slice())
                     .render_area(*render_area)
                     .framebuffer(frame_buffer),
@@ -293,7 +300,12 @@ impl Graphics {
             let inheritance_info = Box::new(
                 CommandBufferInheritanceInfo::builder()
                     .framebuffer(frame_buffer)
-                    .render_pass(self.pipeline.read().unwrap().render_pass)
+                    .render_pass(
+                        self.pipeline
+                            .read()
+                            .expect("Failed to lock pipeline for creating the inheritance info.")
+                            .render_pass,
+                    )
                     .build(),
             );
             inheritance_ptr = AtomicPtr::new(Box::into_raw(inheritance_info));
@@ -329,7 +341,7 @@ impl Graphics {
     }
 
     pub fn create_buffer<VertexType: 'static + Send>(
-        graphics: Arc<ShardedLock<Self>>,
+        graphics: Arc<RwLock<Self>>,
         vertices: Vec<VertexType>,
         indices: Vec<u32>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
@@ -339,7 +351,7 @@ impl Graphics {
         let device: Arc<ash::Device>;
         let allocator: Arc<ShardedLock<vk_mem::Allocator>>;
         {
-            let lock = graphics.read().expect("Failed to lock graphics handle.");
+            let lock = graphics.read();
             device = lock.logical_device.clone();
             allocator = lock.allocator.clone();
             drop(lock);
@@ -416,7 +428,7 @@ impl Graphics {
 
         let (vertex_staging, vertex_buffer) = vertices_recv.recv()?;
         let (index_staging, index_buffer) = indices_recv.recv()?;
-        let graphics_lock = graphics.read().expect("Failed to lock graphics handle.");
+        let graphics_lock = graphics.read();
         let pool_lock = command_pool.lock();
         vertex_buffer.copy_buffer(
             &vertex_staging,
@@ -443,7 +455,7 @@ impl Graphics {
 
     pub fn create_gltf_textures(
         images: Vec<gltf::image::Data>,
-        graphics: Arc<ShardedLock<Self>>,
+        graphics: Arc<RwLock<Self>>,
         command_pool: Arc<Mutex<CommandPool>>,
     ) -> anyhow::Result<(Vec<Arc<ShardedLock<super::Image>>>, usize)> {
         let mut textures = vec![];
@@ -467,7 +479,7 @@ impl Graphics {
 
             let (texture_send, texture_recv) = bounded(5);
             rayon::spawn(move || {
-                let result = Self::create_image_from_raw(
+                let result = Initializer::create_image_from_raw(
                     pixels,
                     buffer_size as u64,
                     width,
@@ -490,17 +502,14 @@ impl Graphics {
         for handle in texture_handles.into_iter() {
             textures.push(handle.recv()??);
         }
-        let graphics_lock = graphics.read().expect("Failed to lock graphics handle.");
+        let graphics_lock = graphics.read();
         let resource_manager = graphics_lock.resource_manager.clone();
         drop(graphics_lock);
         let texture_index_offset: usize;
         match resource_manager.upgrade() {
             Some(rm) => {
-                texture_index_offset = rm
-                    .read()
-                    .expect("Failed to lock resource manager.")
-                    .get_texture_count();
-                let mut rm_lock = rm.write().expect("Failed to lock resource manager.");
+                texture_index_offset = rm.read().get_texture_count();
+                let mut rm_lock = rm.write();
                 let textures_ptrs = textures
                     .into_iter()
                     .map(|img| rm_lock.add_texture(img))
@@ -516,87 +525,53 @@ impl Graphics {
 
     pub fn create_image_from_file(
         file_name: &str,
-        graphics: Arc<ShardedLock<Graphics>>,
+        graphics: Arc<RwLock<Self>>,
         command_pool: Arc<Mutex<CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
-    ) -> anyhow::Result<Arc<ShardedLock<super::Image>>> {
-        let image = image::open(file_name)?;
-        let buffer_size;
-        let bytes = match image.color() {
-            image::ColorType::Bgr8 | image::ColorType::Rgb8 => {
-                buffer_size = image.width() * image.height() * 4;
-                interpolate_alpha(
-                    image.to_bytes(),
-                    image.width(),
-                    image.height(),
-                    buffer_size as usize,
-                )
-            }
-            _ => {
-                let bytes = image.to_bytes();
-                buffer_size = bytes.len() as u32;
-                bytes
-            }
-        };
-        let width = image.width();
-        let height = image.height();
-        let color_type = image.color();
-        let graphics_clone = graphics.clone();
-        use crossbeam::channel::*;
-        use image::ColorType;
-        let (texture_send, texture_recv) = bounded(5);
-        rayon::spawn(move || {
-            let result = Self::create_image_from_raw(
-                bytes,
-                buffer_size as u64,
-                width,
-                height,
-                match color_type {
-                    ColorType::Rgb8 => ImageFormat::ColorType(ColorType::Rgba8),
-                    ColorType::Bgr8 => ImageFormat::ColorType(ColorType::Bgra8),
-                    _ => ImageFormat::ColorType(color_type),
-                },
-                graphics_clone,
-                command_pool,
-                sampler_address_mode,
-            );
-            texture_send
-                .send(result)
-                .expect("Failed to send texture result.");
-        });
-        let texture = texture_recv.recv()??;
-        let resource_manager = graphics
-            .read()
-            .expect("Failed to lock graphics handle.")
-            .resource_manager
-            .clone();
-        match resource_manager.upgrade() {
-            Some(rm) => {
-                let mut rm_lock = rm.write().expect("Failed to lock resource manager.");
-                let image = rm_lock.add_texture(texture);
-                Ok(image)
-            }
-            None => {
-                panic!("Failed to upgrade resource manager.");
-            }
-        }
+    ) -> anyhow::Result<(Arc<ShardedLock<super::Image>>, usize)> {
+        Initializer::create_image_from_file(
+            file_name,
+            graphics.clone(),
+            command_pool,
+            sampler_address_mode,
+        )
     }
 
     pub fn create_secondary_command_buffer(
-        &self,
-        command_pool: Arc<Mutex<CommandPool>>,
+        device: &ash::Device,
+        command_pool: CommandPool,
     ) -> CommandBuffer {
         let allocate_info = CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .level(CommandBufferLevel::SECONDARY)
-            .command_pool(*command_pool.lock());
+            .command_pool(command_pool);
         unsafe {
-            let buffer = self
-                .logical_device
+            let buffer = device
                 .allocate_command_buffers(&allocate_info)
                 .expect("Failed to allocate secondary command buffer.");
             buffer[0]
         }
+    }
+
+    pub fn get_command_pool(graphics: &Self, model_index: usize) -> Arc<Mutex<CommandPool>> {
+        let thread_count = graphics.thread_pool.thread_count;
+        graphics.thread_pool.threads[model_index % thread_count]
+            .command_pool
+            .clone()
+    }
+
+    pub fn get_command_pool_and_secondary_command_buffer(
+        graphics: &Self,
+        model_index: usize,
+    ) -> (Arc<Mutex<CommandPool>>, CommandBuffer) {
+        let thread_count = graphics.thread_pool.thread_count;
+        let pool_handle = graphics.thread_pool.threads[model_index % thread_count]
+            .command_pool
+            .clone();
+        let command_pool = *pool_handle.lock();
+        let device = graphics.logical_device.as_ref();
+        let command_buffer = Self::create_secondary_command_buffer(device, command_pool);
+        (pool_handle, command_buffer)
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
@@ -609,7 +584,7 @@ impl Graphics {
         let sample_count = self.sample_count;
         self.pipeline
             .write()
-            .unwrap()
+            .expect("Failed to lock pipeline for creating the renderpass.")
             .create_renderpass(color_format, depth_format, sample_count);
         self.create_graphics_pipeline(ShaderType::BasicShader)?;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
@@ -620,7 +595,10 @@ impl Graphics {
         self.frame_buffers = Self::create_frame_buffers(
             width,
             height,
-            self.pipeline.read().unwrap().render_pass,
+            self.pipeline
+                .read()
+                .expect("Failed to lock pipeline for creating frame buffers.")
+                .render_pass,
             &self.swapchain,
             &self.depth_image,
             &self.msaa_image,
@@ -690,9 +668,7 @@ impl Graphics {
 
     pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let resource_arc = self.resource_manager.upgrade().unwrap();
-        let mut resource_lock = resource_arc
-            .write()
-            .expect("Failed to lock resource manager.");
+        let mut resource_lock = resource_arc.write();
         for model in resource_lock.models.iter_mut() {
             model.lock().update(delta_time);
         }
@@ -725,9 +701,7 @@ impl Graphics {
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self.resource_manager.upgrade().unwrap();
         {
-            let resource_lock = resource_manager
-                .read()
-                .expect("Failed to lock resource manager.");
+            let resource_lock = resource_manager.read();
             let thread_count = self.thread_pool.thread_count;
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
@@ -804,9 +778,7 @@ impl Graphics {
             }
         }
         self.thread_pool.wait()?;
-        let resource_lock = resource_manager
-            .read()
-            .expect("Failed to lock resource manager.");
+        let resource_lock = resource_manager.read();
         let mut model_command_buffers = resource_lock
             .models
             .iter()
@@ -867,7 +839,10 @@ impl Graphics {
         }
         self.logical_device
             .free_command_buffers(self.command_pool, self.command_buffers.as_slice());
-        let pipeline = &mut *self.pipeline.write().unwrap();
+        let pipeline = &mut *self
+            .pipeline
+            .write()
+            .expect("Failed to lock pipeline for disposal.");
         ManuallyDrop::drop(pipeline);
         self.logical_device
             .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
@@ -881,9 +856,7 @@ impl Graphics {
         let resource_manager = self.resource_manager.upgrade().expect(
             "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
         );
-        let resource_lock = resource_manager
-            .read()
-            .expect("Failed to lock resource manager.");
+        let resource_lock = resource_manager.read();
         let total_texture_count = resource_lock.get_texture_count();
         drop(resource_lock);
         drop(resource_manager);
@@ -933,70 +906,6 @@ impl Graphics {
             log::info!("Descriptor set layout successfully created.");
             self.descriptor_set_layout = descriptor_set_layout;
             Ok(())
-        }
-    }
-
-    fn create_ssbo_descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
-        let layout_bindings = vec![DescriptorSetLayoutBinding::builder()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(DescriptorType::STORAGE_BUFFER)
-            .stage_flags(ShaderStageFlags::VERTEX)
-            .build()];
-        let create_info =
-            DescriptorSetLayoutCreateInfo::builder().bindings(layout_bindings.as_slice());
-        unsafe {
-            let descriptor_set_layout = device
-                .create_descriptor_set_layout(&create_info, None)
-                .expect("Failed to create descriptor set layout for ssbo.");
-            log::info!("Descriptor set layout for ssbo successfully created.");
-            descriptor_set_layout
-        }
-    }
-
-    fn create_view_projection(
-        camera: &Camera,
-        device: Weak<Device>,
-        allocator: Weak<ShardedLock<Allocator>>,
-    ) -> anyhow::Result<super::Buffer> {
-        let vp_size = std::mem::size_of::<ViewProjection>();
-        let view_projection =
-            ViewProjection::new(camera.get_view_matrix(), camera.get_projection_matrix());
-        unsafe {
-            let mut vp_buffer = super::buffer::Buffer::new(
-                device,
-                DeviceSize::try_from(vp_size)?,
-                BufferUsageFlags::UNIFORM_BUFFER,
-                MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
-                allocator,
-            );
-            let mapped = vp_buffer.map_memory(u64::try_from(vp_size)?, 0);
-            std::ptr::copy_nonoverlapping(
-                &view_projection as *const _ as *const c_void,
-                mapped,
-                vp_size,
-            );
-            Ok(vp_buffer)
-        }
-    }
-
-    fn create_directional_light(
-        directional: &Directional,
-        device: Weak<Device>,
-        allocator: Weak<ShardedLock<Allocator>>,
-    ) -> anyhow::Result<super::Buffer> {
-        let dl_size = std::mem::size_of::<Directional>();
-        unsafe {
-            let mut dl_buffer = super::buffer::Buffer::new(
-                device,
-                DeviceSize::try_from(dl_size)?,
-                BufferUsageFlags::UNIFORM_BUFFER,
-                MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
-                allocator,
-            );
-            let mapped = dl_buffer.map_memory(u64::try_from(dl_size)?, 0);
-            std::ptr::copy(directional as *const _ as *const c_void, mapped, dl_size);
-            Ok(dl_buffer)
         }
     }
 
@@ -1057,9 +966,7 @@ impl Graphics {
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
-        let resource_lock = resource_manager
-            .read()
-            .expect("Failed to lock resource manager.");
+        let resource_lock = resource_manager.read();
         let is_models_empty = resource_lock.models.is_empty()
             && resource_lock.skinned_models.is_empty()
             && resource_lock.terrains.is_empty();
@@ -1128,9 +1035,7 @@ impl Graphics {
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for allocating descriptor set.");
-        let resource_lock = resource_manager
-            .read()
-            .expect("Failed to lock resource manager.");
+        let resource_lock = resource_manager.read();
         let texture_count = resource_lock.get_texture_count();
         let mut ssbo_count = 1;
         resource_lock
@@ -1241,7 +1146,9 @@ impl Graphics {
 
             let mut texture_info = vec![];
             for texture in resource_lock.textures.iter() {
-                let texture_lock = texture.read().unwrap();
+                let texture_lock = texture
+                    .read()
+                    .expect("Failed to lock texture for creating the descriptor set.");
                 let image_info = DescriptorImageInfo::builder()
                     .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .image_view(texture_lock.image_view)
@@ -1272,7 +1179,7 @@ impl Graphics {
                 self.logical_device.clone(),
                 match shader_type {
                     ShaderType::AnimatedModel => "./shaders/basicShader_animated.spv",
-                    ShaderType::Terrain => "./shaders/terrain.spv",
+                    ShaderType::Terrain => "./shaders/terrain_vert.spv",
                     _ => "./shaders/vert.spv",
                 },
                 ShaderStageFlags::VERTEX,
@@ -1282,6 +1189,7 @@ impl Graphics {
                 match shader_type {
                     ShaderType::BasicShader => "./shaders/frag.spv",
                     ShaderType::BasicShaderWithoutTexture => "./shaders/basicShader_noTexture.spv",
+                    ShaderType::Terrain => "./shaders/terrain_frag.spv",
                     _ => "./shaders/frag.spv",
                 },
                 ShaderStageFlags::FRAGMENT,
@@ -1295,29 +1203,16 @@ impl Graphics {
             }
             _ => (),
         }
-        self.pipeline.write().unwrap().create_graphic_pipelines(
-            descriptor_set_layout.as_slice(),
-            self.sample_count,
-            shaders,
-            shader_type,
-        )?;
+        self.pipeline
+            .write()
+            .expect("Failed to lock pipeline when creating the pipeline.")
+            .create_graphic_pipelines(
+                descriptor_set_layout.as_slice(),
+                self.sample_count,
+                shaders,
+                shader_type,
+            )?;
         Ok(())
-    }
-
-    fn allocate_command_buffers(
-        device: &Device,
-        command_pool: CommandPool,
-        image_count: u32,
-    ) -> Vec<CommandBuffer> {
-        let command_buffer_info = CommandBufferAllocateInfo::builder()
-            .command_pool(command_pool)
-            .command_buffer_count(image_count)
-            .level(CommandBufferLevel::PRIMARY);
-        unsafe {
-            device
-                .allocate_command_buffers(&command_buffer_info)
-                .expect("Failed to allocate command buffers.")
-        }
     }
 
     fn create_frame_buffers(
@@ -1352,136 +1247,6 @@ impl Graphics {
             }
         }
         frame_buffers
-    }
-
-    fn create_sync_object(
-        device: &Device,
-        image_count: u32,
-    ) -> (Vec<Fence>, Vec<Semaphore>, Vec<Semaphore>) {
-        let fence_info = FenceCreateInfo::builder();
-        let semaphore_info = SemaphoreCreateInfo::builder();
-        let mut fences = vec![];
-        let mut acquired_semaphores = vec![];
-        let mut complete_semaphores = vec![];
-        unsafe {
-            for _ in 0..image_count {
-                fences.push(
-                    device
-                        .create_fence(&fence_info, None)
-                        .expect("Failed to create fence."),
-                );
-                acquired_semaphores.push(
-                    device
-                        .create_semaphore(&semaphore_info, None)
-                        .expect("Failed to create semaphore."),
-                );
-                complete_semaphores.push(
-                    device
-                        .create_semaphore(&semaphore_info, None)
-                        .expect("Failed to create semaphore."),
-                );
-            }
-        }
-        log::info!("Sync objects successfully created.");
-        (fences, acquired_semaphores, complete_semaphores)
-    }
-
-    fn create_image_from_raw(
-        image_data: Vec<u8>,
-        buffer_size: DeviceSize,
-        width: u32,
-        height: u32,
-        format: ImageFormat,
-        graphics: Arc<ShardedLock<Self>>,
-        command_pool: Arc<Mutex<ash::vk::CommandPool>>,
-        sampler_address_mode: SamplerAddressMode,
-    ) -> anyhow::Result<super::Image> {
-        let lock = graphics.read().expect("Failed to lock graphics handle.");
-        let device = lock.logical_device.clone();
-        let allocator = lock.allocator.clone();
-        let image_format = match format {
-            ImageFormat::GltfFormat(gltf_format) => match gltf_format {
-                gltf::image::Format::B8G8R8A8 => ash::vk::Format::B8G8R8A8_UNORM,
-                gltf::image::Format::R8G8B8A8 => ash::vk::Format::R8G8B8A8_UNORM,
-                _ => lock.swapchain.format.format,
-            },
-            ImageFormat::VkFormat(vk_format) => vk_format,
-            ImageFormat::ColorType(color_type) => match color_type {
-                image::ColorType::Bgra8 => ash::vk::Format::B8G8R8A8_UNORM,
-                image::ColorType::Rgba8 => ash::vk::Format::R8G8B8A8_UNORM,
-                image::ColorType::L16 => ash::vk::Format::R16_UNORM,
-                _ => lock.swapchain.format.format,
-            },
-        };
-        let cmd_buffer = get_single_time_command_buffer(device.as_ref(), *command_pool.lock());
-
-        let mut staging = super::Buffer::new(
-            Arc::downgrade(&device),
-            buffer_size,
-            BufferUsageFlags::TRANSFER_SRC,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
-            Arc::downgrade(&allocator),
-        );
-        unsafe {
-            let mapped = staging.map_memory(buffer_size, 0);
-            std::ptr::copy_nonoverlapping(
-                image_data.as_ptr() as *const c_void,
-                mapped,
-                buffer_size as usize,
-            );
-        }
-        let _width = width as f32;
-        let _height = height as f32;
-        let mip_levels = _width.max(_height).log2().floor() as u32;
-        let mut image = super::Image::new(
-            Arc::downgrade(&device),
-            ImageUsageFlags::TRANSFER_SRC
-                | ImageUsageFlags::TRANSFER_DST
-                | ImageUsageFlags::SAMPLED,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            image_format,
-            SampleCountFlags::TYPE_1,
-            Extent2D::builder().width(width).height(height).build(),
-            ImageType::TYPE_2D,
-            mip_levels,
-            ImageAspectFlags::COLOR,
-            Arc::downgrade(&allocator),
-        );
-        let pool_lock = command_pool.lock();
-        image.transition_layout(
-            ImageLayout::UNDEFINED,
-            ImageLayout::TRANSFER_DST_OPTIMAL,
-            *pool_lock,
-            *lock.graphics_queue.lock(),
-            ImageAspectFlags::COLOR,
-            mip_levels,
-            Some(cmd_buffer),
-        );
-        image.copy_buffer_to_image(
-            staging.buffer,
-            width,
-            height,
-            *pool_lock,
-            *lock.graphics_queue.lock(),
-            Some(cmd_buffer),
-        );
-        unsafe {
-            image.generate_mipmap(
-                ImageAspectFlags::COLOR,
-                mip_levels,
-                *pool_lock,
-                *lock.graphics_queue.lock(),
-                Some(cmd_buffer),
-            );
-        }
-        image.create_sampler(mip_levels, sampler_address_mode);
-        end_one_time_command_buffer(
-            cmd_buffer,
-            device.as_ref(),
-            *pool_lock,
-            *lock.graphics_queue.lock(),
-        );
-        Ok(image)
     }
 
     /*fn update_dynamic_buffer(&mut self, _delta_time: f64) -> anyhow::Result<()> {
@@ -1560,7 +1325,10 @@ impl Drop for Graphics {
                 .destroy_descriptor_set_layout(self.ssbo_descriptor_set_layout, None);
             self.logical_device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.allocator.write().unwrap().destroy();
+            self.allocator
+                .write()
+                .expect("Failed to lock the memory allocator.")
+                .destroy();
             self.logical_device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             if self.debug_messenger != DebugUtilsMessengerEXT::null() {

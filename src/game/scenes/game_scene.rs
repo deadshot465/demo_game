@@ -2,6 +2,7 @@ use ash::vk::CommandBuffer;
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
+use parking_lot::RwLock;
 use std::sync::{Arc, Weak};
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
@@ -18,9 +19,9 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
-    graphics: Weak<ShardedLock<GraphicsType>>,
+    graphics: Weak<RwLock<GraphicsType>>,
     resource_manager:
-        Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+        Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
     model_count: usize,
     height_generator: Arc<ShardedLock<HeightGenerator>>,
@@ -40,9 +41,9 @@ where
 {
     pub fn new(
         resource_manager: Weak<
-            ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
+            RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
         >,
-        graphics: Weak<ShardedLock<GraphicsType>>,
+        graphics: Weak<RwLock<GraphicsType>>,
     ) -> Self {
         GameScene {
             graphics,
@@ -71,7 +72,6 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             grid_x,
             grid_z,
             model_index,
-            self.resource_manager.clone(),
             self.graphics.clone(),
             self.height_generator.clone(),
             0.5,
@@ -146,9 +146,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
     fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let graphics_arc = self.graphics.upgrade().unwrap();
-        let mut graphics_lock = graphics_arc
-            .write()
-            .expect("Failed to lock graphics handle.");
+        let mut graphics_lock = graphics_arc.write();
         graphics_lock.update(delta_time)?;
         Ok(())
     }
@@ -159,7 +157,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .upgrade()
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
-            let mut graphics_lock = graphics.write().expect("Failed to lock graphics handle.");
+            let mut graphics_lock = graphics.write();
             graphics_lock.render()?;
         }
         Ok(())
@@ -178,9 +176,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
-        let lock = resource_manager
-            .read()
-            .expect("Failed to lock resource manager.");
+        let lock = resource_manager.read();
         let item = lock
             .models
             .iter()
@@ -198,9 +194,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.model_metadata.object_color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
-            let mut lock = resource_manager
-                .write()
-                .expect("Failed to lock resource manager.");
+            let mut lock = resource_manager.write();
             lock.add_model(model);
             drop(lock);
         } else {
@@ -234,9 +228,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
-        let lock = resource_manager
-            .read()
-            .expect("Failed to lock resource manager.");
+        let lock = resource_manager.read();
         let item = lock
             .skinned_models
             .iter()
@@ -254,9 +246,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.model_metadata.object_color = color;
             model.model_index = lock.get_model_count();
             drop(lock);
-            let mut lock = resource_manager
-                .write()
-                .expect("Failed to lock resource manager.");
+            let mut lock = resource_manager.write();
             lock.add_skinned_model(model);
             drop(lock);
         } else {
@@ -303,7 +293,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             ));
         }
         let rm = rm.unwrap();
-        let mut lock = rm.write().expect("Failed to lock resource manager.");
+        let mut lock = rm.write();
         for model in models.into_iter() {
             lock.add_model(model);
         }

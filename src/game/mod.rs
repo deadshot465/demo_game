@@ -6,6 +6,7 @@ pub use shared::*;
 
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
+use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,9 +32,9 @@ where
 {
     pub window: Arc<ShardedLock<winit::window::Window>>,
     pub resource_manager:
-        Arc<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+        Arc<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     pub camera: Rc<RefCell<Camera>>,
-    pub graphics: Arc<ShardedLock<GraphicsType>>,
+    pub graphics: Arc<RwLock<GraphicsType>>,
     pub scene_manager: SceneManager,
 }
 
@@ -50,13 +51,13 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             .build(event_loop)
             .expect("Failed to create window.");
         let camera = Rc::new(RefCell::new(Camera::new(width, height)));
-        let resource_manager = Arc::new(ShardedLock::new(ResourceManager::new()));
+        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
         let graphics = Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager))?;
         Ok(Game {
             window: Arc::new(ShardedLock::new(window)),
             resource_manager,
             camera,
-            graphics: Arc::new(ShardedLock::new(graphics)),
+            graphics: Arc::new(RwLock::new(graphics)),
             scene_manager: SceneManager::new(),
         })
     }
@@ -75,13 +76,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     pub fn load_content(&mut self) -> anyhow::Result<()> {
         self.scene_manager.load_content()?;
         self.scene_manager.wait_for_all_tasks()?;
-        let mut lock = self.graphics.write().expect("Failed to graphics handle.");
+        let mut lock = self.graphics.write();
         lock.initialize()?;
         drop(lock);
-        let mut lock = self
-            .resource_manager
-            .write()
-            .expect("Failed to lock resource manager.");
+        let mut lock = self.resource_manager.write();
         lock.create_ssbo()?;
         drop(lock);
         Ok(())
@@ -107,14 +105,14 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             .build(event_loop)
             .expect("Failed to create window.");
         let camera = Rc::new(RefCell::new(Camera::new(width, height)));
-        let resource_manager = Arc::new(ShardedLock::new(ResourceManager::new()));
+        let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
         let graphics =
             DX12::Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager));
         Game {
             window: Arc::new(ShardedLock::new(window)),
             resource_manager,
             camera,
-            graphics: Arc::new(ShardedLock::new(graphics)),
+            graphics: Arc::new(RwLock::new(graphics)),
             scene_manager: SceneManager::new(),
         }
     }

@@ -2,7 +2,7 @@ use crate::game::graphics::dx12::{CommandQueue, DescriptorHeap, Pipeline, Resour
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::util::{get_nullptr, log_error};
 use crate::game::{Camera, ResourceManager};
-use crossbeam::sync::ShardedLock;
+use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -31,14 +31,13 @@ use winapi::Interface;
 use winit::platform::windows::WindowExtWindows;
 use wio::com::ComPtr;
 
-type ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType> =
-    Weak<ShardedLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>;
+type ResourceManagerHandle =
+    Weak<RwLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>;
 
 #[allow(dead_code)]
 pub struct Graphics {
     camera: Rc<RefCell<Camera>>,
-    resource_manager:
-        ResourceManagerHandle<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>,
+    resource_manager: ResourceManagerHandle,
     debug: ComPtr<ID3D12Debug2>,
     dxgi_factory: ComPtr<IDXGIFactory2>,
     dxgi_adapter: ComPtr<IDXGIAdapter4>,
@@ -54,12 +53,7 @@ impl Graphics {
     pub unsafe fn new(
         _window: &winit::window::Window,
         camera: Rc<RefCell<Camera>>,
-        resource_manager: ResourceManagerHandle<
-            Graphics,
-            Resource,
-            ComPtr<ID3D12GraphicsCommandList>,
-            Resource,
-        >,
+        resource_manager: ResourceManagerHandle,
     ) -> Self {
         let debug = Self::enable_debug();
         let (factory, adapter) = Self::get_adapter();

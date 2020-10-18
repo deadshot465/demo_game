@@ -37,8 +37,8 @@ layout (location = 3) out vec4 fragPos;
 layout (location = 4) out float visibility;
 layout (location = 5) out vec4 toCameraDirection;
 
-const float density = 0.007;
-const float gradient = 1.5;
+const float density = 0.0035;
+const float gradient = 5.0;
 
 void main()
 {

@@ -7,7 +7,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use gltf::{Node, Scene};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::convert::TryFrom;
 use std::mem::ManuallyDrop;
 use std::sync::{
@@ -22,7 +22,7 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
 use ash::Device;
-use downcast_rs::__std::collections::HashMap;
+use std::collections::HashMap;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -39,7 +39,7 @@ where
     pub is_disposed: bool,
     pub model_name: String,
     pub model_index: usize,
-    pub graphics: Weak<ShardedLock<GraphicsType>>,
+    pub graphics: Weak<RwLock<GraphicsType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -55,7 +55,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<ShardedLock<GraphicsType>>,
+        graphics: Weak<RwLock<GraphicsType>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -256,7 +256,7 @@ where
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(
         file_name: &'static str,
-        graphics: Weak<ShardedLock<Graphics>>,
+        graphics: Weak<RwLock<Graphics>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -264,20 +264,16 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         model_index: usize,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading model {}...", file_name);
-        let graphics_arc = graphics.upgrade().unwrap();
+        let graphics_arc = graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle for model.");
         let (model_send, model_recv) = bounded(5);
         rayon::spawn(move || {
-            let graphics_clone = graphics_arc;
-            let thread_count: usize;
+            let graphics_arc = graphics_arc;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_lock = graphics_clone
-                    .read()
-                    .expect("Failed to lock graphics handle.");
-                thread_count = graphics_lock.thread_pool.thread_count;
-                command_pool = graphics_lock.thread_pool.threads[model_index % thread_count]
-                    .command_pool
-                    .clone();
+                let graphics_ref = &*graphics_arc.read();
+                command_pool = Graphics::get_command_pool(graphics_ref, model_index);
             }
             log::info!(
                 "Model index: {}, Command pool: {:?}",
@@ -286,18 +282,15 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             );
             let (document, buffers, images) =
                 read_raw_data(file_name).expect("Failed to read raw data from glTF.");
-            let (textures, texture_index_offset) = Graphics::create_gltf_textures(
-                images,
-                graphics_clone.clone(),
-                command_pool.clone(),
-            )
-            .expect("Failed to create glTF textures.");
+            let (textures, texture_index_offset) =
+                Graphics::create_gltf_textures(images, graphics_arc.clone(), command_pool.clone())
+                    .expect("Failed to create glTF textures.");
             let mut loaded_model = Self::create_model(
                 file_name,
                 document,
                 buffers,
                 textures,
-                graphics.clone(),
+                graphics,
                 position,
                 scale,
                 rotation,
@@ -305,19 +298,18 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 texture_index_offset,
             );
             {
-                let graphics_lock = graphics_clone
-                    .read()
-                    .expect("Failed to lock graphics handle.");
+                let graphics_lock = graphics_arc.read();
+                let device = graphics_lock.logical_device.as_ref();
+                let pool = *command_pool.lock();
                 for mesh in loaded_model.meshes.iter_mut() {
-                    let command_buffer =
-                        graphics_lock.create_secondary_command_buffer(command_pool.clone());
+                    let command_buffer = Graphics::create_secondary_command_buffer(device, pool);
                     mesh.command_pool = Some(command_pool.clone());
                     mesh.command_buffer = Some(command_buffer);
                 }
                 drop(graphics_lock);
             }
             loaded_model
-                .create_buffers(graphics_clone)
+                .create_buffers(graphics_arc)
                 .expect("Failed to create buffers for model.");
             model_send
                 .send(loaded_model)
@@ -326,7 +318,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model_recv)
     }
 
-    fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);
@@ -390,8 +382,14 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 } else {
                     ShaderType::BasicShaderWithoutTexture
                 };
-                let pipeline_layout = pipeline.read().unwrap().get_pipeline_layout(shader_type);
-                let pipeline = pipeline.read().unwrap().get_pipeline(shader_type, 0);
+                let pipeline_layout = pipeline
+                    .read()
+                    .expect("Failed to lock pipeline when acquiring pipeline layout.")
+                    .get_pipeline_layout(shader_type);
+                let pipeline = pipeline
+                    .read()
+                    .expect("Failed to lock pipeline when getting the graphics pipeline.")
+                    .get_pipeline(shader_type, 0);
                 let command_buffer_begin_info = CommandBufferBeginInfo::builder()
                     .inheritance_info(inheritance)
                     .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)

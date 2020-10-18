@@ -2,8 +2,8 @@ use ash::vk::{
     BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorSetAllocateInfo,
     DescriptorType, MemoryPropertyFlags, WriteDescriptorSet,
 };
-use crossbeam::sync::ShardedLock;
 use glam::Mat4;
+use parking_lot::RwLock;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics};
@@ -19,8 +19,8 @@ pub struct SSBO {
 }
 
 impl SSBO {
-    pub fn new(graphics: Arc<ShardedLock<Graphics>>, data: &[Mat4; 500]) -> anyhow::Result<Self> {
-        let graphics_lock = graphics.read().expect("Failed to lock graphics handle.");
+    pub fn new(graphics: Arc<RwLock<Graphics>>, data: &[Mat4; 500]) -> anyhow::Result<Self> {
+        let graphics_lock = graphics.read();
         let device = graphics_lock.logical_device.clone();
         let allocator = graphics_lock.allocator.clone();
         let buffer_size = std::mem::size_of::<Mat4>() * 500;

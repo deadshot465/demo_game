@@ -3,12 +3,11 @@ use crate::game::shared::structs::{Mesh, Model, ModelMetaData, Primitive, Vertex
 use crate::game::shared::traits::{Disposable, GraphicsBase};
 use crate::game::shared::util::get_random_string;
 use crate::game::shared::util::height_generator::HeightGenerator;
-use crate::game::ResourceManager;
 use ash::vk::{CommandBuffer, CommandPool, SamplerAddressMode};
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 
@@ -35,6 +34,15 @@ where
 {
     pub const SIZE: f32 = 800.0;
     pub const VERTEX_COUNT: u32 = 128;
+
+    fn calculate_normal(x: f32, z: f32, height_generator: &HeightGenerator) -> Vec3A {
+        let height_l = height_generator.generate_height(x - 1.0, z);
+        let height_r = height_generator.generate_height(x + 1.0, z);
+        let height_d = height_generator.generate_height(x, z - 1.0);
+        let height_u = height_generator.generate_height(x, z + 1.0);
+        let normal: Vec3A = Vec3A::new(height_l - height_r, 2.0, height_d - height_u);
+        normal.normalize()
+    }
 }
 
 impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
@@ -42,10 +50,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         grid_x: i32,
         grid_z: i32,
         model_index: usize,
-        resource_manager: Weak<
-            ShardedLock<ResourceManager<Graphics, Buffer, CommandBuffer, Image>>,
-        >,
-        graphics: Weak<ShardedLock<Graphics>>,
+        graphics: Weak<RwLock<Graphics>>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
         size_ratio_z: f32,
@@ -55,49 +60,29 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         let graphics_arc = graphics
             .upgrade()
             .expect("Failed to upgrade graphics handle.");
-        let command_pool = graphics_arc
-            .read()
-            .expect("Failed to lock command pool.")
-            .thread_pool
-            .get_idle_command_pool();
-        let image = Graphics::create_image_from_file(
-            "textures/TexturesCom_Grass0150_1_seamless_S.jpg",
-            graphics_arc.clone(),
-            command_pool,
-            SamplerAddressMode::REPEAT,
-        )?;
-        log::info!("Terrain texture successfully created.");
-        let rm_arc = resource_manager
-            .upgrade()
-            .expect("Failed to upgrade Weak of resource manager for creating terrain.");
-        let texture_index: usize;
-        {
-            let resource_lock = rm_arc.read().expect("Failed to lock resource manager.");
-            texture_index = resource_lock.get_texture_count() - 1;
-        }
-        let thread_count: usize;
-        let command_pool: Arc<Mutex<CommandPool>>;
-        let command_buffer: CommandBuffer;
-        {
-            let graphics_lock = graphics_arc
-                .read()
-                .expect("Failed to lock graphics handle.");
-            thread_count = graphics_lock.thread_pool.thread_count;
-            command_pool = graphics_lock.thread_pool.threads[model_index % thread_count]
-                .command_pool
-                .clone();
-            command_buffer = graphics_lock.create_secondary_command_buffer(command_pool.clone());
-        }
-
         let (terrain_send, terrain_recv) = bounded(5);
         rayon::spawn(move || {
+            let graphics_arc = graphics_arc;
+            let (command_pool, command_buffer) =
+                Graphics::get_command_pool_and_secondary_command_buffer(
+                    &*graphics_arc.read(),
+                    model_index,
+                );
+            let (image, texture_index) = Graphics::create_image_from_file(
+                "textures/TexturesCom_Grass0150_1_seamless_S.jpg",
+                graphics_arc.clone(),
+                command_pool.clone(),
+                SamplerAddressMode::REPEAT,
+            )
+            .expect("Failed to create image from file.");
+            log::info!("Terrain texture successfully created.");
             let mut generated_terrain = Terrain::create_terrain(
                 grid_x,
                 grid_z,
                 texture_index,
                 model_index,
                 image,
-                graphics.clone(),
+                graphics,
                 command_pool,
                 command_buffer,
                 height_generator,
@@ -108,7 +93,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to create terrain.");
             log::info!("Terrain successfully generated.");
             generated_terrain
-                .create_buffers(graphics_arc.clone())
+                .create_buffers(graphics_arc)
                 .expect("Failed to create buffer for terrain.");
             terrain_send
                 .send(generated_terrain)
@@ -117,7 +102,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         Ok(terrain_recv)
     }
 
-    fn create_buffers(&mut self, graphics: Arc<ShardedLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
         let vertices = self.model.meshes[0].primitives[0].vertices.to_vec();
         let indices = self.model.meshes[0].primitives[0].indices.to_vec();
         let command_pool = self.model.meshes[0].command_pool.clone().unwrap();
@@ -136,7 +121,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         texture_index: usize,
         model_index: usize,
         texture: Arc<ShardedLock<Image>>,
-        graphics: Weak<ShardedLock<Graphics>>,
+        graphics: Weak<RwLock<Graphics>>,
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandBuffer,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
@@ -171,7 +156,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         model_index: usize,
         texture_index: usize,
         texture: Arc<ShardedLock<Image>>,
-        graphics: Weak<ShardedLock<Graphics>>,
+        graphics: Weak<RwLock<Graphics>>,
         position: Vec3A,
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandBuffer,
@@ -197,7 +182,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                         generator.generate_height(j as f32, i as f32),
                         (i as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_z,
                     ),
-                    normal: Vec3A::new(0.0, -1.0, 0.0),
+                    normal: Self::calculate_normal(j as f32, i as f32, &*generator),
                     uv: Vec2::new(
                         j as f32 / (vertex_count - 1) as f32,
                         i as f32 / (vertex_count - 1) as f32,
@@ -301,10 +286,10 @@ where
     }
 
     fn get_name(&self) -> &str {
-        unimplemented!()
+        self.model.get_name()
     }
 
-    fn set_name(&mut self, _name: String) -> &str {
-        unimplemented!()
+    fn set_name(&mut self, name: String) -> &str {
+        self.model.set_name(name)
     }
 }
