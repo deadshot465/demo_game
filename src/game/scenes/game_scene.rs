@@ -6,6 +6,7 @@ use parking_lot::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
+use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{
     GeometricPrimitive, Model, PrimitiveType, SkinnedModel, Terrain,
@@ -145,13 +146,17 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )?;
+        let water_pos = std::env::var("WATER_POS")?.parse::<f32>()?;
+        let water_height = std::env::var("WATER_HEIGHT")?.parse::<f32>()?;
+        let water_scale = std::env::var("WATER_SCALE")?.parse::<f32>()?;
         self.add_geometric_primitive(
             PrimitiveType::Rect,
             None,
-            Vec3A::zero(),
-            Vec3A::one(),
+            Vec3A::new(water_pos, water_height, water_pos),
+            Vec3A::new(water_scale, 1.0, water_scale),
             Vec3A::zero(),
             Vec4::new(0.0, 0.0, 1.0, 1.0),
+            Some(ShaderType::Water),
         )?;
         self.generate_terrain(0, 0)?;
         Ok(())
@@ -286,6 +291,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
+        shader_type: Option<ShaderType>,
     ) -> anyhow::Result<()> {
         let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
         let task = GeometricPrimitive::new(
@@ -297,6 +303,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             scale,
             rotation,
             color,
+            shader_type,
         )?;
         self.geometric_primitive_tasks.push(task);
         Ok(())
@@ -344,9 +351,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         for terrain in terrains.into_iter() {
             lock.add_terrain(terrain);
         }
-        for primitive in primitives.iter_mut() {
-            lock.add_model(primitive.model.take().unwrap());
-            primitive.is_disposed = true;
+        for primitive in primitives.into_iter() {
+            lock.add_geometric_primitive(primitive);
         }
         drop(lock);
         drop(rm);

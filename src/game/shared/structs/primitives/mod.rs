@@ -1,4 +1,5 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Mesh, Primitive, Vertex};
 use crate::game::shared::util::get_random_string;
 use crate::game::structs::{Model, ModelMetaData};
@@ -46,9 +47,12 @@ where
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
+        shader_type: Option<ShaderType>,
     ) -> Self {
         let mesh = match primitive_type {
-            PrimitiveType::Rect => Self::create_rect(texture_data, command_pool, command_buffer),
+            PrimitiveType::Rect => {
+                Self::create_rect(texture_data, command_pool, command_buffer, shader_type)
+            }
         };
         let mut result = GeometricPrimitive {
             is_disposed: false,
@@ -82,6 +86,7 @@ where
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandType,
+        shader_type: Option<ShaderType>,
     ) -> Mesh<BufferType, CommandType, TextureType> {
         let mut vertices = vec![Vertex::default(); 4];
         let mut indices = vec![u32::default(); 3 * 2];
@@ -122,6 +127,11 @@ where
             texture_index,
             is_disposed: false,
         };
+        let final_shader_type = if texture.is_empty() {
+            shader_type.unwrap_or(ShaderType::BasicShaderWithoutTexture)
+        } else {
+            shader_type.unwrap_or(ShaderType::BasicShader)
+        };
         Mesh {
             primitives: vec![primitive],
             vertex_buffer: None,
@@ -130,6 +140,7 @@ where
             is_disposed: false,
             command_pool: Some(command_pool),
             command_buffer: Some(command_buffer),
+            shader_type: final_shader_type,
         }
     }
 }
@@ -144,6 +155,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
+        shader_type: Option<ShaderType>,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!(
             "Generating geometric primitive...Model index: {}",
@@ -183,6 +195,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
                 scale,
                 rotation,
                 color,
+                shader_type,
             );
             generated_mesh
                 .create_buffer(graphics_arc)

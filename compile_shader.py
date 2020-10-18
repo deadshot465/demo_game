@@ -7,7 +7,8 @@ file_names = {
     'basicShader_noTexture.frag': 'basicShader_noTexture.spv',
     'basicShader.frag': 'frag.spv',
     'terrain.vert': 'terrain_vert.spv',
-    'terrain.frag': 'terrain_frag.spv'
+    'terrain.frag': 'terrain_frag.spv',
+    'water.frag': 'water_frag.spv',
 }
 
 # Compile shaders

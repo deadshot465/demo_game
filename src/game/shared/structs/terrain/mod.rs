@@ -1,4 +1,5 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Mesh, Model, ModelMetaData, Primitive, Vertex};
 use crate::game::shared::traits::{Disposable, GraphicsBase};
 use crate::game::shared::util::get_random_string;
@@ -145,6 +146,7 @@ where
             is_disposed: false,
             command_pool: Some(command_pool),
             command_buffer: Some(command_buffer),
+            shader_type: ShaderType::Terrain,
         };
         let mut model = Model {
             position,

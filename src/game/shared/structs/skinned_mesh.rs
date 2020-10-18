@@ -5,7 +5,7 @@ use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Image};
-use crate::game::shared::enums::SamplerResource;
+use crate::game::shared::enums::{SamplerResource, ShaderType};
 use crate::game::shared::structs::{Joint, SkinnedVertex, SSBO};
 use crate::game::traits::Disposable;
 use ash::vk::CommandBuffer;
@@ -27,6 +27,7 @@ where
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
     pub command_buffer: Option<CommandType>,
     pub sampler_resource: Option<SamplerResource>,
+    pub shader_type: ShaderType,
 }
 
 unsafe impl<BufferType, CommandType, TextureType> Send

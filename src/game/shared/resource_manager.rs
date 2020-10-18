@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::structs::{Model, SkinnedModel, Terrain};
+use crate::game::shared::structs::{GeometricPrimitive, Model, SkinnedModel, Terrain};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::util::get_random_string;
 use crate::game::traits::GraphicsBase;
@@ -15,6 +15,8 @@ type SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType> =
     Vec<Arc<Mutex<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>>;
 type TerrainList<GraphicsType, BufferType, CommandType, TextureType> =
     Vec<Arc<Mutex<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>>;
+type GeometricList<GraphicsType, BufferType, CommandType, TextureType> =
+    Vec<Arc<Mutex<GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>>>>;
 
 pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -27,6 +29,7 @@ where
     pub skinned_models: SkinnedModelList<GraphicsType, BufferType, CommandType, TextureType>,
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
     pub terrains: TerrainList<GraphicsType, BufferType, CommandType, TextureType>,
+    pub geometric_primitives: GeometricList<GraphicsType, BufferType, CommandType, TextureType>,
     pub command_buffers: Vec<CommandType>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
@@ -79,6 +82,7 @@ where
             textures: vec![],
             terrains: vec![],
             command_buffers: vec![],
+            geometric_primitives: vec![],
         }
     }
 
@@ -132,6 +136,15 @@ where
         let terrain_wrapped = Arc::new(Mutex::new(terrain));
         self.terrains.push(terrain_wrapped.clone());
         terrain_wrapped
+    }
+
+    pub fn add_geometric_primitive(
+        &mut self,
+        mesh: GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>,
+    ) -> Arc<Mutex<GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>>> {
+        let geometric_wrapped = Arc::new(Mutex::new(mesh));
+        self.geometric_primitives.push(geometric_wrapped.clone());
+        geometric_wrapped
     }
 
     pub fn get_model_count(&self) -> usize {
@@ -239,8 +252,26 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
             })
             .flatten()
             .collect::<Vec<_>>();
+        let mut primitive_command_buffers = self
+            .geometric_primitives
+            .iter()
+            .map(|primitive| {
+                let mesh_command_buffers = primitive
+                    .lock()
+                    .model
+                    .as_ref()
+                    .unwrap()
+                    .meshes
+                    .iter()
+                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .collect::<Vec<_>>();
+                mesh_command_buffers
+            })
+            .flatten()
+            .collect::<Vec<_>>();
         model_command_buffers.append(&mut skinned_model_command_buffers);
         model_command_buffers.append(&mut terrain_command_buffers);
+        model_command_buffers.append(&mut primitive_command_buffers);
         self.command_buffers = model_command_buffers;
     }
 }

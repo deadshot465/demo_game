@@ -261,7 +261,12 @@ where
             let texture = texture_index.and_then(|x| images.get(x).cloned());
             let texture_index = texture_index.map(|index| index + texture_index_offset);
 
-            let _primitive = SkinnedPrimitive {
+            let shader_type = if texture.is_none() {
+                ShaderType::BasicShaderWithoutTexture
+            } else {
+                ShaderType::AnimatedModel
+            };
+            let skinned_primitive = SkinnedPrimitive {
                 vertices: skinned_vertices,
                 indices,
                 vertex_buffer: None::<ManuallyDrop<BufferType>>,
@@ -272,8 +277,9 @@ where
                 command_pool: None,
                 command_buffer: None,
                 sampler_resource: None,
+                shader_type,
             };
-            skinned_primitives.push(_primitive);
+            skinned_primitives.push(skinned_primitive);
         }
 
         SkinnedMesh {

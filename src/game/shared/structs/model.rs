@@ -233,6 +233,11 @@ where
             });
         }
 
+        let shader_type = if textures.is_empty() {
+            ShaderType::BasicShaderWithoutTexture
+        } else {
+            ShaderType::BasicShader
+        };
         Mesh {
             primitives,
             vertex_buffer: None,
@@ -241,6 +246,7 @@ where
             is_disposed: false,
             command_buffer: None,
             command_pool: None,
+            shader_type,
         }
     }
 
@@ -372,18 +378,13 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         device: Arc<Device>,
         pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
         descriptor_set: DescriptorSet,
-        textured_shader_type: Option<ShaderType>,
     ) {
         let mut push_constant = push_constant;
         push_constant.model_index = self.model_index;
         unsafe {
             let inheritance = inheritance_info.load(Ordering::SeqCst).as_ref().unwrap();
             for mesh in self.meshes.iter() {
-                let shader_type = if !mesh.texture.is_empty() {
-                    textured_shader_type.unwrap_or(ShaderType::BasicShader)
-                } else {
-                    ShaderType::BasicShaderWithoutTexture
-                };
+                let shader_type = mesh.shader_type;
                 let pipeline_layout = pipeline
                     .read()
                     .expect("Failed to lock pipeline when acquiring pipeline layout.")

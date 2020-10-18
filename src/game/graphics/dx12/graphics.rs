@@ -247,6 +247,8 @@ impl GraphicsBase<Resource, ComPtr<ID3D12GraphicsCommandList>, Resource> for Gra
     fn set_disposing(&mut self) {
         self.is_initialized = false;
     }
+
+    unsafe fn wait_idle(&self) {}
 }
 
 impl Drop for Graphics {

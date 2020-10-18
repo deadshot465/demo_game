@@ -588,6 +588,7 @@ impl Graphics {
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
         self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
         self.create_graphics_pipeline(ShaderType::Terrain)?;
+        self.create_graphics_pipeline(ShaderType::Water)?;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
         self.frame_buffers = Self::create_frame_buffers(
@@ -695,6 +696,9 @@ impl Graphics {
         for model in resource_lock.skinned_models.iter_mut() {
             model.lock().update(delta_time);
         }
+        for primitive in resource_lock.geometric_primitives.iter_mut() {
+            primitive.lock().model.as_mut().unwrap().update(delta_time);
+        }
         drop(resource_lock);
         //self.update_dynamic_buffer(delta_time)?;
 
@@ -747,7 +751,6 @@ impl Graphics {
                             device_clone,
                             pipeline_clone,
                             descriptor_set,
-                            None,
                         );
                     })
                     .expect("Failed to add work to the queue.");
@@ -794,7 +797,29 @@ impl Graphics {
                             device_clone,
                             pipeline_clone,
                             descriptor_set,
-                            Some(ShaderType::Terrain),
+                        );
+                    })
+                    .expect("Failed to add work to the queue.");
+            }
+            for primitive in resource_lock.geometric_primitives.iter() {
+                let primitive_clone = primitive.clone();
+                let model_index = primitive_clone.lock().model.as_ref().unwrap().model_index;
+                let ptr_clone = ptr.clone();
+                let device_clone = self.logical_device.clone();
+                let pipeline_clone = self.pipeline.clone();
+                let descriptor_set = self.descriptor_sets[0];
+                self.thread_pool.threads[model_index % thread_count]
+                    .add_job(move || {
+                        let primitive_lock = primitive_clone.lock();
+                        let ptr = ptr_clone;
+                        primitive_lock.model.as_ref().unwrap().render(
+                            ptr,
+                            push_constant,
+                            viewport,
+                            scissor,
+                            device_clone,
+                            pipeline_clone,
+                            descriptor_set,
                         );
                     })
                     .expect("Failed to add work to the queue.");
@@ -944,7 +969,8 @@ impl Graphics {
         let resource_lock = resource_manager.read();
         let is_models_empty = resource_lock.models.is_empty()
             && resource_lock.skinned_models.is_empty()
-            && resource_lock.terrains.is_empty();
+            && resource_lock.terrains.is_empty()
+            && resource_lock.geometric_primitives.is_empty();
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
@@ -981,6 +1007,16 @@ impl Graphics {
             model_metadata.object_colors[terrain_lock.model.model_index] = object_color;
             model_metadata.reflectivities[terrain_lock.model.model_index] = reflectivity;
             model_metadata.shine_dampers[terrain_lock.model.model_index] = shine_damper;
+        }
+        for primitive in resource_lock.geometric_primitives.iter() {
+            let primitive_lock = primitive.lock();
+            let model = primitive_lock.model.as_ref().unwrap();
+            let metadata = model.model_metadata;
+            let model_index = model.model_index;
+            model_metadata.world_matrices[model_index] = metadata.world_matrix;
+            model_metadata.object_colors[model_index] = metadata.object_color;
+            model_metadata.reflectivities[model_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[model_index] = metadata.shine_damper;
         }
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);
@@ -1165,6 +1201,7 @@ impl Graphics {
                     ShaderType::BasicShader => "./shaders/frag.spv",
                     ShaderType::BasicShaderWithoutTexture => "./shaders/basicShader_noTexture.spv",
                     ShaderType::Terrain => "./shaders/terrain_frag.spv",
+                    ShaderType::Water => "./shaders/water_frag.spv",
                     _ => "./shaders/frag.spv",
                 },
                 ShaderStageFlags::FRAGMENT,
@@ -1275,6 +1312,12 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
 
     fn set_disposing(&mut self) {
         self.is_initialized = false;
+    }
+
+    unsafe fn wait_idle(&self) {
+        self.logical_device
+            .device_wait_idle()
+            .expect("Failed to wait until device is idling.");
     }
 }
 

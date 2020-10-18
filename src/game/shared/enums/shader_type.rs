@@ -4,6 +4,7 @@ pub enum ShaderType {
     BasicShaderWithoutTexture,
     AnimatedModel,
     Terrain,
+    Water,
 }
 
 impl ToString for ShaderType {
@@ -13,6 +14,7 @@ impl ToString for ShaderType {
             ShaderType::BasicShaderWithoutTexture => "BasicShaderWithoutTexture".to_string(),
             ShaderType::AnimatedModel => "AnimatedModel".to_string(),
             ShaderType::Terrain => "Terrain".to_string(),
+            ShaderType::Water => "Water".to_string(),
         }
     }
 }
@@ -24,6 +26,7 @@ impl ShaderType {
             ShaderType::BasicShaderWithoutTexture,
             ShaderType::AnimatedModel,
             ShaderType::Terrain,
+            ShaderType::Water,
         ]
     }
 

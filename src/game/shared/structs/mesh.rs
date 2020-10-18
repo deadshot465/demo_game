@@ -4,6 +4,7 @@ use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use crate::game::graphics;
+use crate::game::shared::enums::ShaderType;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
 
@@ -29,6 +30,7 @@ where
     pub is_disposed: bool,
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
     pub command_buffer: Option<CommandType>,
+    pub shader_type: ShaderType,
 }
 
 impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
@@ -41,6 +43,7 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
             texture: vec![],
             command_pool: None,
             command_buffer: None,
+            shader_type: ShaderType::BasicShader,
         }
     }
 

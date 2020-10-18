@@ -142,6 +142,9 @@ where
         let initialized = self.graphics.read().is_initialized();
         if initialized {
             self.graphics.write().set_disposing();
+            unsafe {
+                self.graphics.read().wait_idle();
+            }
         }
     }
 }

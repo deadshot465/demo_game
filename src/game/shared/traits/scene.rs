@@ -1,3 +1,4 @@
+use crate::game::enums::ShaderType;
 use crate::game::structs::PrimitiveType;
 use glam::{Vec3A, Vec4};
 
@@ -32,6 +33,7 @@ pub trait Scene {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
+        shader_type: Option<ShaderType>,
     ) -> anyhow::Result<()>;
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()>;
 }
