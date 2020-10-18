@@ -252,7 +252,7 @@ impl Graphics {
         })
     }
 
-    pub async fn begin_draw(&self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
+    pub fn begin_draw(&self, frame_buffer: Framebuffer) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
         };
@@ -322,11 +322,8 @@ impl Graphics {
                 &*renderpass_ptr.load(Ordering::SeqCst),
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
-            println!("Begin secondary command buffers...");
-            let command_buffers = self
-                .update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])
-                .await?;
-            println!("End secondary command buffers...");
+            let command_buffers =
+                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])?;
             self.logical_device
                 .cmd_execute_commands(self.command_buffers[0], command_buffers.as_slice());
             self.logical_device
@@ -609,19 +606,18 @@ impl Graphics {
         Ok(())
     }
 
-    pub async fn render(&self) -> anyhow::Result<()> {
+    pub fn render(&self) -> anyhow::Result<()> {
+        if !self.is_initialized {
+            return Ok(());
+        }
         unsafe {
-            println!("Render started...");
-
             let fences = vec![self.fence];
             self.logical_device
                 .wait_for_fences(fences.as_slice(), true, 1_000_000_000)
                 .expect("Failed to wait for fences.");
-            println!("Successfully waited for fence.");
             self.logical_device
                 .reset_fences(fences.as_slice())
                 .expect("Failed to reset fences.");
-            println!("Successfully reset fence.");
             let result: VkResult<(u32, bool)>;
             {
                 let swapchain_loader = &self.swapchain.swapchain_loader;
@@ -649,9 +645,7 @@ impl Graphics {
             if is_suboptimal {
                 return Err(anyhow::anyhow!("Swapchain is suboptimal."));
             }
-            println!("Begin drawing...");
-            self.begin_draw(self.frame_buffers[image_index as usize])
-                .await?;
+            self.begin_draw(self.frame_buffers[image_index as usize])?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
@@ -685,12 +679,14 @@ impl Graphics {
                     .queue_present(*self.present_queue.lock(), &present_info)
                     .expect("Failed to present with the swapchain.");
             }
-            println!("Render ended...");
             Ok(())
         }
     }
 
     pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if !self.is_initialized {
+            return Ok(());
+        }
         let resource_arc = self.resource_manager.upgrade().unwrap();
         let mut resource_lock = resource_arc.write();
         for model in resource_lock.models.iter_mut() {
@@ -717,7 +713,7 @@ impl Graphics {
         Ok(())
     }
 
-    pub async fn update_secondary_command_buffers(
+    pub fn update_secondary_command_buffers(
         &self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
         viewport: Viewport,
@@ -804,7 +800,7 @@ impl Graphics {
                     .expect("Failed to add work to the queue.");
             }
         }
-        self.thread_pool.wait().await;
+        self.thread_pool.wait()?;
         let resource_lock = resource_manager.read();
         let command_buffers = resource_lock.command_buffers.to_vec();
         Ok(command_buffers)
@@ -1271,6 +1267,14 @@ impl Graphics {
 impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
     fn get_commands(&self) -> &Vec<CommandBuffer> {
         &self.command_buffers
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.is_initialized
+    }
+
+    fn set_disposing(&mut self) {
+        self.is_initialized = false;
     }
 }
 

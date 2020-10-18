@@ -139,5 +139,9 @@ where
 {
     fn drop(&mut self) {
         log::info!("Dropping game...");
+        let initialized = self.graphics.read().is_initialized();
+        if initialized {
+            self.graphics.write().set_disposing();
+        }
     }
 }

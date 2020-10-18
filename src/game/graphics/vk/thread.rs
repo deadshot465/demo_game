@@ -6,62 +6,61 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use tokio::sync::*;
 
 #[allow(dead_code)]
 pub struct Thread {
     pub command_pool: Arc<Mutex<ash::vk::CommandPool>>,
+    pub work_received: AtomicBool,
     destroying: Arc<AtomicBool>,
-    notify: Arc<Notify>,
-    worker: tokio::task::JoinHandle<anyhow::Result<()>>,
+    notify: Receiver<()>,
+    worker: Option<JoinHandle<anyhow::Result<()>>>,
     task_queue: Arc<ArrayQueue<Box<dyn FnOnce() + Send + 'static>>>,
-    work_sender: tokio::sync::broadcast::Sender<()>,
+    work_sender: Sender<()>,
 }
 
 impl Thread {
     pub fn new(device: &ash::Device, queue_index: u32) -> Self {
         let task_queue = Arc::new(ArrayQueue::new(1000));
-        let (sender, receiver) = tokio::sync::broadcast::channel(1000);
+        let (sender, receiver) = bounded(1000);
         let destroying = Arc::new(AtomicBool::new(false));
         let pool_info = ash::vk::CommandPoolCreateInfo::builder()
             .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_index)
             .build();
-        let notify = Arc::new(tokio::sync::Notify::new());
+        let (notify_sender, notify_receiver) = bounded(1000);
         let sender_clone = sender.clone();
         let destroying_clone = destroying.clone();
         let queue = task_queue.clone();
-        let notify_clone = notify.clone();
         unsafe {
             let command_pool = device
                 .create_command_pool(&pool_info, None)
                 .expect("Failed to create command pool for thread.");
             Thread {
                 destroying,
-                notify,
-                worker: tokio::spawn(async move {
+                work_received: AtomicBool::new(false),
+                notify: notify_receiver,
+                worker: Some(std::thread::spawn(move || {
                     let sender = sender_clone;
-                    let mut receiver = receiver;
+                    let receiver = receiver;
                     let destroying = destroying_clone;
-                    let notify = notify_clone;
                     'outer: loop {
                         let mut work: Option<Box<dyn FnOnce() + Send>>;
-                        while let Some(_) = receiver.recv().await {
+                        while receiver.recv().is_ok() {
                             if destroying.load(Ordering::SeqCst) {
                                 break 'outer;
                             }
                             work = queue.pop();
                             if let Some(job) = work {
                                 job();
-                                sender.send(()).await?;
+                                sender.send(())?;
                             } else {
-                                notify.notify_one();
+                                notify_sender.send(())?;
                                 break;
                             }
                         }
                     }
                     Ok(())
-                }),
+                })),
                 task_queue: task_queue.clone(),
                 work_sender: sender,
                 command_pool: Arc::new(Mutex::new(command_pool)),
@@ -75,11 +74,13 @@ impl Thread {
             Err(_) => log::error!("Failed to push work into the queue."),
         }
         self.work_sender.send(())?;
+        self.work_received.store(true, Ordering::SeqCst);
         Ok(())
     }
 
-    pub async fn wait(&self) {
-        self.notify.notified().await;
+    pub fn wait(&self) -> anyhow::Result<()> {
+        self.notify.recv()?;
+        Ok(())
     }
 }
 
@@ -122,12 +123,15 @@ impl ThreadPool {
         }
     }
 
-    pub async fn wait(&self) {
-        for (index, thread) in self.threads.iter().enumerate() {
-            thread.wait().await;
-            println!("Work done...Worker thread: {}", index);
+    pub fn wait(&self) -> anyhow::Result<()> {
+        for thread in self.threads.iter() {
+            if !thread.work_received.load(Ordering::SeqCst) {
+                continue;
+            }
+            thread.wait()?;
+            thread.work_received.store(false, Ordering::SeqCst);
         }
-        println!("All work done...");
+        Ok(())
     }
 
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
@@ -145,6 +149,7 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        self.wait().expect("Failed to wait on all threads.");
         self.threads.clear();
     }
 }

@@ -7,4 +7,6 @@ pub trait GraphicsBase<
 >
 {
     fn get_commands(&self) -> &Vec<CommandType>;
+    fn is_initialized(&self) -> bool;
+    fn set_disposing(&mut self);
 }

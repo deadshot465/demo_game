@@ -3,6 +3,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use parking_lot::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
@@ -25,7 +26,7 @@ where
     resource_manager:
         Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
-    model_count: usize,
+    model_count: AtomicUsize,
     height_generator: Arc<ShardedLock<HeightGenerator>>,
     model_tasks: Vec<Receiver<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     skinned_model_tasks:
@@ -53,7 +54,7 @@ where
             graphics,
             resource_manager,
             scene_name: String::from("GAME_SCENE"),
-            model_count: 0,
+            model_count: AtomicUsize::new(0),
             height_generator: Arc::new(ShardedLock::new(HeightGenerator::new())),
             model_tasks: vec![],
             skinned_model_tasks: vec![],
@@ -65,7 +66,7 @@ where
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
     pub fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
-        let model_index = self.model_count;
+        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
         let mut height_generator = self
             .height_generator
             .write()
@@ -84,7 +85,6 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             0.5,
         )?;
         self.terrain_tasks.push(terrain);
-        self.model_count += 1;
         Ok(())
     }
 }
@@ -184,6 +184,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()> {
+        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -195,6 +196,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
+        drop(lock);
         if let Some(m) = item {
             let mut model = Model::from(&*m.lock());
             model.position = position;
@@ -205,13 +207,11 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
             model.model_metadata.world_matrix = model.get_world_matrix();
             model.model_metadata.object_color = color;
-            model.model_index = lock.get_model_count();
-            drop(lock);
+            model.model_index = model_index;
             let mut lock = resource_manager.write();
             lock.add_model(model);
             drop(lock);
         } else {
-            drop(lock);
             let task = Model::new(
                 file_name,
                 self.graphics.clone(),
@@ -219,11 +219,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 scale,
                 rotation,
                 color,
-                self.model_count,
+                model_index,
             )?;
             self.model_tasks.push(task);
         }
-        self.model_count += 1;
         drop(resource_manager);
         Ok(())
     }
@@ -236,6 +235,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()> {
+        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -247,6 +247,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
+        drop(lock);
         if let Some(m) = item {
             let mut model = SkinnedModel::from(&*m.lock());
             model.position = position;
@@ -257,13 +258,11 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
             model.model_metadata.world_matrix = model.get_world_matrix();
             model.model_metadata.object_color = color;
-            model.model_index = lock.get_model_count();
-            drop(lock);
+            model.model_index = model_index;
             let mut lock = resource_manager.write();
             lock.add_skinned_model(model);
             drop(lock);
         } else {
-            drop(lock);
             let task = SkinnedModel::new(
                 file_name,
                 self.graphics.clone(),
@@ -271,11 +270,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 scale,
                 rotation,
                 color,
-                self.model_count,
+                model_index,
             )?;
             self.skinned_model_tasks.push(task);
         }
-        self.model_count += 1;
         drop(resource_manager);
         Ok(())
     }
@@ -289,18 +287,18 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()> {
+        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
         let task = GeometricPrimitive::new(
             self.graphics.clone(),
             primitive_type,
             texture_name,
-            self.model_count,
+            model_index,
             position,
             scale,
             rotation,
             color,
         )?;
         self.geometric_primitive_tasks.push(task);
-        self.model_count += 1;
         Ok(())
     }
 

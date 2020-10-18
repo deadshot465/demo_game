@@ -52,6 +52,7 @@ where
 {
     fn create_model(
         file_name: &str,
+        model_index: usize,
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
@@ -82,7 +83,7 @@ where
             meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
-            model_index: 0,
+            model_index,
         };
         model.model_metadata.world_matrix = model.get_world_matrix();
         model
@@ -287,6 +288,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     .expect("Failed to create glTF textures.");
             let mut loaded_model = Self::create_model(
                 file_name,
+                model_index,
                 document,
                 buffers,
                 textures,
@@ -372,7 +374,6 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         descriptor_set: DescriptorSet,
         textured_shader_type: Option<ShaderType>,
     ) {
-        println!("Rendering model...{}", &self.get_name());
         let mut push_constant = push_constant;
         push_constant.model_index = self.model_index;
         unsafe {
@@ -454,7 +455,6 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
         }
-        println!("Rendering model finished...{}", &self.get_name());
     }
 }
 

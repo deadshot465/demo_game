@@ -54,6 +54,7 @@ where
 {
     fn create_model(
         file_name: &str,
+        model_index: usize,
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
@@ -82,7 +83,7 @@ where
             skinned_meshes: meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
-            model_index: 0,
+            model_index,
             animations,
             graphics,
         };
@@ -437,6 +438,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                     .expect("Failed to create glTF textures.");
             let mut loaded_model = Self::create_model(
                 file_name,
+                model_index,
                 document,
                 buffers,
                 textures,
@@ -585,7 +587,6 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
         descriptor_set: DescriptorSet,
     ) {
-        println!("Rendering model...{}", &self.get_name());
         let pipeline_layout = pipeline
             .read()
             .expect("Failed to lock pipeline when acquiring pipeline layout.")
@@ -667,7 +668,6 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 }
             }
         }
-        println!("Rendering model finished...{}", &self.get_name());
     }
 }
 

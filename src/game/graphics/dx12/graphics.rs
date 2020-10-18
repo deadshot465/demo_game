@@ -36,6 +36,7 @@ type ResourceManagerHandle =
 
 #[allow(dead_code)]
 pub struct Graphics {
+    pub is_initialized: bool,
     camera: Rc<RefCell<Camera>>,
     resource_manager: ResourceManagerHandle,
     debug: ComPtr<ID3D12Debug2>,
@@ -91,6 +92,7 @@ impl Graphics {
             swap_chain: ManuallyDrop::new(swap_chain),
             descriptor_heap: ManuallyDrop::new(descriptor_heap),
             pipeline: ManuallyDrop::new(pipeline),
+            is_initialized: false,
         }
     }
 
@@ -236,6 +238,14 @@ impl Graphics {
 impl GraphicsBase<Resource, ComPtr<ID3D12GraphicsCommandList>, Resource> for Graphics {
     fn get_commands(&self) -> &Vec<ComPtr<ID3D12GraphicsCommandList>> {
         unimplemented!()
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.is_initialized
+    }
+
+    fn set_disposing(&mut self) {
+        self.is_initialized = false;
     }
 }
 
