@@ -201,27 +201,26 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let resource_manager = resource_manager.unwrap();
         let lock = resource_manager.read();
         let item = lock
-            .models
+            .model_queue
             .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
         drop(lock);
         if let Some(m) = item {
-            let mut model = Model::from(&*m.lock());
-            model.position = position;
-            model.scale = scale;
+            let mut model = (*m.lock()).clone();
+            model.set_position(position);
+            model.set_scale(scale);
             let x: f32 = rotation.x();
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
-            model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
-            model.model_metadata.world_matrix = model.get_world_matrix();
-            model.model_metadata.object_color = color;
-            for mesh in model.meshes.iter_mut() {
-                mesh.lock().model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
-            }
-            model.ssbo_index = ssbo_index;
+            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
+            let mut metadata = model.get_model_metadata();
+            metadata.world_matrix = model.get_world_matrix();
+            metadata.object_color = color;
+            model.set_model_metadata(metadata);
+            model.set_ssbo_index(ssbo_index);
             let mut lock = resource_manager.write();
-            lock.add_model(model);
+            lock.add_clone(model);
             drop(lock);
         } else {
             let task = Model::new(
@@ -256,24 +255,26 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let resource_manager = resource_manager.unwrap();
         let lock = resource_manager.read();
         let item = lock
-            .skinned_models
+            .model_queue
             .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
         drop(lock);
         if let Some(m) = item {
-            let mut model = SkinnedModel::from(&*m.lock());
-            model.position = position;
-            model.scale = scale;
+            let mut model = (*m.lock()).clone();
+            model.set_position(position);
+            model.set_scale(scale);
             let x: f32 = rotation.x();
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
-            model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
-            model.model_metadata.world_matrix = model.get_world_matrix();
-            model.model_metadata.object_color = color;
-            model.ssbo_index = ssbo_index;
+            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
+            let mut metadata = model.get_model_metadata();
+            metadata.world_matrix = model.get_world_matrix();
+            metadata.object_color = color;
+            model.set_model_metadata(metadata);
+            model.set_ssbo_index(ssbo_index);
             let mut lock = resource_manager.write();
-            lock.add_skinned_model(model);
+            lock.add_clone(model);
             drop(lock);
         } else {
             let task = SkinnedModel::new(
@@ -357,13 +358,13 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             lock.add_model(model);
         }
         for model in skinned_models.into_iter() {
-            lock.add_skinned_model(model);
+            lock.add_model(model);
         }
         for terrain in terrains.into_iter() {
-            lock.add_terrain(terrain);
+            lock.add_model(terrain);
         }
         for primitive in primitives.into_iter() {
-            lock.add_geometric_primitive(primitive);
+            lock.add_model(primitive);
         }
         drop(lock);
         drop(rm);

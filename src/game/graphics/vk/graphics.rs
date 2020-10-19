@@ -693,15 +693,10 @@ impl Graphics {
             return Ok(());
         }
         let resource_arc = self.resource_manager.upgrade().unwrap();
-        let mut resource_lock = resource_arc.write();
-        for model in resource_lock.models.iter_mut() {
-            model.lock().update(delta_time);
-        }
-        for model in resource_lock.skinned_models.iter_mut() {
-            model.lock().update(delta_time);
-        }
-        for primitive in resource_lock.geometric_primitives.iter_mut() {
-            primitive.lock().model.as_mut().unwrap().update(delta_time);
+        let resource_lock = resource_arc.write();
+        for model in resource_lock.model_queue.iter() {
+            let mut model_lock = model.lock();
+            model_lock.update(delta_time);
         }
         drop(resource_lock);
         //self.update_dynamic_buffer(delta_time)?;
@@ -735,60 +730,12 @@ impl Graphics {
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
             let resource_lock = resource_manager.read();
-            for model in resource_lock.models.iter() {
+            for model in resource_lock.model_queue.iter() {
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
                 model.lock().render(
-                    ptr_clone,
-                    push_constant,
-                    viewport,
-                    scissor,
-                    device_clone,
-                    pipeline_clone,
-                    descriptor_set,
-                    self.thread_pool.clone(),
-                );
-            }
-            for model in resource_lock.skinned_models.iter() {
-                let ptr_clone = ptr.clone();
-                let device_clone = self.logical_device.clone();
-                let pipeline_clone = self.pipeline.clone();
-                let descriptor_set = self.descriptor_sets[0];
-                model.lock().render(
-                    ptr_clone,
-                    push_constant,
-                    viewport,
-                    scissor,
-                    device_clone,
-                    pipeline_clone,
-                    descriptor_set,
-                    self.thread_pool.clone(),
-                );
-            }
-            for terrain in resource_lock.terrains.iter() {
-                let ptr_clone = ptr.clone();
-                let device_clone = self.logical_device.clone();
-                let pipeline_clone = self.pipeline.clone();
-                let descriptor_set = self.descriptor_sets[0];
-                terrain.lock().model.render(
-                    ptr_clone,
-                    push_constant,
-                    viewport,
-                    scissor,
-                    device_clone,
-                    pipeline_clone,
-                    descriptor_set,
-                    self.thread_pool.clone(),
-                );
-            }
-            for primitive in resource_lock.geometric_primitives.iter() {
-                let ptr_clone = ptr.clone();
-                let device_clone = self.logical_device.clone();
-                let pipeline_clone = self.pipeline.clone();
-                let descriptor_set = self.descriptor_sets[0];
-                primitive.lock().model.as_ref().unwrap().render(
                     ptr_clone,
                     push_constant,
                     viewport,
@@ -942,10 +889,7 @@ impl Graphics {
             .upgrade()
             .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
         let resource_lock = resource_manager.read();
-        let is_models_empty = resource_lock.models.is_empty()
-            && resource_lock.skinned_models.is_empty()
-            && resource_lock.terrains.is_empty()
-            && resource_lock.geometric_primitives.is_empty();
+        let is_models_empty = resource_lock.model_queue.is_empty();
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
@@ -955,39 +899,10 @@ impl Graphics {
             reflectivities: [0.0; SSBO_DATA_COUNT],
             shine_dampers: [0.0; SSBO_DATA_COUNT],
         };
-        for model in resource_lock.models.iter() {
+        for model in resource_lock.model_queue.iter() {
             let model_lock = model.lock();
-            let metadata = model_lock.model_metadata;
-            model_metadata.world_matrices[model_lock.ssbo_index] = metadata.world_matrix;
-            model_metadata.object_colors[model_lock.ssbo_index] = metadata.object_color;
-            model_metadata.reflectivities[model_lock.ssbo_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[model_lock.ssbo_index] = metadata.shine_damper;
-        }
-        for model in resource_lock.skinned_models.iter() {
-            let model_lock = model.lock();
-            let metadata = model_lock.model_metadata;
-            model_metadata.world_matrices[model_lock.ssbo_index] = metadata.world_matrix;
-            model_metadata.object_colors[model_lock.ssbo_index] = metadata.object_color;
-            model_metadata.reflectivities[model_lock.ssbo_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[model_lock.ssbo_index] = metadata.shine_damper;
-        }
-        for terrain in resource_lock.terrains.iter() {
-            let terrain_lock = terrain.lock();
-            let metadata = terrain_lock.model.model_metadata;
-            let world_matrix = metadata.world_matrix;
-            let object_color = metadata.object_color;
-            let reflectivity = metadata.reflectivity;
-            let shine_damper = metadata.shine_damper;
-            model_metadata.world_matrices[terrain_lock.model.ssbo_index] = world_matrix;
-            model_metadata.object_colors[terrain_lock.model.ssbo_index] = object_color;
-            model_metadata.reflectivities[terrain_lock.model.ssbo_index] = reflectivity;
-            model_metadata.shine_dampers[terrain_lock.model.ssbo_index] = shine_damper;
-        }
-        for primitive in resource_lock.geometric_primitives.iter() {
-            let primitive_lock = primitive.lock();
-            let model = primitive_lock.model.as_ref().unwrap();
-            let metadata = model.model_metadata;
-            let ssbo_index = model.ssbo_index;
+            let metadata = model_lock.get_model_metadata();
+            let ssbo_index = model_lock.get_ssbo_index();
             model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
             model_metadata.object_colors[ssbo_index] = metadata.object_color;
             model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
@@ -1024,10 +939,7 @@ impl Graphics {
         let resource_lock = resource_manager.read();
         let texture_count = resource_lock.get_texture_count();
         let mut ssbo_count = 1;
-        resource_lock
-            .skinned_models
-            .iter()
-            .for_each(|model| ssbo_count += model.lock().skinned_meshes.len());
+        ssbo_count += resource_lock.get_model_count();
         let mut pool_sizes = vec![];
         pool_sizes.push(
             DescriptorPoolSize::builder()

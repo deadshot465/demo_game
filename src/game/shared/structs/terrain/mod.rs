@@ -1,16 +1,21 @@
-use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Model, ModelMetaData, Primitive, Vertex};
-use crate::game::shared::traits::{Disposable, GraphicsBase};
+use crate::game::shared::structs::{Mesh, Model, ModelMetaData, Primitive, PushConstant, Vertex};
+use crate::game::shared::traits::{Disposable, GraphicsBase, Renderable};
 use crate::game::shared::util::get_random_string;
 use crate::game::shared::util::height_generator::HeightGenerator;
-use ash::vk::{CommandBuffer, CommandPool, SamplerAddressMode};
+use ash::vk::{
+    CommandBuffer, CommandBufferInheritanceInfo, CommandPool, DescriptorSet, Rect2D,
+    SamplerAddressMode, Viewport,
+};
+use ash::Device;
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
+use winapi::_core::sync::atomic::{AtomicPtr, AtomicUsize};
 
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -152,7 +157,7 @@ where
             shader_type: ShaderType::Terrain,
             model_index,
         };
-        let mut model = Model {
+        Model {
             position,
             scale: Vec3A::one(),
             rotation: Vec3A::zero(),
@@ -167,9 +172,7 @@ where
             model_name: get_random_string(7),
             graphics,
             ssbo_index,
-        };
-        model.model_metadata.world_matrix = model.get_world_matrix();
-        model
+        }
     }
 
     fn calculate_normal(x: f32, z: f32, height_generator: &HeightGenerator) -> Vec3A {
@@ -228,6 +231,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 size_ratio_z,
                 vertex_count_ratio,
             );
+            generated_terrain.model.model_metadata.world_matrix =
+                generated_terrain.get_world_matrix();
             log::info!("Terrain successfully generated.");
             generated_terrain
                 .create_buffers(graphics_arc)
@@ -252,6 +257,130 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 }
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
+    for Terrain<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync
+    for Terrain<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Clone
+    for Terrain<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+    fn clone(&self) -> Self {
+        Terrain {
+            is_disposed: true,
+            model: self.model.clone(),
+            x: self.x,
+            z: self.z,
+        }
+    }
+}
+
+impl Renderable<Graphics, Buffer, CommandBuffer, Image>
+    for Terrain<Graphics, Buffer, CommandBuffer, Image>
+{
+    fn update(&mut self, _delta_time: f64) {}
+
+    fn render(
+        &self,
+        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
+        push_constant: PushConstant,
+        viewport: Viewport,
+        scissor: Rect2D,
+        device: Arc<Device>,
+        pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
+        descriptor_set: DescriptorSet,
+        thread_pool: Arc<ThreadPool>,
+    ) {
+        self.model.render(
+            inheritance_info,
+            push_constant,
+            viewport,
+            scissor,
+            device,
+            pipeline,
+            descriptor_set,
+            thread_pool,
+        );
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.model.ssbo_index
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model.model_metadata
+    }
+
+    fn get_position(&self) -> Vec3A {
+        self.model.position
+    }
+
+    fn get_scale(&self) -> Vec3A {
+        self.model.scale
+    }
+
+    fn get_rotation(&self) -> Vec3A {
+        self.model.rotation
+    }
+
+    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
+        self.model.get_command_buffers()
+    }
+
+    fn set_position(&mut self, position: Vec3A) {
+        self.model.set_position(position);
+    }
+
+    fn set_scale(&mut self, scale: Vec3A) {
+        self.model.set_scale(scale);
+    }
+
+    fn set_rotation(&mut self, rotation: Vec3A) {
+        self.model.set_rotation(rotation);
+    }
+
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
+        self.model.set_model_metadata(model_metadata);
+    }
+
+    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
+        self.model.update_model_indices(model_count);
+    }
+
+    fn set_ssbo_index(&mut self, ssbo_index: usize) {
+        self.model.set_ssbo_index(ssbo_index);
+    }
+
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new(self.clone())
+    }
+}
+
+/*impl CloneableRenderable<Graphics, Buffer, CommandBuffer, Image>
+    for Terrain<Graphics, Buffer, CommandBuffer, Image>
+{
+}*/
 
 impl<GraphicsType, BufferType, CommandType, TextureType> Drop
     for Terrain<GraphicsType, BufferType, CommandType, TextureType>

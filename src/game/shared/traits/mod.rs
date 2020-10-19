@@ -1,8 +1,10 @@
 pub mod disposable;
 pub mod graphics_base;
 pub mod mappable;
+pub mod renderable;
 pub mod scene;
 pub use disposable::Disposable;
 pub use graphics_base::GraphicsBase;
 pub use mappable::Mappable;
+pub use renderable::Renderable;
 pub use scene::Scene;

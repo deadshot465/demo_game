@@ -1,7 +1,7 @@
 use ash::version::DeviceV1_0;
 use ash::vk::{
     CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
-    CommandPool, DescriptorSet, IndexType, PipelineBindPoint, ShaderStageFlags,
+    CommandPool, DescriptorSet, IndexType, PipelineBindPoint, Rect2D, ShaderStageFlags, Viewport,
 };
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
@@ -15,10 +15,11 @@ use std::sync::{
     Arc, Weak,
 };
 
-use crate::game::graphics::vk::{Buffer, Graphics, Image, ThreadPool};
+use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Mesh, ModelMetaData, Primitive, PushConstant, Vertex};
 use crate::game::shared::traits::disposable::Disposable;
+use crate::game::shared::traits::Renderable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
 use ash::Device;
@@ -80,7 +81,7 @@ where
         let y: f32 = rotation.y();
         let z: f32 = rotation.z();
 
-        let mut model = Model {
+        Model {
             position,
             scale,
             rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
@@ -95,9 +96,7 @@ where
             is_disposed: false,
             model_name: file_name.to_string(),
             ssbo_index,
-        };
-        model.model_metadata.world_matrix = model.get_world_matrix();
-        model
+        }
     }
 
     fn process_model(
@@ -274,15 +273,6 @@ where
             model_index: model_index.fetch_add(1, Ordering::SeqCst),
         }
     }
-
-    pub fn get_world_matrix(&self) -> Mat4 {
-        let world = Mat4::identity();
-        let scale = Mat4::from_scale(glam::Vec3::from(self.scale));
-        let translation = Mat4::from_translation(glam::Vec3::from(self.position));
-        let rotate =
-            Mat4::from_rotation_ypr(self.rotation.y(), self.rotation.x(), self.rotation.z());
-        world * translation * rotate * scale
-    }
 }
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
@@ -328,6 +318,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 texture_index_offset,
                 ssbo_index,
             );
+            loaded_model.model_metadata.world_matrix = loaded_model.get_world_matrix();
             {
                 let graphics_lock = graphics_arc.read();
                 let device = graphics_lock.logical_device.as_ref();
@@ -393,128 +384,10 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         }
         Ok(())
     }
-
-    pub fn update(&mut self, _delta_time: f64) {}
-
-    pub fn render(
-        &self,
-        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
-        push_constant: PushConstant,
-        viewport: ash::vk::Viewport,
-        scissor: ash::vk::Rect2D,
-        device: Arc<Device>,
-        pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
-        descriptor_set: DescriptorSet,
-        thread_pool: Arc<ThreadPool>,
-    ) {
-        let thread_count = thread_pool.thread_count;
-        let mut push_constant = push_constant;
-        push_constant.model_index = self.ssbo_index;
-        unsafe {
-            for mesh in self.meshes.iter() {
-                let mesh_clone = mesh.clone();
-                let mesh_lock = mesh_clone.lock();
-                let model_index = mesh_lock.model_index;
-                let shader_type = mesh_lock.shader_type;
-                drop(mesh_lock);
-                let pipeline_layout = pipeline
-                    .read()
-                    .expect("Failed to lock pipeline when acquiring pipeline layout.")
-                    .get_pipeline_layout(shader_type);
-                let pipeline = pipeline
-                    .read()
-                    .expect("Failed to lock pipeline when getting the graphics pipeline.")
-                    .get_pipeline(shader_type, 0);
-                let inheritance_clone = inheritance_info.clone();
-                let device_clone = device.clone();
-                thread_pool.threads[model_index % thread_count].add_job(move || {
-                    let device_clone = device_clone;
-                    let inheritance = inheritance_clone.load(Ordering::SeqCst).as_ref().unwrap();
-                    let mesh = mesh_clone;
-                    let mesh_lock = mesh.lock();
-                    let command_buffer_begin_info = CommandBufferBeginInfo::builder()
-                        .inheritance_info(inheritance)
-                        .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
-                        .build();
-                    let command_buffer = mesh_lock.command_buffer.unwrap();
-                    let result = device_clone
-                        .begin_command_buffer(command_buffer, &command_buffer_begin_info);
-                    if let Err(e) = result {
-                        log::error!(
-                            "Error beginning secondary command buffer: {}",
-                            e.to_string()
-                        );
-                    }
-                    device_clone.cmd_set_viewport(command_buffer, 0, &[viewport]);
-                    device_clone.cmd_set_scissor(command_buffer, 0, &[scissor]);
-                    device_clone.cmd_bind_pipeline(
-                        command_buffer,
-                        PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
-                    device_clone.cmd_bind_descriptor_sets(
-                        command_buffer,
-                        PipelineBindPoint::GRAPHICS,
-                        pipeline_layout,
-                        0,
-                        &[descriptor_set],
-                        &[],
-                    );
-                    let vertex_buffers = [mesh_lock.get_vertex_buffer()];
-                    let index_buffer = mesh_lock.get_index_buffer();
-                    let mut vertex_offset_index = 0;
-                    let mut index_offset_index = 0;
-                    for primitive in mesh_lock.primitives.iter() {
-                        push_constant.texture_index = primitive.texture_index.unwrap_or_default();
-                        let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
-                        device_clone.cmd_push_constants(
-                            command_buffer,
-                            pipeline_layout,
-                            ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
-                            0,
-                            &casted[0..],
-                        );
-                        device_clone.cmd_bind_vertex_buffers(
-                            command_buffer,
-                            0,
-                            &vertex_buffers[0..],
-                            &[0],
-                        );
-                        device_clone.cmd_bind_index_buffer(
-                            command_buffer,
-                            index_buffer,
-                            0,
-                            IndexType::UINT32,
-                        );
-                        device_clone.cmd_draw_indexed(
-                            command_buffer,
-                            u32::try_from(primitive.indices.len()).unwrap(),
-                            1,
-                            index_offset_index,
-                            vertex_offset_index,
-                            0,
-                        );
-                        vertex_offset_index += primitive.vertices.len() as i32;
-                        index_offset_index += primitive.indices.len() as u32;
-                    }
-                    let result = device_clone.end_command_buffer(command_buffer);
-                    if let Err(e) = result {
-                        log::error!("Error ending command buffer: {}", e.to_string());
-                    }
-                });
-            }
-        }
-    }
 }
 
-impl<GraphicsType, BufferType, CommandType, TextureType>
-    From<&Model<GraphicsType, BufferType, CommandType, TextureType>>
-    for Model<GraphicsType, BufferType, CommandType, TextureType>
-where
-    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
-    BufferType: 'static + Disposable + Clone,
-    CommandType: 'static + Clone,
-    TextureType: 'static + Clone + Disposable,
+/*impl From<&Model<Graphics, Buffer, CommandBuffer, Image>>
+    for Model<Graphics, Buffer, CommandBuffer, Image>
 {
     fn from(model: &Self) -> Self {
         loop {
@@ -544,7 +417,7 @@ where
             .for_each(|mesh| mesh.lock().is_disposed = true);
         _model
     }
-}
+}*/
 
 unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
     for Model<GraphicsType, BufferType, CommandType, TextureType>
@@ -564,6 +437,222 @@ where
     TextureType: 'static + Clone + Disposable,
 {
 }
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Clone
+    for Model<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+    fn clone(&self) -> Self {
+        loop {
+            let is_buffer_completed = self.meshes.iter().all(|m| {
+                let mesh_lock = m.lock();
+                mesh_lock.vertex_buffer.is_some() && mesh_lock.index_buffer.is_some()
+            });
+            if is_buffer_completed {
+                break;
+            }
+        }
+        Model {
+            position: self.position,
+            scale: self.scale,
+            rotation: self.rotation,
+            model_metadata: self.model_metadata,
+            meshes: self.meshes.clone(),
+            is_disposed: true,
+            model_name: self.model_name.clone(),
+            graphics: self.graphics.clone(),
+            ssbo_index: 0,
+        }
+    }
+}
+
+impl Renderable<Graphics, Buffer, CommandBuffer, Image>
+    for Model<Graphics, Buffer, CommandBuffer, Image>
+{
+    fn update(&mut self, _delta_time: f64) {}
+
+    fn render(
+        &self,
+        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
+        push_constant: PushConstant,
+        viewport: Viewport,
+        scissor: Rect2D,
+        device: Arc<Device>,
+        pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
+        descriptor_set: DescriptorSet,
+        thread_pool: Arc<ThreadPool>,
+    ) {
+        let thread_count = thread_pool.thread_count;
+        let mut push_constant = push_constant;
+        push_constant.model_index = self.ssbo_index;
+        unsafe {
+            for mesh in self.meshes.iter() {
+                let mesh_clone = mesh.clone();
+                let mesh_lock = mesh_clone.lock();
+                let model_index = mesh_lock.model_index;
+                let shader_type = mesh_lock.shader_type;
+                drop(mesh_lock);
+                let pipeline_layout = pipeline
+                    .read()
+                    .expect("Failed to lock pipeline when acquiring pipeline layout.")
+                    .get_pipeline_layout(shader_type);
+                let pipeline = pipeline
+                    .read()
+                    .expect("Failed to lock pipeline when getting the graphics pipeline.")
+                    .get_pipeline(shader_type, 0);
+                let inheritance_clone = inheritance_info.clone();
+                let device_clone = device.clone();
+                thread_pool.threads[model_index % thread_count]
+                    .add_job(move || {
+                        let device_clone = device_clone;
+                        let inheritance =
+                            inheritance_clone.load(Ordering::SeqCst).as_ref().unwrap();
+                        let mesh = mesh_clone;
+                        let mesh_lock = mesh.lock();
+                        let command_buffer_begin_info = CommandBufferBeginInfo::builder()
+                            .inheritance_info(inheritance)
+                            .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
+                            .build();
+                        let command_buffer = mesh_lock.command_buffer.unwrap();
+                        let result = device_clone
+                            .begin_command_buffer(command_buffer, &command_buffer_begin_info);
+                        if let Err(e) = result {
+                            log::error!(
+                                "Error beginning secondary command buffer: {}",
+                                e.to_string()
+                            );
+                        }
+                        device_clone.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                        device_clone.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                        device_clone.cmd_bind_pipeline(
+                            command_buffer,
+                            PipelineBindPoint::GRAPHICS,
+                            pipeline,
+                        );
+                        device_clone.cmd_bind_descriptor_sets(
+                            command_buffer,
+                            PipelineBindPoint::GRAPHICS,
+                            pipeline_layout,
+                            0,
+                            &[descriptor_set],
+                            &[],
+                        );
+                        let vertex_buffers = [mesh_lock.get_vertex_buffer()];
+                        let index_buffer = mesh_lock.get_index_buffer();
+                        let mut vertex_offset_index = 0;
+                        let mut index_offset_index = 0;
+                        for primitive in mesh_lock.primitives.iter() {
+                            push_constant.texture_index =
+                                primitive.texture_index.unwrap_or_default();
+                            let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
+                            device_clone.cmd_push_constants(
+                                command_buffer,
+                                pipeline_layout,
+                                ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
+                                0,
+                                &casted[0..],
+                            );
+                            device_clone.cmd_bind_vertex_buffers(
+                                command_buffer,
+                                0,
+                                &vertex_buffers[0..],
+                                &[0],
+                            );
+                            device_clone.cmd_bind_index_buffer(
+                                command_buffer,
+                                index_buffer,
+                                0,
+                                IndexType::UINT32,
+                            );
+                            device_clone.cmd_draw_indexed(
+                                command_buffer,
+                                u32::try_from(primitive.indices.len()).unwrap(),
+                                1,
+                                index_offset_index,
+                                vertex_offset_index,
+                                0,
+                            );
+                            vertex_offset_index += primitive.vertices.len() as i32;
+                            index_offset_index += primitive.indices.len() as u32;
+                        }
+                        let result = device_clone.end_command_buffer(command_buffer);
+                        if let Err(e) = result {
+                            log::error!("Error ending command buffer: {}", e.to_string());
+                        }
+                    })
+                    .expect("Failed to push work into the worker thread.");
+            }
+        }
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.ssbo_index
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model_metadata
+    }
+
+    fn get_position(&self) -> Vec3A {
+        self.position
+    }
+
+    fn get_scale(&self) -> Vec3A {
+        self.scale
+    }
+
+    fn get_rotation(&self) -> Vec3A {
+        self.rotation
+    }
+
+    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
+        let buffers = self
+            .meshes
+            .iter()
+            .map(|m| m.lock().command_buffer.unwrap())
+            .collect::<Vec<_>>();
+        buffers
+    }
+
+    fn set_position(&mut self, position: Vec3A) {
+        self.position = position;
+    }
+
+    fn set_scale(&mut self, scale: Vec3A) {
+        self.scale = scale;
+    }
+
+    fn set_rotation(&mut self, rotation: Vec3A) {
+        self.rotation = rotation;
+    }
+
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
+        self.model_metadata = model_metadata;
+    }
+
+    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
+        for mesh in self.meshes.iter() {
+            mesh.lock().model_index = model_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn set_ssbo_index(&mut self, ssbo_index: usize) {
+        self.ssbo_index = ssbo_index;
+    }
+
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new(self.clone())
+    }
+}
+
+/*impl CloneableRenderable<Graphics, Buffer, CommandBuffer, Image>
+    for Model<Graphics, Buffer, CommandBuffer, Image>
+{
+}*/
 
 impl<GraphicsType, BufferType, CommandType, TextureType> Drop
     for Model<GraphicsType, BufferType, CommandType, TextureType>

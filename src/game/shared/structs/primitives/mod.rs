@@ -1,16 +1,22 @@
-use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Primitive, Vertex};
+use crate::game::shared::structs::{Mesh, Primitive, PushConstant, Vertex};
+use crate::game::shared::traits::Renderable;
 use crate::game::shared::util::get_random_string;
 use crate::game::structs::{Model, ModelMetaData};
 use crate::game::traits::{Disposable, GraphicsBase};
-use ash::vk::{CommandBuffer, CommandPool, SamplerAddressMode};
+use ash::vk::{
+    CommandBuffer, CommandBufferInheritanceInfo, CommandPool, DescriptorSet, Rect2D,
+    SamplerAddressMode, Viewport,
+};
+use ash::Device;
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
+use winapi::_core::sync::atomic::{AtomicPtr, AtomicUsize};
 
 #[derive(Copy, Clone, Debug)]
 pub enum PrimitiveType {
@@ -59,7 +65,7 @@ where
                 model_index,
             ),
         };
-        let mut result = GeometricPrimitive {
+        GeometricPrimitive {
             is_disposed: false,
             model: Some(Model {
                 position,
@@ -77,14 +83,7 @@ where
                 graphics,
                 ssbo_index,
             }),
-        };
-        let mutable = result
-            .model
-            .as_mut()
-            .expect("Failed to get mutable reference to the geometric primitive.");
-        let world_matrix = mutable.get_world_matrix();
-        mutable.model_metadata.world_matrix = world_matrix;
-        result
+        }
     }
 
     fn create_rect(
@@ -207,6 +206,12 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
                 shader_type,
             );
             generated_mesh
+                .model
+                .as_mut()
+                .unwrap()
+                .model_metadata
+                .world_matrix = generated_mesh.get_world_matrix();
+            generated_mesh
                 .create_buffer(graphics_arc)
                 .expect("Failed to create buffer for geometric primitive.");
             primitive_send
@@ -232,6 +237,135 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 }
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
+    for GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync
+    for GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Clone
+    for GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+    fn clone(&self) -> Self {
+        GeometricPrimitive {
+            is_disposed: true,
+            model: self.model.clone(),
+        }
+    }
+}
+
+impl Renderable<Graphics, Buffer, CommandBuffer, Image>
+    for GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image>
+{
+    fn update(&mut self, _delta_time: f64) {}
+
+    fn render(
+        &self,
+        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
+        push_constant: PushConstant,
+        viewport: Viewport,
+        scissor: Rect2D,
+        device: Arc<Device>,
+        pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
+        descriptor_set: DescriptorSet,
+        thread_pool: Arc<ThreadPool>,
+    ) {
+        let model = self.model.as_ref().unwrap();
+        model.render(
+            inheritance_info,
+            push_constant,
+            viewport,
+            scissor,
+            device,
+            pipeline,
+            descriptor_set,
+            thread_pool,
+        );
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.model.as_ref().unwrap().ssbo_index
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model.as_ref().unwrap().model_metadata
+    }
+
+    fn get_position(&self) -> Vec3A {
+        self.model.as_ref().unwrap().position
+    }
+
+    fn get_scale(&self) -> Vec3A {
+        self.model.as_ref().unwrap().scale
+    }
+
+    fn get_rotation(&self) -> Vec3A {
+        self.model.as_ref().unwrap().rotation
+    }
+
+    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
+        self.model.as_ref().unwrap().get_command_buffers()
+    }
+
+    fn set_position(&mut self, position: Vec3A) {
+        self.model.as_mut().unwrap().set_position(position);
+    }
+
+    fn set_scale(&mut self, scale: Vec3A) {
+        self.model.as_mut().unwrap().set_scale(scale);
+    }
+
+    fn set_rotation(&mut self, rotation: Vec3A) {
+        self.model.as_mut().unwrap().set_rotation(rotation);
+    }
+
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
+        self.model
+            .as_mut()
+            .unwrap()
+            .set_model_metadata(model_metadata);
+    }
+
+    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
+        self.model
+            .as_mut()
+            .unwrap()
+            .update_model_indices(model_count);
+    }
+
+    fn set_ssbo_index(&mut self, ssbo_index: usize) {
+        self.model.as_mut().unwrap().set_ssbo_index(ssbo_index);
+    }
+
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new(self.clone())
+    }
+}
+
+/*impl CloneableRenderable<Graphics, Buffer, CommandBuffer, Image>
+    for GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image>
+{
+}*/
 
 impl<GraphicsType, BufferType, CommandType, TextureType> Drop
     for GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>
