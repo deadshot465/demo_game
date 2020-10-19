@@ -231,7 +231,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         let indices = mesh.primitives[0].indices.to_vec();
         let command_pool = mesh.command_pool.clone().unwrap();
         let (vertex_buffer, index_buffer) =
-            Graphics::create_buffer(graphics, vertices, indices, command_pool)?;
+            Graphics::create_vertex_and_index_buffer(graphics, vertices, indices, command_pool)?;
         mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
         mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
         Ok(())

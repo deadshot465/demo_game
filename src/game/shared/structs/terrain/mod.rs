@@ -55,8 +55,12 @@ where
         size_ratio_z: f32,
         vertex_count_ratio: f32,
     ) -> Self {
-        let x = grid_x as f32 * Self::SIZE * size_ratio_x;
-        let z = grid_z as f32 * Self::SIZE * size_ratio_z;
+        let pos_x = std::env::var("POS_X").unwrap().parse::<f32>().unwrap();
+        let pos_z = std::env::var("POS_Z").unwrap().parse::<f32>().unwrap();
+        // let x = grid_x as f32 * Self::SIZE * size_ratio_x;
+        // let z = grid_z as f32 * Self::SIZE * size_ratio_z;
+        let x = pos_x * Self::SIZE * size_ratio_x;
+        let z = pos_z * Self::SIZE * size_ratio_z;
         let model = Self::generate_terrain(
             model_index,
             ssbo_index,
@@ -251,7 +255,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         let command_pool = mesh.command_pool.clone().unwrap();
 
         let (vertex_buffer, index_buffer) =
-            Graphics::create_buffer(graphics, vertices, indices, command_pool)?;
+            Graphics::create_vertex_and_index_buffer(graphics, vertices, indices, command_pool)?;
         mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
         mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
         Ok(())

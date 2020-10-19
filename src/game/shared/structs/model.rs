@@ -285,6 +285,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         color: Vec4,
         model_index: Arc<AtomicUsize>,
         ssbo_index: usize,
+        create_buffers: bool,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading model {}...", file_name);
         let graphics_arc = graphics
@@ -332,9 +333,11 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 }
                 drop(graphics_lock);
             }
-            loaded_model
-                .create_buffers(graphics_arc)
-                .expect("Failed to create buffers for model.");
+            if create_buffers {
+                loaded_model
+                    .create_buffers(graphics_arc)
+                    .expect("Failed to create buffers for model.");
+            }
             model_send
                 .send(loaded_model)
                 .expect("Failed to send model result.");
@@ -366,7 +369,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let g = graphics.clone();
             let (buffer_send, buffer_recv) = bounded(5);
             rayon::spawn(move || {
-                let result = Graphics::create_buffer(g, vertices, indices, pool)
+                let result = Graphics::create_vertex_and_index_buffer(g, vertices, indices, pool)
                     .expect("Failed to create buffers for model.");
                 buffer_send
                     .send(result)
@@ -648,11 +651,6 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         Box::new(self.clone())
     }
 }
-
-/*impl CloneableRenderable<Graphics, Buffer, CommandBuffer, Image>
-    for Model<Graphics, Buffer, CommandBuffer, Image>
-{
-}*/
 
 impl<GraphicsType, BufferType, CommandType, TextureType> Drop
     for Model<GraphicsType, BufferType, CommandType, TextureType>

@@ -33,7 +33,7 @@ layout (location = 5) in vec4 toCameraDirection;
 
 layout (location = 0) out vec4 fragColor;
 
-const float ambientIntensity = 0.1;
+const float ambientIntensity = 0.5;
 
 void main()
 {

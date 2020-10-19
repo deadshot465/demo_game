@@ -33,12 +33,13 @@ impl Vertex {
 
     pub fn get_binding_description(
         binding: u32,
+        stride_size: u32,
         input_rate: VertexInputRate,
     ) -> VertexInputBindingDescription {
         let desc = VertexInputBindingDescription::builder()
             .binding(binding)
             .input_rate(input_rate)
-            .stride(u32::try_from(std::mem::size_of::<Vertex>()).unwrap())
+            .stride(stride_size)
             .build();
         desc
     }

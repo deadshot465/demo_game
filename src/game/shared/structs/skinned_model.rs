@@ -504,8 +504,12 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 let cmd_pool = primitive.command_pool.as_ref().cloned().unwrap();
                 let (buffer_send, buffer_recv) = bounded(5);
                 rayon::spawn(move || {
-                    let result =
-                        Graphics::create_buffer(graphics_clone, vertices, indices, cmd_pool);
+                    let result = Graphics::create_vertex_and_index_buffer(
+                        graphics_clone,
+                        vertices,
+                        indices,
+                        cmd_pool,
+                    );
                     buffer_send
                         .send(result)
                         .expect("Failed to send buffer result.");

@@ -172,9 +172,11 @@ impl Graphics {
             Arc::downgrade(&device),
             Arc::downgrade(&allocator),
         )?;
+        let light_x = std::env::var("LIGHT_X").unwrap().parse::<f32>().unwrap();
+        let light_z = std::env::var("LIGHT_Z").unwrap().parse::<f32>().unwrap();
         let directional_light = Directional::new(
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-            Vec3A::new(-200.0, 200.0, 0.0),
+            Vec3A::new(light_x, 20000.0, light_z),
             0.1,
             0.5,
         );
@@ -338,7 +340,7 @@ impl Graphics {
         Ok(())
     }
 
-    pub fn create_buffer<VertexType: 'static + Send>(
+    pub fn create_vertex_and_index_buffer<VertexType: 'static + Send + Sync>(
         graphics: Arc<RwLock<Self>>,
         vertices: Vec<VertexType>,
         indices: Vec<u32>,
@@ -593,6 +595,7 @@ impl Graphics {
         self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
         self.create_graphics_pipeline(ShaderType::Terrain)?;
         self.create_graphics_pipeline(ShaderType::Water)?;
+        self.create_graphics_pipeline(ShaderType::InstanceDraw)?;
         let width = self.swapchain.extent.width;
         let height = self.swapchain.extent.height;
         self.frame_buffers = Self::create_frame_buffers(
@@ -1078,6 +1081,7 @@ impl Graphics {
                 match shader_type {
                     ShaderType::AnimatedModel => "./shaders/basicShader_animated.spv",
                     ShaderType::Terrain => "./shaders/terrain_vert.spv",
+                    ShaderType::InstanceDraw => "./shaders/instance_vert.spv",
                     _ => "./shaders/vert.spv",
                 },
                 ShaderStageFlags::VERTEX,
@@ -1089,6 +1093,7 @@ impl Graphics {
                     ShaderType::BasicShaderWithoutTexture => "./shaders/basicShader_noTexture.spv",
                     ShaderType::Terrain => "./shaders/terrain_frag.spv",
                     ShaderType::Water => "./shaders/water_frag.spv",
+                    ShaderType::InstanceDraw => "./shaders/instance_frag.spv",
                     _ => "./shaders/frag.spv",
                 },
                 ShaderStageFlags::FRAGMENT,

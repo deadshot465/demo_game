@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::Shader;
-use crate::game::shared::structs::SkinnedVertex;
+use crate::game::shared::structs::{InstanceData, InstancedVertex, SkinnedVertex};
 use crate::game::structs::{BlendMode, PushConstant, Vertex};
 
 pub struct Pipeline {
@@ -283,6 +283,7 @@ impl Pipeline {
                 rayon::spawn(move || {
                     let attr_desc = match shader_type {
                         ShaderType::AnimatedModel => SkinnedVertex::get_attribute_description(0),
+                        ShaderType::InstanceDraw => InstancedVertex::get_attribute_description(0),
                         _ => Vertex::get_attribute_description(0),
                     };
                     let binding_desc = match shader_type {
@@ -290,7 +291,23 @@ impl Pipeline {
                             0,
                             VertexInputRate::VERTEX,
                         )],
-                        _ => vec![Vertex::get_binding_description(0, VertexInputRate::VERTEX)],
+                        ShaderType::InstanceDraw => vec![
+                            Vertex::get_binding_description(
+                                0,
+                                std::mem::size_of::<Vertex>() as u32,
+                                VertexInputRate::VERTEX,
+                            ),
+                            Vertex::get_binding_description(
+                                1,
+                                std::mem::size_of::<InstanceData>() as u32,
+                                VertexInputRate::INSTANCE,
+                            ),
+                        ],
+                        _ => vec![Vertex::get_binding_description(
+                            0,
+                            std::mem::size_of::<Vertex>() as u32,
+                            VertexInputRate::VERTEX,
+                        )],
                     };
                     let vi_info = PipelineVertexInputStateCreateInfo::builder()
                         .vertex_attribute_descriptions(attr_desc.as_slice())

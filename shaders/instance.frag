@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout (binding = 1) uniform DirectionalLight
 {
@@ -13,6 +14,8 @@ layout (std430, binding = 2) readonly buffer ModelMatrices {
     float reflectivities[50];
     float shine_dampers[];
 };
+
+layout (binding = 3) uniform sampler2D tex_sampler[];
 
 layout (push_constant) uniform PushConstant
 {

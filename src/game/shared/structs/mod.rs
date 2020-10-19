@@ -1,6 +1,8 @@
 pub mod animation;
 pub mod blend_mode;
 pub mod frustum;
+pub mod instanced_model;
+pub mod instanced_vertex;
 pub mod joint;
 pub mod lighting;
 pub mod mesh;
@@ -17,6 +19,8 @@ pub mod vertex;
 pub mod view_projection;
 pub use animation::*;
 pub use blend_mode::BlendMode;
+pub use instanced_model::InstancedModel;
+pub use instanced_vertex::*;
 pub use joint::Joint;
 pub use lighting::*;
 pub use mesh::*;

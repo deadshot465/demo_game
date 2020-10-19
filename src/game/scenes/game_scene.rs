@@ -9,7 +9,7 @@ use std::sync::{Arc, Weak};
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::structs::{
-    GeometricPrimitive, Model, PrimitiveType, SkinnedModel, Terrain,
+    GeometricPrimitive, InstanceData, InstancedModel, Model, PrimitiveType, SkinnedModel, Terrain,
 };
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
@@ -36,6 +36,8 @@ where
     terrain_tasks: Vec<Receiver<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>,
     geometric_primitive_tasks:
         Vec<Receiver<GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>>>,
+    instanced_model_tasks:
+        Vec<Receiver<InstancedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -63,6 +65,7 @@ where
             terrain_tasks: vec![],
             geometric_primitive_tasks: vec![],
             ssbo_count: AtomicUsize::new(0),
+            instanced_model_tasks: vec![],
         }
     }
 }
@@ -76,8 +79,9 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .write()
             .expect("Failed to lock height generator.");
         let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
-        height_generator.set_offsets(grid_x, grid_z, vertex_count as i32);
+        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
         drop(height_generator);
+        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
         let terrain = Terrain::new(
             grid_x,
             grid_z,
@@ -85,11 +89,50 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             ssbo_index,
             self.graphics.clone(),
             self.height_generator.clone(),
-            0.5,
-            0.5,
-            0.5,
+            ratio,
+            ratio,
+            ratio,
         )?;
         self.terrain_tasks.push(terrain);
+        Ok(())
+    }
+
+    pub fn add_instanced_model(
+        &mut self,
+        file_name: &'static str,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+        instance_count: usize,
+    ) -> anyhow::Result<()> {
+        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let mut instance_data = vec![];
+        instance_data.resize(instance_count, InstanceData::default());
+        let mut x_offset = 0.0;
+        let mut z_offset = 0.0;
+        for (index, data) in instance_data.iter_mut().enumerate() {
+            if index % 25 == 0 {
+                z_offset += 25.0;
+                x_offset = 0.0;
+            }
+            (*data).translation = Vec3A::new(x_offset, 0.0, z_offset);
+            (*data).rotation = Vec3A::zero();
+            (*data).scale = Vec3A::one();
+            x_offset += 25.0;
+        }
+        let task = InstancedModel::new(
+            file_name,
+            self.graphics.clone(),
+            position,
+            scale,
+            rotation,
+            color,
+            self.model_count.clone(),
+            ssbo_index,
+            instance_data,
+        )?;
+        self.instanced_model_tasks.push(task);
         Ok(())
     }
 }
@@ -131,29 +174,29 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
         self.add_model(
             "./models/mr.incredible/Mr.Incredible.glb",
-            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(-5.0, 0.0, 5.0),
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )?;
         self.add_model(
             "./models/bison/output.gltf",
-            Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(0.0, 0.0, 5.0),
             Vec3A::new(400.0, 400.0, 400.0),
             Vec3A::new(0.0, 90.0, 90.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )?;
         self.add_skinned_model(
             "./models/cesiumMan/CesiumMan.glb",
-            Vec3A::new(-3.5, 0.0, 0.0),
+            Vec3A::new(5.0, 0.0, 5.0),
             Vec3A::new(2.0, 2.0, 2.0),
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )?;
-        let water_pos = std::env::var("WATER_POS")?.parse::<f32>()?;
-        let water_height = std::env::var("WATER_HEIGHT")?.parse::<f32>()?;
-        let water_scale = std::env::var("WATER_SCALE")?.parse::<f32>()?;
-        self.add_geometric_primitive(
+        //let water_pos = std::env::var("WATER_POS")?.parse::<f32>()?;
+        //let water_height = std::env::var("WATER_HEIGHT")?.parse::<f32>()?;
+        //let water_scale = std::env::var("WATER_SCALE")?.parse::<f32>()?;
+        /*self.add_geometric_primitive(
             PrimitiveType::Rect,
             None,
             Vec3A::new(water_pos, water_height, water_pos),
@@ -161,7 +204,15 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::zero(),
             Vec4::new(0.0, 0.0, 1.0, 1.0),
             Some(ShaderType::Water),
-        )?;
+        )?;*/
+        self.add_instanced_model(
+            "models/stanford_dragon/stanford-dragon.glb",
+            Vec3A::zero(),
+            Vec3A::one(),
+            Vec3A::zero(),
+            Vec4::one(),
+            125,
+        );
         self.generate_terrain(0, 0)?;
         Ok(())
     }
@@ -219,6 +270,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             metadata.object_color = color;
             model.set_model_metadata(metadata);
             model.set_ssbo_index(ssbo_index);
+            model.update_model_indices(self.model_count.clone());
             let mut lock = resource_manager.write();
             lock.add_clone(model);
             drop(lock);
@@ -232,6 +284,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 color,
                 self.model_count.clone(),
                 ssbo_index,
+                true,
             )?;
             self.model_tasks.push(task);
         }
@@ -273,6 +326,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             metadata.object_color = color;
             model.set_model_metadata(metadata);
             model.set_ssbo_index(ssbo_index);
+            model.update_model_indices(self.model_count.clone());
             let mut lock = resource_manager.write();
             lock.add_clone(model);
             drop(lock);
@@ -326,10 +380,12 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let skinned_model_tasks = &mut self.skinned_model_tasks;
         let terrain_tasks = &mut self.terrain_tasks;
         let primitive_tasks = &mut self.geometric_primitive_tasks;
+        let instance_tasks = &mut self.instanced_model_tasks;
         let mut models = vec![];
         let mut skinned_models = vec![];
         let mut terrains = vec![];
         let mut primitives = vec![];
+        let mut instances = vec![];
         for task in model_tasks.iter_mut() {
             let model = task.recv()?;
             models.push(model);
@@ -345,6 +401,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         for task in primitive_tasks.iter_mut() {
             let primitive = task.recv()?;
             primitives.push(primitive);
+        }
+        for task in instance_tasks.iter_mut() {
+            let instance = task.recv()?;
+            instances.push(instance);
         }
         let rm = self.resource_manager.upgrade();
         if rm.is_none() {
@@ -366,12 +426,16 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         for primitive in primitives.into_iter() {
             lock.add_model(primitive);
         }
+        for instance in instances.into_iter() {
+            lock.add_model(instance);
+        }
         drop(lock);
         drop(rm);
         self.model_tasks.clear();
         self.skinned_model_tasks.clear();
         self.terrain_tasks.clear();
         self.geometric_primitive_tasks.clear();
+        self.instanced_model_tasks.clear();
         Ok(())
     }
 }

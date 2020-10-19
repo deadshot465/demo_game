@@ -9,6 +9,8 @@ file_names = {
     'terrain.vert': 'terrain_vert.spv',
     'terrain.frag': 'terrain_frag.spv',
     'water.frag': 'water_frag.spv',
+    'instance.vert': 'instance_vert.spv',
+    'instance.frag': 'instance_frag.spv',
 }
 
 # Compile shaders
