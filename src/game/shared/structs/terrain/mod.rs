@@ -41,6 +41,7 @@ where
         grid_z: i32,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         model_index: usize,
+        ssbo_index: usize,
         graphics: Weak<RwLock<GraphicsType>>,
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandType,
@@ -53,6 +54,7 @@ where
         let z = grid_z as f32 * Self::SIZE * size_ratio_z;
         let model = Self::generate_terrain(
             model_index,
+            ssbo_index,
             texture_data,
             graphics,
             Vec3A::new(x, 0.0, z),
@@ -73,6 +75,7 @@ where
 
     fn generate_terrain(
         model_index: usize,
+        ssbo_index: usize,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         graphics: Weak<RwLock<GraphicsType>>,
         position: Vec3A,
@@ -147,6 +150,7 @@ where
             command_pool: Some(command_pool),
             command_buffer: Some(command_buffer),
             shader_type: ShaderType::Terrain,
+            model_index,
         };
         let mut model = Model {
             position,
@@ -158,11 +162,11 @@ where
                 reflectivity: 0.0,
                 shine_damper: 0.0,
             },
-            meshes: vec![mesh],
+            meshes: vec![Arc::new(Mutex::new(mesh))],
             is_disposed: false,
             model_name: get_random_string(7),
-            model_index,
             graphics,
+            ssbo_index,
         };
         model.model_metadata.world_matrix = model.get_world_matrix();
         model
@@ -183,6 +187,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         grid_x: i32,
         grid_z: i32,
         model_index: usize,
+        ssbo_index: usize,
         graphics: Weak<RwLock<Graphics>>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
@@ -214,6 +219,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 grid_z,
                 (image, texture_index),
                 model_index,
+                ssbo_index,
                 graphics,
                 command_pool,
                 command_buffer,
@@ -234,13 +240,13 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
-        let vertices = self.model.meshes[0].primitives[0].vertices.to_vec();
-        let indices = self.model.meshes[0].primitives[0].indices.to_vec();
-        let command_pool = self.model.meshes[0].command_pool.clone().unwrap();
+        let mut mesh = self.model.meshes[0].lock();
+        let vertices = mesh.primitives[0].vertices.to_vec();
+        let indices = mesh.primitives[0].indices.to_vec();
+        let command_pool = mesh.command_pool.clone().unwrap();
 
         let (vertex_buffer, index_buffer) =
             Graphics::create_buffer(graphics, vertices, indices, command_pool)?;
-        let mesh = &mut self.model.meshes[0];
         mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
         mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
         Ok(())

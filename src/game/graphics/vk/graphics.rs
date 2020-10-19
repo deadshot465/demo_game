@@ -51,7 +51,7 @@ pub struct Graphics {
     pub ssbo_descriptor_set_layout: DescriptorSetLayout,
     pub descriptor_pool: Arc<Mutex<DescriptorPool>>,
     pub command_pool: CommandPool,
-    pub thread_pool: ThreadPool,
+    pub thread_pool: Arc<ThreadPool>,
     pub allocator: Arc<ShardedLock<Allocator>>,
     pub graphics_queue: Arc<Mutex<Queue>>,
     pub present_queue: Arc<Mutex<Queue>>,
@@ -138,14 +138,14 @@ impl Graphics {
                 .expect("Failed to create command pool.");
         }
         let cpu_count = num_cpus::get();
-        let thread_pool = ThreadPool::new(
+        let thread_pool = Arc::new(ThreadPool::new(
             cpu_count,
             device.as_ref(),
             physical_device
                 .queue_indices
                 .graphics_family
                 .unwrap_or_default(),
-        );
+        ));
         let sample_count = Initializer::get_sample_count(&instance, &physical_device);
         let depth_format = Initializer::get_depth_format(&instance, &physical_device);
         let depth_image = Initializer::create_depth_image(
@@ -572,6 +572,10 @@ impl Graphics {
         (pool_handle, command_buffer)
     }
 
+    pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
+        self.thread_pool.get_idle_command_pool()
+    }
+
     pub fn initialize(&mut self) -> anyhow::Result<()> {
         self.create_descriptor_set_layout()?;
         //self.create_dynamic_model_buffers()?;
@@ -728,101 +732,72 @@ impl Graphics {
             .upgrade()
             .expect("Failed to upgrade resource manager.");
         {
-            let thread_count = self.thread_pool.thread_count;
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
             let resource_lock = resource_manager.read();
             for model in resource_lock.models.iter() {
-                let model_clone = model.clone();
-                let model_index = model_clone.lock().model_index;
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count]
-                    .add_job(move || {
-                        let model_lock = model_clone.lock();
-                        let ptr = ptr_clone;
-                        model_lock.render(
-                            ptr,
-                            push_constant,
-                            viewport,
-                            scissor,
-                            device_clone,
-                            pipeline_clone,
-                            descriptor_set,
-                        );
-                    })
-                    .expect("Failed to add work to the queue.");
+                model.lock().render(
+                    ptr_clone,
+                    push_constant,
+                    viewport,
+                    scissor,
+                    device_clone,
+                    pipeline_clone,
+                    descriptor_set,
+                    self.thread_pool.clone(),
+                );
             }
             for model in resource_lock.skinned_models.iter() {
-                let model_clone = model.clone();
-                let model_index = model_clone.lock().model_index;
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count]
-                    .add_job(move || {
-                        let model_lock = model_clone.lock();
-                        let ptr = ptr_clone;
-                        model_lock.render(
-                            ptr,
-                            push_constant,
-                            viewport,
-                            scissor,
-                            device_clone,
-                            pipeline_clone,
-                            descriptor_set,
-                        );
-                    })
-                    .expect("Failed to add work to the queue.");
+                model.lock().render(
+                    ptr_clone,
+                    push_constant,
+                    viewport,
+                    scissor,
+                    device_clone,
+                    pipeline_clone,
+                    descriptor_set,
+                    self.thread_pool.clone(),
+                );
             }
             for terrain in resource_lock.terrains.iter() {
-                let terrain_clone = terrain.clone();
-                let model_index = terrain_clone.lock().model.model_index;
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count]
-                    .add_job(move || {
-                        let terrain_lock = terrain_clone.lock();
-                        let ptr = ptr_clone;
-                        terrain_lock.model.render(
-                            ptr,
-                            push_constant,
-                            viewport,
-                            scissor,
-                            device_clone,
-                            pipeline_clone,
-                            descriptor_set,
-                        );
-                    })
-                    .expect("Failed to add work to the queue.");
+                terrain.lock().model.render(
+                    ptr_clone,
+                    push_constant,
+                    viewport,
+                    scissor,
+                    device_clone,
+                    pipeline_clone,
+                    descriptor_set,
+                    self.thread_pool.clone(),
+                );
             }
             for primitive in resource_lock.geometric_primitives.iter() {
-                let primitive_clone = primitive.clone();
-                let model_index = primitive_clone.lock().model.as_ref().unwrap().model_index;
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
                 let descriptor_set = self.descriptor_sets[0];
-                self.thread_pool.threads[model_index % thread_count]
-                    .add_job(move || {
-                        let primitive_lock = primitive_clone.lock();
-                        let ptr = ptr_clone;
-                        primitive_lock.model.as_ref().unwrap().render(
-                            ptr,
-                            push_constant,
-                            viewport,
-                            scissor,
-                            device_clone,
-                            pipeline_clone,
-                            descriptor_set,
-                        );
-                    })
-                    .expect("Failed to add work to the queue.");
+                primitive.lock().model.as_ref().unwrap().render(
+                    ptr_clone,
+                    push_constant,
+                    viewport,
+                    scissor,
+                    device_clone,
+                    pipeline_clone,
+                    descriptor_set,
+                    self.thread_pool.clone(),
+                );
             }
         }
         self.thread_pool.wait()?;
@@ -983,18 +958,18 @@ impl Graphics {
         for model in resource_lock.models.iter() {
             let model_lock = model.lock();
             let metadata = model_lock.model_metadata;
-            model_metadata.world_matrices[model_lock.model_index] = metadata.world_matrix;
-            model_metadata.object_colors[model_lock.model_index] = metadata.object_color;
-            model_metadata.reflectivities[model_lock.model_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[model_lock.model_index] = metadata.shine_damper;
+            model_metadata.world_matrices[model_lock.ssbo_index] = metadata.world_matrix;
+            model_metadata.object_colors[model_lock.ssbo_index] = metadata.object_color;
+            model_metadata.reflectivities[model_lock.ssbo_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[model_lock.ssbo_index] = metadata.shine_damper;
         }
         for model in resource_lock.skinned_models.iter() {
             let model_lock = model.lock();
             let metadata = model_lock.model_metadata;
-            model_metadata.world_matrices[model_lock.model_index] = metadata.world_matrix;
-            model_metadata.object_colors[model_lock.model_index] = metadata.object_color;
-            model_metadata.reflectivities[model_lock.model_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[model_lock.model_index] = metadata.shine_damper;
+            model_metadata.world_matrices[model_lock.ssbo_index] = metadata.world_matrix;
+            model_metadata.object_colors[model_lock.ssbo_index] = metadata.object_color;
+            model_metadata.reflectivities[model_lock.ssbo_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[model_lock.ssbo_index] = metadata.shine_damper;
         }
         for terrain in resource_lock.terrains.iter() {
             let terrain_lock = terrain.lock();
@@ -1003,20 +978,20 @@ impl Graphics {
             let object_color = metadata.object_color;
             let reflectivity = metadata.reflectivity;
             let shine_damper = metadata.shine_damper;
-            model_metadata.world_matrices[terrain_lock.model.model_index] = world_matrix;
-            model_metadata.object_colors[terrain_lock.model.model_index] = object_color;
-            model_metadata.reflectivities[terrain_lock.model.model_index] = reflectivity;
-            model_metadata.shine_dampers[terrain_lock.model.model_index] = shine_damper;
+            model_metadata.world_matrices[terrain_lock.model.ssbo_index] = world_matrix;
+            model_metadata.object_colors[terrain_lock.model.ssbo_index] = object_color;
+            model_metadata.reflectivities[terrain_lock.model.ssbo_index] = reflectivity;
+            model_metadata.shine_dampers[terrain_lock.model.ssbo_index] = shine_damper;
         }
         for primitive in resource_lock.geometric_primitives.iter() {
             let primitive_lock = primitive.lock();
             let model = primitive_lock.model.as_ref().unwrap();
             let metadata = model.model_metadata;
-            let model_index = model.model_index;
-            model_metadata.world_matrices[model_index] = metadata.world_matrix;
-            model_metadata.object_colors[model_index] = metadata.object_color;
-            model_metadata.reflectivities[model_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[model_index] = metadata.shine_damper;
+            let ssbo_index = model.ssbo_index;
+            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
+            model_metadata.object_colors[ssbo_index] = metadata.object_color;
+            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
         }
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);

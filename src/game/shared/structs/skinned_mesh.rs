@@ -115,6 +115,7 @@ where
     pub transform: Mat4,
     pub root_joint: Option<Joint>,
     pub ssbo: Option<SSBO>,
+    pub model_index: usize,
 }
 
 impl<BufferType, CommandType, TextureType> Drop

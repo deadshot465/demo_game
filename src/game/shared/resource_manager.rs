@@ -211,7 +211,7 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
                     .lock()
                     .meshes
                     .iter()
-                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .map(|mesh| mesh.lock().command_buffer.unwrap())
                     .collect::<Vec<_>>();
                 mesh_command_buffers
             })
@@ -226,7 +226,8 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
                     .skinned_meshes
                     .iter()
                     .map(|mesh| {
-                        mesh.primitives
+                        mesh.lock()
+                            .primitives
                             .iter()
                             .map(|primitive| primitive.command_buffer.unwrap())
                             .collect::<Vec<_>>()
@@ -246,7 +247,7 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
                     .model
                     .meshes
                     .iter()
-                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .map(|mesh| mesh.lock().command_buffer.unwrap())
                     .collect::<Vec<_>>();
                 mesh_command_buffers
             })
@@ -263,7 +264,7 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
                     .unwrap()
                     .meshes
                     .iter()
-                    .map(|mesh| mesh.command_buffer.unwrap())
+                    .map(|mesh| mesh.lock().command_buffer.unwrap())
                     .collect::<Vec<_>>();
                 mesh_command_buffers
             })

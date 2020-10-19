@@ -39,6 +39,7 @@ where
     pub fn create_primitive(
         primitive_type: PrimitiveType,
         model_index: usize,
+        ssbo_index: usize,
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
         graphics: Weak<RwLock<GraphicsType>>,
         command_pool: Arc<Mutex<CommandPool>>,
@@ -50,9 +51,13 @@ where
         shader_type: Option<ShaderType>,
     ) -> Self {
         let mesh = match primitive_type {
-            PrimitiveType::Rect => {
-                Self::create_rect(texture_data, command_pool, command_buffer, shader_type)
-            }
+            PrimitiveType::Rect => Self::create_rect(
+                texture_data,
+                command_pool,
+                command_buffer,
+                shader_type,
+                model_index,
+            ),
         };
         let mut result = GeometricPrimitive {
             is_disposed: false,
@@ -66,11 +71,11 @@ where
                     reflectivity: 0.0,
                     shine_damper: 0.0,
                 },
-                meshes: vec![mesh],
+                meshes: vec![Arc::new(Mutex::new(mesh))],
                 is_disposed: false,
                 model_name: get_random_string(3),
-                model_index,
                 graphics,
+                ssbo_index,
             }),
         };
         let mutable = result
@@ -87,6 +92,7 @@ where
         command_pool: Arc<Mutex<CommandPool>>,
         command_buffer: CommandType,
         shader_type: Option<ShaderType>,
+        model_index: usize,
     ) -> Mesh<BufferType, CommandType, TextureType> {
         let mut vertices = vec![Vertex::default(); 4];
         let mut indices = vec![u32::default(); 3 * 2];
@@ -141,6 +147,7 @@ where
             command_pool: Some(command_pool),
             command_buffer: Some(command_buffer),
             shader_type: final_shader_type,
+            model_index,
         }
     }
 }
@@ -151,6 +158,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         primitive_type: PrimitiveType,
         texture_name: Option<&'static str>,
         model_index: usize,
+        ssbo_index: usize,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -187,6 +195,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
             let mut generated_mesh = Self::create_primitive(
                 primitive_type,
                 model_index,
+                ssbo_index,
                 texture_data,
                 graphics,
                 command_pool,
@@ -212,13 +221,12 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
             .model
             .as_mut()
             .expect("Failed to get mutable reference to the geometric primitive.");
-        let vertices = mutable_model.meshes[0].primitives[0].vertices.to_vec();
-        let indices = mutable_model.meshes[0].primitives[0].indices.to_vec();
-        let command_pool = mutable_model.meshes[0].command_pool.clone().unwrap();
-
+        let mut mesh = mutable_model.meshes[0].lock();
+        let vertices = mesh.primitives[0].vertices.to_vec();
+        let indices = mesh.primitives[0].indices.to_vec();
+        let command_pool = mesh.command_pool.clone().unwrap();
         let (vertex_buffer, index_buffer) =
             Graphics::create_buffer(graphics, vertices, indices, command_pool)?;
-        let mesh = &mut mutable_model.meshes[0];
         mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
         mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
         Ok(())

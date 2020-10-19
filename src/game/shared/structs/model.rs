@@ -11,11 +11,11 @@ use parking_lot::{Mutex, RwLock};
 use std::convert::TryFrom;
 use std::mem::ManuallyDrop;
 use std::sync::{
-    atomic::{AtomicPtr, Ordering},
+    atomic::{AtomicPtr, AtomicUsize, Ordering},
     Arc, Weak,
 };
 
-use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::graphics::vk::{Buffer, Graphics, Image, ThreadPool};
 use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{Mesh, ModelMetaData, Primitive, PushConstant, Vertex};
 use crate::game::shared::traits::disposable::Disposable;
@@ -35,11 +35,11 @@ where
     pub scale: Vec3A,
     pub rotation: Vec3A,
     pub model_metadata: ModelMetaData,
-    pub meshes: Vec<Mesh<BufferType, CommandType, TextureType>>,
+    pub meshes: Vec<Arc<Mutex<Mesh<BufferType, CommandType, TextureType>>>>,
     pub is_disposed: bool,
     pub model_name: String,
-    pub model_index: usize,
     pub graphics: Weak<RwLock<GraphicsType>>,
+    pub ssbo_index: usize,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -52,7 +52,7 @@ where
 {
     fn create_model(
         file_name: &str,
-        model_index: usize,
+        model_index: Arc<AtomicUsize>,
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
@@ -62,8 +62,19 @@ where
         rotation: Vec3A,
         color: Vec4,
         texture_index_offset: usize,
+        ssbo_index: usize,
     ) -> Self {
-        let meshes = Self::process_model(&document, &buffers, images, texture_index_offset);
+        let meshes = Self::process_model(
+            &document,
+            &buffers,
+            images,
+            texture_index_offset,
+            model_index,
+        );
+        let meshes = meshes
+            .into_iter()
+            .map(|m| Arc::new(Mutex::new(m)))
+            .collect::<Vec<_>>();
 
         let x: f32 = rotation.x();
         let y: f32 = rotation.y();
@@ -83,7 +94,7 @@ where
             meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
-            model_index,
+            ssbo_index,
         };
         model.model_metadata.world_matrix = model.get_world_matrix();
         model
@@ -94,15 +105,17 @@ where
         buffers: &[gltf::buffer::Data],
         images: Vec<Arc<ShardedLock<TextureType>>>,
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let meshes = if let Some(scene) = document.default_scene() {
-            Self::process_root_nodes(scene, buffers, images, texture_index_offset)
+            Self::process_root_nodes(scene, buffers, images, texture_index_offset, model_index)
         } else {
             Self::process_root_nodes(
                 document.scenes().next().unwrap(),
                 buffers,
                 images,
                 texture_index_offset,
+                model_index,
             )
         };
         meshes
@@ -113,6 +126,7 @@ where
         buffers: &[gltf::buffer::Data],
         images: Vec<Arc<ShardedLock<TextureType>>>,
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(150);
         for node in scene.nodes() {
@@ -122,6 +136,7 @@ where
                 &images,
                 Mat4::identity(),
                 texture_index_offset,
+                model_index.clone(),
             );
             meshes.append(&mut submeshes);
         }
@@ -134,6 +149,7 @@ where
         images: &[Arc<ShardedLock<TextureType>>],
         local_transform: Mat4,
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
@@ -147,11 +163,18 @@ where
                 transform,
                 images,
                 texture_index_offset,
+                model_index.clone(),
             ));
         }
         for _node in node.children() {
-            let mut submeshes =
-                Self::process_node(_node, buffers, images, transform, texture_index_offset);
+            let mut submeshes = Self::process_node(
+                _node,
+                buffers,
+                images,
+                transform,
+                texture_index_offset,
+                model_index.clone(),
+            );
             meshes.append(&mut submeshes);
         }
         meshes
@@ -163,6 +186,7 @@ where
         local_transform: Mat4,
         images: &[Arc<ShardedLock<TextureType>>],
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Mesh<BufferType, CommandType, TextureType> {
         let mut primitives = Vec::with_capacity(5);
         let mut textures = Vec::with_capacity(5);
@@ -247,6 +271,7 @@ where
             command_buffer: None,
             command_pool: None,
             shader_type,
+            model_index: model_index.fetch_add(1, Ordering::SeqCst),
         }
     }
 
@@ -268,7 +293,8 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
-        model_index: usize,
+        model_index: Arc<AtomicUsize>,
+        ssbo_index: usize,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading model {}...", file_name);
         let graphics_arc = graphics
@@ -279,14 +305,10 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let graphics_arc = graphics_arc;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_ref = &*graphics_arc.read();
-                command_pool = Graphics::get_command_pool(graphics_ref, model_index);
+                let graphics = graphics_arc.read();
+                command_pool = graphics.get_idle_command_pool();
             }
-            log::info!(
-                "Model index: {}, Command pool: {:?}",
-                model_index,
-                command_pool
-            );
+            log::info!("Model index: {}", ssbo_index);
             let (document, buffers, images) =
                 read_raw_data(file_name).expect("Failed to read raw data from glTF.");
             let (textures, texture_index_offset) =
@@ -304,15 +326,18 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 rotation,
                 color,
                 texture_index_offset,
+                ssbo_index,
             );
             {
                 let graphics_lock = graphics_arc.read();
                 let device = graphics_lock.logical_device.as_ref();
-                let pool = *command_pool.lock();
                 for mesh in loaded_model.meshes.iter_mut() {
-                    let command_buffer = Graphics::create_secondary_command_buffer(device, pool);
-                    mesh.command_pool = Some(command_pool.clone());
-                    mesh.command_buffer = Some(command_buffer);
+                    let mut mesh_lock = mesh.lock();
+                    let pool = Graphics::get_command_pool(&*graphics_lock, mesh_lock.model_index);
+                    let command_buffer =
+                        Graphics::create_secondary_command_buffer(device, *pool.lock());
+                    mesh_lock.command_pool = Some(pool.clone());
+                    mesh_lock.command_buffer = Some(command_buffer);
                 }
                 drop(graphics_lock);
             }
@@ -330,21 +355,22 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);
-            let vertices = mesh
+            let mesh_lock = mesh.lock();
+            let vertices = mesh_lock
                 .primitives
                 .iter()
                 .map(|p| &p.vertices)
                 .flatten()
                 .copied()
                 .collect::<Vec<_>>();
-            let indices = mesh
+            let indices = mesh_lock
                 .primitives
                 .iter()
                 .map(|p| &p.indices)
                 .flatten()
                 .copied()
                 .collect::<Vec<_>>();
-            let cmd_pool = mesh.command_pool.clone().unwrap();
+            let cmd_pool = mesh_lock.command_pool.clone().unwrap();
             let pool = cmd_pool.clone();
             let g = graphics.clone();
             let (buffer_send, buffer_recv) = bounded(5);
@@ -359,9 +385,10 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         }
         for (index, mesh) in self.meshes.iter_mut().enumerate() {
             if let Some(result) = handles.get_mut(&index) {
+                let mut mesh_lock = mesh.lock();
                 let (vertex_buffer, index_buffer) = result.recv()?;
-                mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
-                mesh.index_buffer = Some(ManuallyDrop::new(index_buffer));
+                mesh_lock.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
+                mesh_lock.index_buffer = Some(ManuallyDrop::new(index_buffer));
             }
         }
         Ok(())
@@ -378,13 +405,18 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         device: Arc<Device>,
         pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
         descriptor_set: DescriptorSet,
+        thread_pool: Arc<ThreadPool>,
     ) {
+        let thread_count = thread_pool.thread_count;
         let mut push_constant = push_constant;
-        push_constant.model_index = self.model_index;
+        push_constant.model_index = self.ssbo_index;
         unsafe {
-            let inheritance = inheritance_info.load(Ordering::SeqCst).as_ref().unwrap();
             for mesh in self.meshes.iter() {
-                let shader_type = mesh.shader_type;
+                let mesh_clone = mesh.clone();
+                let mesh_lock = mesh_clone.lock();
+                let model_index = mesh_lock.model_index;
+                let shader_type = mesh_lock.shader_type;
+                drop(mesh_lock);
                 let pipeline_layout = pipeline
                     .read()
                     .expect("Failed to lock pipeline when acquiring pipeline layout.")
@@ -393,67 +425,83 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                     .read()
                     .expect("Failed to lock pipeline when getting the graphics pipeline.")
                     .get_pipeline(shader_type, 0);
-                let command_buffer_begin_info = CommandBufferBeginInfo::builder()
-                    .inheritance_info(inheritance)
-                    .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
-                    .build();
-                let command_buffer = mesh.command_buffer.unwrap();
-                let result =
-                    device.begin_command_buffer(command_buffer, &command_buffer_begin_info);
-                if let Err(e) = result {
-                    log::error!(
-                        "Error beginning secondary command buffer: {}",
-                        e.to_string()
-                    );
-                }
-                device.cmd_set_viewport(command_buffer, 0, &[viewport]);
-                device.cmd_set_scissor(command_buffer, 0, &[scissor]);
-                device.cmd_bind_pipeline(command_buffer, PipelineBindPoint::GRAPHICS, pipeline);
-                device.cmd_bind_descriptor_sets(
-                    command_buffer,
-                    PipelineBindPoint::GRAPHICS,
-                    pipeline_layout,
-                    0,
-                    &[descriptor_set],
-                    &[],
-                );
-                let vertex_buffers = [mesh.get_vertex_buffer()];
-                let index_buffer = mesh.get_index_buffer();
-
-                let mut vertex_offset_index = 0;
-                let mut index_offset_index = 0;
-                for primitive in mesh.primitives.iter() {
-                    push_constant.texture_index = primitive.texture_index.unwrap_or_default();
-                    let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
-                    device.cmd_push_constants(
+                let inheritance_clone = inheritance_info.clone();
+                let device_clone = device.clone();
+                thread_pool.threads[model_index % thread_count].add_job(move || {
+                    let device_clone = device_clone;
+                    let inheritance = inheritance_clone.load(Ordering::SeqCst).as_ref().unwrap();
+                    let mesh = mesh_clone;
+                    let mesh_lock = mesh.lock();
+                    let command_buffer_begin_info = CommandBufferBeginInfo::builder()
+                        .inheritance_info(inheritance)
+                        .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
+                        .build();
+                    let command_buffer = mesh_lock.command_buffer.unwrap();
+                    let result = device_clone
+                        .begin_command_buffer(command_buffer, &command_buffer_begin_info);
+                    if let Err(e) = result {
+                        log::error!(
+                            "Error beginning secondary command buffer: {}",
+                            e.to_string()
+                        );
+                    }
+                    device_clone.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                    device_clone.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                    device_clone.cmd_bind_pipeline(
                         command_buffer,
+                        PipelineBindPoint::GRAPHICS,
+                        pipeline,
+                    );
+                    device_clone.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        PipelineBindPoint::GRAPHICS,
                         pipeline_layout,
-                        ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
                         0,
-                        &casted[0..],
+                        &[descriptor_set],
+                        &[],
                     );
-                    device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers[0..], &[0]);
-                    device.cmd_bind_index_buffer(
-                        command_buffer,
-                        index_buffer,
-                        0,
-                        IndexType::UINT32,
-                    );
-                    device.cmd_draw_indexed(
-                        command_buffer,
-                        u32::try_from(primitive.indices.len()).unwrap(),
-                        1,
-                        index_offset_index,
-                        vertex_offset_index,
-                        0,
-                    );
-                    vertex_offset_index += primitive.vertices.len() as i32;
-                    index_offset_index += primitive.indices.len() as u32;
-                }
-                let result = device.end_command_buffer(command_buffer);
-                if let Err(e) = result {
-                    log::error!("Error ending command buffer: {}", e.to_string());
-                }
+                    let vertex_buffers = [mesh_lock.get_vertex_buffer()];
+                    let index_buffer = mesh_lock.get_index_buffer();
+                    let mut vertex_offset_index = 0;
+                    let mut index_offset_index = 0;
+                    for primitive in mesh_lock.primitives.iter() {
+                        push_constant.texture_index = primitive.texture_index.unwrap_or_default();
+                        let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
+                        device_clone.cmd_push_constants(
+                            command_buffer,
+                            pipeline_layout,
+                            ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
+                            0,
+                            &casted[0..],
+                        );
+                        device_clone.cmd_bind_vertex_buffers(
+                            command_buffer,
+                            0,
+                            &vertex_buffers[0..],
+                            &[0],
+                        );
+                        device_clone.cmd_bind_index_buffer(
+                            command_buffer,
+                            index_buffer,
+                            0,
+                            IndexType::UINT32,
+                        );
+                        device_clone.cmd_draw_indexed(
+                            command_buffer,
+                            u32::try_from(primitive.indices.len()).unwrap(),
+                            1,
+                            index_offset_index,
+                            vertex_offset_index,
+                            0,
+                        );
+                        vertex_offset_index += primitive.vertices.len() as i32;
+                        index_offset_index += primitive.indices.len() as u32;
+                    }
+                    let result = device_clone.end_command_buffer(command_buffer);
+                    if let Err(e) = result {
+                        log::error!("Error ending command buffer: {}", e.to_string());
+                    }
+                });
             }
         }
     }
@@ -470,10 +518,10 @@ where
 {
     fn from(model: &Self) -> Self {
         loop {
-            let is_buffer_completed = model
-                .meshes
-                .iter()
-                .all(|mesh| mesh.vertex_buffer.is_some() && mesh.index_buffer.is_some());
+            let is_buffer_completed = model.meshes.iter().all(|mesh| {
+                let mesh_lock = mesh.lock();
+                mesh_lock.vertex_buffer.is_some() && mesh_lock.index_buffer.is_some()
+            });
             if is_buffer_completed {
                 break;
             }
@@ -487,13 +535,13 @@ where
             meshes: model.meshes.to_vec(),
             is_disposed: true,
             model_name: model.model_name.clone(),
-            model_index: 0,
+            ssbo_index: model.ssbo_index,
         };
 
         _model
             .meshes
             .iter_mut()
-            .for_each(|mesh| mesh.is_disposed = true);
+            .for_each(|mesh| mesh.lock().is_disposed = true);
         _model
     }
 }
@@ -529,7 +577,7 @@ where
         log::info!(
             "Dropping model...Model: {}, Model Index: {}",
             self.model_name.as_str(),
-            self.model_index
+            self.ssbo_index
         );
         if !self.is_disposed {
             self.dispose();
@@ -550,10 +598,10 @@ where
         log::info!(
             "Disposing model...Model: {}, Model index: {}",
             self.model_name.as_str(),
-            self.model_index
+            self.ssbo_index
         );
         for mesh in self.meshes.iter_mut() {
-            mesh.dispose();
+            mesh.lock().dispose();
         }
         self.is_disposed = true;
         log::info!("Successfully disposed model.");

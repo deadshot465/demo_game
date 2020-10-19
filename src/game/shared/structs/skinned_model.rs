@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 
-use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::graphics::vk::{Buffer, Graphics, Image, ThreadPool};
 use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{
     generate_joint_transforms, Animation, Channel, ChannelOutputs, ModelMetaData, SkinnedMesh,
@@ -23,7 +23,7 @@ use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::util::read_raw_data;
 use ash::version::DeviceV1_0;
 use ash::Device;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -36,10 +36,10 @@ where
     pub scale: Vec3A,
     pub rotation: Vec3A,
     pub model_metadata: ModelMetaData,
-    pub skinned_meshes: Vec<SkinnedMesh<BufferType, CommandType, TextureType>>,
+    pub skinned_meshes: Vec<Arc<Mutex<SkinnedMesh<BufferType, CommandType, TextureType>>>>,
     pub is_disposed: bool,
     pub model_name: String,
-    pub model_index: usize,
+    pub ssbo_index: usize,
     pub animations: HashMap<String, Animation>,
     graphics: Weak<RwLock<GraphicsType>>,
 }
@@ -54,7 +54,8 @@ where
 {
     fn create_model(
         file_name: &str,
-        model_index: usize,
+        model_index: Arc<AtomicUsize>,
+        ssbo_index: usize,
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
@@ -65,7 +66,17 @@ where
         color: Vec4,
         texture_index_offset: usize,
     ) -> Self {
-        let meshes = Self::process_model(&document, &buffers, images, texture_index_offset);
+        let meshes = Self::process_model(
+            &document,
+            &buffers,
+            images,
+            texture_index_offset,
+            model_index,
+        );
+        let meshes = meshes
+            .into_iter()
+            .map(|m| Arc::new(Mutex::new(m)))
+            .collect::<Vec<_>>();
         let animations = Self::process_animation(&document, &buffers);
         for (name, _) in animations.iter() {
             log::info!("Animation: {}", &name);
@@ -83,7 +94,7 @@ where
             skinned_meshes: meshes,
             is_disposed: false,
             model_name: file_name.to_string(),
-            model_index,
+            ssbo_index,
             animations,
             graphics,
         };
@@ -96,15 +107,17 @@ where
         buffers: &[gltf::buffer::Data],
         images: Vec<Arc<ShardedLock<TextureType>>>,
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let meshes = if let Some(scene) = document.default_scene() {
-            Self::process_root_nodes(scene, buffers, images, texture_index_offset)
+            Self::process_root_nodes(scene, buffers, images, texture_index_offset, model_index)
         } else {
             Self::process_root_nodes(
                 document.scenes().next().unwrap(),
                 buffers,
                 images,
                 texture_index_offset,
+                model_index,
             )
         };
         log::info!("Skinned model mesh count: {}", meshes.len());
@@ -116,6 +129,7 @@ where
         buffers: &[gltf::buffer::Data],
         images: Vec<Arc<ShardedLock<TextureType>>>,
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = vec![];
         for node in scene.nodes() {
@@ -125,6 +139,7 @@ where
                 &images,
                 Mat4::identity(),
                 texture_index_offset,
+                model_index.clone(),
             );
             meshes.append(&mut sub_meshes);
         }
@@ -137,6 +152,7 @@ where
         images: &[Arc<ShardedLock<TextureType>>],
         local_transform: Mat4,
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
@@ -151,11 +167,18 @@ where
                 transform,
                 images,
                 texture_index_offset,
+                model_index.clone(),
             ));
         }
         for _node in node.children() {
-            let mut sub_meshes =
-                Self::process_node(_node, buffers, images, transform, texture_index_offset);
+            let mut sub_meshes = Self::process_node(
+                _node,
+                buffers,
+                images,
+                transform,
+                texture_index_offset,
+                model_index.clone(),
+            );
             meshes.append(&mut sub_meshes);
         }
         meshes
@@ -168,6 +191,7 @@ where
         local_transform: Mat4,
         images: &[Arc<ShardedLock<TextureType>>],
         texture_index_offset: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> SkinnedMesh<BufferType, CommandType, TextureType> {
         let mut root_joint = None;
         if let Some(skin) = node.skin() {
@@ -288,6 +312,7 @@ where
             transform: local_transform,
             root_joint,
             ssbo: None,
+            model_index: model_index.fetch_add(1, Ordering::SeqCst),
         }
     }
 
@@ -420,7 +445,8 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
-        model_index: usize,
+        ssbo_index: usize,
+        model_index: Arc<AtomicUsize>,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading skinned model from glTF {}...", file_name);
         let graphics_arc = graphics.upgrade().unwrap();
@@ -429,14 +455,10 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let graphics_arc = graphics_arc;
             let command_pool: Arc<Mutex<CommandPool>>;
             {
-                let graphics_ref = &*graphics_arc.read();
-                command_pool = Graphics::get_command_pool(graphics_ref, model_index);
+                let graphics = graphics_arc.read();
+                command_pool = graphics.get_idle_command_pool();
             }
-            log::info!(
-                "Skinned model index: {}, Command pool: {:?}",
-                model_index,
-                command_pool
-            );
+            log::info!("Skinned model index: {}", ssbo_index);
             let (document, buffers, images) =
                 read_raw_data(file_name).expect("Failed to read raw data from glTF.");
             let (textures, texture_index_offset) =
@@ -445,6 +467,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let mut loaded_model = Self::create_model(
                 file_name,
                 model_index,
+                ssbo_index,
                 document,
                 buffers,
                 textures,
@@ -458,18 +481,19 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             {
                 let graphics_lock = graphics_arc.read();
                 let device = graphics_lock.logical_device.as_ref();
-                let pool = *command_pool.lock();
                 for mesh in loaded_model.skinned_meshes.iter_mut() {
-                    for primitive in mesh.primitives.iter_mut() {
-                        primitive.command_pool = Some(command_pool.clone());
+                    let mut mesh_lock = mesh.lock();
+                    let pool = Graphics::get_command_pool(&*graphics_lock, mesh_lock.model_index);
+                    for primitive in mesh_lock.primitives.iter_mut() {
+                        primitive.command_pool = Some(pool.clone());
                         let command_buffer =
-                            Graphics::create_secondary_command_buffer(device, pool);
+                            Graphics::create_secondary_command_buffer(device, *pool.lock());
                         primitive.command_buffer = Some(command_buffer);
                     }
                 }
             }
             loaded_model
-                .create_buffers(graphics_arc, command_pool)
+                .create_buffers(graphics_arc)
                 .expect("Failed to create buffers for skinned model.");
             model_send
                 .send(loaded_model)
@@ -478,18 +502,15 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model_recv)
     }
 
-    fn create_buffers(
-        &mut self,
-        graphics: Arc<RwLock<Graphics>>,
-        command_pool: Arc<Mutex<CommandPool>>,
-    ) -> anyhow::Result<()> {
+    fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
-        for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
-            for primitive in mesh.primitives.iter_mut() {
+        for (index, mesh) in self.skinned_meshes.iter().enumerate() {
+            let mut mesh_lock = mesh.lock();
+            for primitive in mesh_lock.primitives.iter_mut() {
                 let graphics_clone = graphics.clone();
                 let vertices = primitive.vertices.clone();
                 let indices = primitive.indices.clone();
-                let cmd_pool = command_pool.clone();
+                let cmd_pool = primitive.command_pool.as_ref().cloned().unwrap();
                 let (buffer_send, buffer_recv) = bounded(5);
                 rayon::spawn(move || {
                     let result =
@@ -502,9 +523,10 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 (*entry).push(buffer_recv);
             }
         }
-        for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
+        for (index, mesh) in self.skinned_meshes.iter().enumerate() {
             let mesh_handles = handles.get_mut(&index).unwrap();
-            let zipped = mesh
+            let mut mesh_lock = mesh.lock();
+            let zipped = mesh_lock
                 .primitives
                 .iter_mut()
                 .zip(mesh_handles.iter_mut())
@@ -524,7 +546,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             .graphics
             .upgrade()
             .expect("Failed to upgrade graphics handle.");
-        for (index, _) in self.skinned_meshes.iter_mut().enumerate() {
+        for (index, _) in self.skinned_meshes.iter().enumerate() {
             let entry = ssbo_handles.entry(index).or_insert_with(Vec::new);
             let graphics_clone = graphics.clone();
             let (ssbo_send, ssbo_recv) = bounded(5);
@@ -536,7 +558,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             });
             entry.push(ssbo_recv);
         }
-        for (index, mesh) in self.skinned_meshes.iter_mut().enumerate() {
+        for (index, mesh) in self.skinned_meshes.iter().enumerate() {
             let ssbos = ssbo_handles
                 .get_mut(&index)
                 .expect("Failed to get SSBO handle.");
@@ -544,7 +566,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 .get_mut(0)
                 .expect("Failed to get ssbo result.")
                 .recv()??;
-            mesh.ssbo = Some(item);
+            mesh.lock().ssbo = Some(item);
         }
         Ok(())
     }
@@ -559,10 +581,11 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             animation.current_time -= animation_end_time;
         }
         let buffer_size = std::mem::size_of::<Mat4>() * 500;
-        for mesh in self.skinned_meshes.iter_mut() {
+        for mesh in self.skinned_meshes.iter() {
+            let mesh_lock = mesh.lock();
             let mut buffer = [Mat4::identity(); 500];
-            let local_transform = mesh.transform;
-            match mesh.root_joint.as_ref() {
+            let local_transform = mesh_lock.transform;
+            match mesh_lock.root_joint.as_ref() {
                 Some(joint) => generate_joint_transforms(
                     animation,
                     animation.current_time,
@@ -572,7 +595,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 ),
                 None => continue,
             }
-            let mapped = mesh.ssbo.as_ref().unwrap().buffer.mapped_memory;
+            let mapped = mesh_lock.ssbo.as_ref().unwrap().buffer.mapped_memory;
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     buffer.as_ptr() as *const std::ffi::c_void,
@@ -592,7 +615,9 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         device: Arc<Device>,
         pipeline: Arc<ShardedLock<ManuallyDrop<crate::game::graphics::vk::Pipeline>>>,
         descriptor_set: DescriptorSet,
+        thread_pool: Arc<ThreadPool>,
     ) {
+        let thread_count = thread_pool.thread_count;
         let pipeline_layout = pipeline
             .read()
             .expect("Failed to lock pipeline when acquiring pipeline layout.")
@@ -602,76 +627,96 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to lock pipeline when getting the graphics pipeline.")
             .get_pipeline(ShaderType::AnimatedModel, 0);
         let mut push_constant = push_constant;
-        push_constant.model_index = self.model_index;
+        push_constant.model_index = self.ssbo_index;
         unsafe {
-            let inheritance = inheritance_info.load(Ordering::SeqCst).as_ref().unwrap();
             for mesh in self.skinned_meshes.iter() {
-                for primitive in mesh.primitives.iter() {
-                    let command_buffer_begin_info = CommandBufferBeginInfo::builder()
-                        .inheritance_info(inheritance)
-                        .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
-                        .build();
-                    let command_buffer = primitive.command_buffer.unwrap();
-                    let result =
-                        device.begin_command_buffer(command_buffer, &command_buffer_begin_info);
-                    if let Err(e) = result {
-                        log::error!(
-                            "Error beginning secondary command buffer: {}",
-                            e.to_string()
+                let mesh_clone = mesh.clone();
+                let mesh_lock = mesh.lock();
+                let model_index = mesh_lock.model_index;
+                drop(mesh_lock);
+                let inheritance_clone = inheritance_info.clone();
+                let device_clone = device.clone();
+                thread_pool.threads[model_index % thread_count].add_job(move || {
+                    let device = device_clone;
+                    let inheritance = inheritance_clone.load(Ordering::SeqCst).as_ref().unwrap();
+                    let mesh = mesh_clone;
+                    let mesh_lock = mesh.lock();
+                    for primitive in mesh_lock.primitives.iter() {
+                        let command_buffer_begin_info = CommandBufferBeginInfo::builder()
+                            .inheritance_info(inheritance)
+                            .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
+                            .build();
+                        let command_buffer = primitive.command_buffer.unwrap();
+                        let result =
+                            device.begin_command_buffer(command_buffer, &command_buffer_begin_info);
+                        if let Err(e) = result {
+                            log::error!(
+                                "Error beginning secondary command buffer: {}",
+                                e.to_string()
+                            );
+                        }
+                        device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                        device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                        device.cmd_bind_pipeline(
+                            command_buffer,
+                            PipelineBindPoint::GRAPHICS,
+                            pipeline,
                         );
-                    }
-                    device.cmd_set_viewport(command_buffer, 0, &[viewport]);
-                    device.cmd_set_scissor(command_buffer, 0, &[scissor]);
-                    device.cmd_bind_pipeline(command_buffer, PipelineBindPoint::GRAPHICS, pipeline);
-                    device.cmd_bind_descriptor_sets(
-                        command_buffer,
-                        PipelineBindPoint::GRAPHICS,
-                        pipeline_layout,
-                        0,
-                        &[descriptor_set],
-                        &[],
-                    );
-                    push_constant.texture_index = primitive.texture_index;
-                    let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
-                    device.cmd_push_constants(
-                        command_buffer,
-                        pipeline_layout,
-                        ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
-                        0,
-                        &casted[0..],
-                    );
-                    let vertex_buffers = [primitive.get_vertex_buffer()];
-                    let index_buffer = primitive.get_index_buffer();
-                    if let Some(ssbo) = mesh.ssbo.as_ref() {
                         device.cmd_bind_descriptor_sets(
                             command_buffer,
                             PipelineBindPoint::GRAPHICS,
                             pipeline_layout,
-                            1,
-                            &[ssbo.descriptor_set],
+                            0,
+                            &[descriptor_set],
                             &[],
                         );
+                        push_constant.texture_index = primitive.texture_index;
+                        let casted = bytemuck::cast::<PushConstant, [u8; 32]>(push_constant);
+                        device.cmd_push_constants(
+                            command_buffer,
+                            pipeline_layout,
+                            ShaderStageFlags::FRAGMENT | ShaderStageFlags::VERTEX,
+                            0,
+                            &casted[0..],
+                        );
+                        let vertex_buffers = [primitive.get_vertex_buffer()];
+                        let index_buffer = primitive.get_index_buffer();
+                        if let Some(ssbo) = mesh_lock.ssbo.as_ref() {
+                            device.cmd_bind_descriptor_sets(
+                                command_buffer,
+                                PipelineBindPoint::GRAPHICS,
+                                pipeline_layout,
+                                1,
+                                &[ssbo.descriptor_set],
+                                &[],
+                            );
+                        }
+                        device.cmd_bind_vertex_buffers(
+                            command_buffer,
+                            0,
+                            &vertex_buffers[0..],
+                            &[0],
+                        );
+                        device.cmd_bind_index_buffer(
+                            command_buffer,
+                            index_buffer,
+                            0,
+                            IndexType::UINT32,
+                        );
+                        device.cmd_draw_indexed(
+                            command_buffer,
+                            primitive.indices.len() as u32,
+                            1,
+                            0,
+                            0,
+                            0,
+                        );
+                        let result = device.end_command_buffer(command_buffer);
+                        if let Err(e) = result {
+                            log::error!("Error ending command buffer: {}", e.to_string());
+                        }
                     }
-                    device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers[0..], &[0]);
-                    device.cmd_bind_index_buffer(
-                        command_buffer,
-                        index_buffer,
-                        0,
-                        IndexType::UINT32,
-                    );
-                    device.cmd_draw_indexed(
-                        command_buffer,
-                        primitive.indices.len() as u32,
-                        1,
-                        0,
-                        0,
-                        0,
-                    );
-                    let result = device.end_command_buffer(command_buffer);
-                    if let Err(e) = result {
-                        log::error!("Error ending command buffer: {}", e.to_string());
-                    }
-                }
+                });
             }
         }
     }
@@ -689,7 +734,7 @@ where
     fn from(model: &SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>) -> Self {
         loop {
             let is_buffer_completed = model.skinned_meshes.iter().all(|mesh| {
-                mesh.primitives.iter().all(|primitive| {
+                mesh.lock().primitives.iter().all(|primitive| {
                     primitive.vertex_buffer.is_some() && primitive.index_buffer.is_some()
                 })
             });
@@ -705,7 +750,7 @@ where
             skinned_meshes: model.skinned_meshes.to_vec(),
             is_disposed: true,
             model_name: model.model_name.clone(),
-            model_index: 0,
+            ssbo_index: 0,
             animations: model.animations.clone(),
             graphics: model.graphics.clone(),
         }
@@ -740,10 +785,10 @@ where
         log::info!(
             "Disposing skinned model...Skinned model: {}, Model index: {}",
             self.model_name.as_str(),
-            self.model_index
+            self.ssbo_index
         );
         for mesh in self.skinned_meshes.iter_mut() {
-            mesh.dispose();
+            mesh.lock().dispose();
         }
         self.is_disposed = true;
         log::info!("Successfully disposed skinned model.");

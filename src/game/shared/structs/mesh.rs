@@ -31,6 +31,7 @@ where
     pub command_pool: Option<Arc<Mutex<ash::vk::CommandPool>>>,
     pub command_buffer: Option<CommandType>,
     pub shader_type: ShaderType,
+    pub model_index: usize,
 }
 
 impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
@@ -44,6 +45,7 @@ impl Mesh<graphics::vk::Buffer, ash::vk::CommandBuffer, graphics::vk::Image> {
             command_pool: None,
             command_buffer: None,
             shader_type: ShaderType::BasicShader,
+            model_index: 0,
         }
     }
 

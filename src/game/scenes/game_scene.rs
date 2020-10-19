@@ -27,7 +27,8 @@ where
     resource_manager:
         Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_name: String,
-    model_count: AtomicUsize,
+    model_count: Arc<AtomicUsize>,
+    ssbo_count: AtomicUsize,
     height_generator: Arc<ShardedLock<HeightGenerator>>,
     model_tasks: Vec<Receiver<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
     skinned_model_tasks:
@@ -55,12 +56,13 @@ where
             graphics,
             resource_manager,
             scene_name: String::from("GAME_SCENE"),
-            model_count: AtomicUsize::new(0),
+            model_count: Arc::new(AtomicUsize::new(0)),
             height_generator: Arc::new(ShardedLock::new(HeightGenerator::new())),
             model_tasks: vec![],
             skinned_model_tasks: vec![],
             terrain_tasks: vec![],
             geometric_primitive_tasks: vec![],
+            ssbo_count: AtomicUsize::new(0),
         }
     }
 }
@@ -68,6 +70,7 @@ where
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
     pub fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
         let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let mut height_generator = self
             .height_generator
             .write()
@@ -79,6 +82,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             grid_x,
             grid_z,
             model_index,
+            ssbo_index,
             self.graphics.clone(),
             self.height_generator.clone(),
             0.5,
@@ -189,7 +193,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()> {
-        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -212,7 +216,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
             model.model_metadata.world_matrix = model.get_world_matrix();
             model.model_metadata.object_color = color;
-            model.model_index = model_index;
+            for mesh in model.meshes.iter_mut() {
+                mesh.lock().model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
+            }
+            model.ssbo_index = ssbo_index;
             let mut lock = resource_manager.write();
             lock.add_model(model);
             drop(lock);
@@ -224,7 +231,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 scale,
                 rotation,
                 color,
-                model_index,
+                self.model_count.clone(),
+                ssbo_index,
             )?;
             self.model_tasks.push(task);
         }
@@ -240,7 +248,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()> {
-        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -263,7 +271,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.rotation = Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians());
             model.model_metadata.world_matrix = model.get_world_matrix();
             model.model_metadata.object_color = color;
-            model.model_index = model_index;
+            model.ssbo_index = ssbo_index;
             let mut lock = resource_manager.write();
             lock.add_skinned_model(model);
             drop(lock);
@@ -275,7 +283,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 scale,
                 rotation,
                 color,
-                model_index,
+                ssbo_index,
+                self.model_count.clone(),
             )?;
             self.skinned_model_tasks.push(task);
         }
@@ -294,11 +303,13 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         shader_type: Option<ShaderType>,
     ) -> anyhow::Result<()> {
         let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let task = GeometricPrimitive::new(
             self.graphics.clone(),
             primitive_type,
             texture_name,
             model_index,
+            ssbo_index,
             position,
             scale,
             rotation,
