@@ -28,7 +28,7 @@ where
 {
     pub model: Model<GraphicsType, BufferType, CommandType, TextureType>,
     pub instance_data: Vec<InstanceData>,
-    pub instance_buffer: BufferType,
+    pub instance_buffer: ManuallyDrop<BufferType>,
     pub vertex_buffer: Option<ManuallyDrop<BufferType>>,
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
     pub vertices: Vec<Vertex>,
@@ -86,7 +86,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
             let mut loaded_instance = InstancedModel {
                 model: loaded_model,
                 instance_data,
-                instance_buffer,
+                instance_buffer: ManuallyDrop::new(instance_buffer),
                 vertex_buffer: None,
                 index_buffer: None,
                 vertices: vec![],
@@ -97,9 +97,9 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
                 command_pool,
                 command_buffer,
             };
-            loaded_instance
-                .create_vertex_and_index_buffer(graphics_arc)
-                .expect("Failed to create vertex and index buffer for instance.");
+            /*loaded_instance
+            .create_vertex_and_index_buffer(graphics_arc)
+            .expect("Failed to create vertex and index buffer for instance.");*/
             model_send
                 .send(loaded_instance)
                 .expect("Failed to send instanced model.");
@@ -406,7 +406,15 @@ where
             return;
         }
         self.model.dispose();
-        self.instance_buffer.dispose();
+        unsafe {
+            ManuallyDrop::drop(&mut self.instance_buffer);
+            if let Some(buffer) = self.vertex_buffer.as_mut() {
+                ManuallyDrop::drop(buffer);
+            }
+            if let Some(buffer) = self.index_buffer.as_mut() {
+                ManuallyDrop::drop(buffer);
+            }
+        }
     }
 
     fn is_disposed(&self) -> bool {

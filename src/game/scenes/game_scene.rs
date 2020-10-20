@@ -205,14 +205,20 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec4::new(0.0, 0.0, 1.0, 1.0),
             Some(ShaderType::Water),
         )?;*/
-        self.add_instanced_model(
-            "models/stanford_dragon/stanford-dragon.glb",
-            Vec3A::zero(),
-            Vec3A::one(),
-            Vec3A::zero(),
-            Vec4::one(),
-            125,
-        );
+        let instance_count = std::env::var("INSTANCE_COUNT")
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        if instance_count > 0 {
+            self.add_instanced_model(
+                "models/stanford_dragon/stanford-dragon.glb",
+                Vec3A::new(0.0, 5.0, 0.0),
+                Vec3A::one(),
+                Vec3A::zero(),
+                Vec4::new(0.72, 0.43, 0.47, 1.0),
+                instance_count,
+            )?;
+        }
         self.generate_terrain(0, 0)?;
         Ok(())
     }

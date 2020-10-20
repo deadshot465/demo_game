@@ -236,10 +236,6 @@ impl Graphics {
 }
 
 impl GraphicsBase<Resource, ComPtr<ID3D12GraphicsCommandList>, Resource> for Graphics {
-    fn get_commands(&self) -> &Vec<ComPtr<ID3D12GraphicsCommandList>> {
-        unimplemented!()
-    }
-
     fn is_initialized(&self) -> bool {
         self.is_initialized
     }
