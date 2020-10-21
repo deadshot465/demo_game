@@ -37,8 +37,12 @@ fn main() -> anyhow::Result<()> {
     let api = dotenv::var("API").unwrap();
     log::info!("Using API: {}", &api);
     let event_loop = EventLoop::new();
-    let mut rt = tokio::runtime::Runtime::new()?;
-    let mut last_frame_time = time::Instant::now();
+    let mut rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("Failed to build tokio runtime.");
+    let mut last_second = time::Instant::now();
     let mut current_time = time::Instant::now();
     let mut frame_count = 0_u32;
     let mut delta_time = 0.0_f64;
@@ -67,14 +71,18 @@ fn main() -> anyhow::Result<()> {
                         delta_time = current_time.elapsed().as_secs_f64();
                         current_time = time::Instant::now();
                         frame_count += 1;
-                        let elapsed = last_frame_time.elapsed().as_secs_f64();
+                        let elapsed = last_second.elapsed().as_secs_f64();
                         if elapsed > 1.0 {
                             game.window
                                 .read()
                                 .expect("Failed to lock window handle.")
-                                .set_title(&format!("Demo Engine / FPS: {}", frame_count));
+                                .set_title(&format!(
+                                    "Demo Engine / FPS: {} / Frame Time: {}",
+                                    frame_count,
+                                    1000 / frame_count
+                                ));
                             frame_count = 0;
-                            last_frame_time = time::Instant::now();
+                            last_second = time::Instant::now();
                         }
                     }
                     Event::WindowEvent { event, .. } => match event {

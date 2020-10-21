@@ -582,10 +582,8 @@ impl Graphics {
             if is_suboptimal {
                 return Err(anyhow::anyhow!("Swapchain is suboptimal."));
             }
-            self.logical_device.reset_command_buffer(
-                current_frame.main_command_buffer,
-                CommandBufferResetFlags::empty(),
-            );
+            self.logical_device
+                .reset_command_pool(current_frame.command_pool, CommandPoolResetFlags::empty())?;
             self.begin_draw(self.frame_buffers[image_index as usize], current_frame)?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -791,14 +789,11 @@ impl Graphics {
         &self.frame_data[current_frame % inflight_buffer_count]
     }
 
-    unsafe fn dispose(&mut self) {
-        for buffer in self.frame_buffers.iter() {
-            self.logical_device.destroy_framebuffer(*buffer, None);
-        }
+    unsafe fn dispose(&mut self) -> anyhow::Result<()> {
         for frame in self.frame_data.iter() {
             let fences = [frame.fence];
             self.logical_device
-                .wait_for_fences(&fences[0..], true, u64::MAX);
+                .wait_for_fences(&fences[0..], true, u64::MAX)?;
             self.logical_device
                 .destroy_semaphore(frame.completed_semaphore, None);
             self.logical_device
@@ -809,6 +804,9 @@ impl Graphics {
                 .free_command_buffers(frame.command_pool, command_buffers.as_slice());
             self.logical_device
                 .destroy_command_pool(frame.command_pool, None);
+        }
+        for buffer in self.frame_buffers.iter() {
+            self.logical_device.destroy_framebuffer(*buffer, None);
         }
         let pipeline = &mut *self
             .pipeline
@@ -821,6 +819,7 @@ impl Graphics {
         ManuallyDrop::drop(&mut self.msaa_image);
         ManuallyDrop::drop(&mut self.depth_image);
         ManuallyDrop::drop(&mut self.swapchain);
+        Ok(())
     }
 
     fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
@@ -1249,9 +1248,12 @@ impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
     }
 
     unsafe fn wait_idle(&self) {
-        self.logical_device
-            .device_wait_idle()
-            .expect("Failed to wait until device is idling.");
+        for frame in self.frame_data.iter() {
+            let fence = [frame.fence];
+            self.logical_device
+                .wait_for_fences(&fence[0..], true, u64::MAX)
+                .expect("Failed to wait for fences to complete.");
+        }
     }
 }
 
@@ -1265,7 +1267,7 @@ impl Drop for Graphics {
             self.logical_device
                 .device_wait_idle()
                 .expect("Failed to wait for device to idle.");
-            self.dispose();
+            self.dispose().expect("Failed to dispose graphics.");
             for thread in self.thread_pool.threads.iter() {
                 self.logical_device
                     .destroy_command_pool(*thread.command_pool.lock(), None);

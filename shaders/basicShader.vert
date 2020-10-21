@@ -25,11 +25,11 @@ layout (location = 0) in vec3 inPosition;
 layout (location = 1) in vec3 inNormal;
 layout (location = 2) in vec2 inTexCoord;
 
-layout (location = 1) out vec4 outNormal;
+layout (location = 1) out vec3 outNormal;
 layout (location = 2) out vec2 outTexCoord;
-layout (location = 3) out vec4 fragPos;
+layout (location = 3) out vec3 fragPos;
 layout (location = 4) out float visibility;
-layout (location = 5) out vec4 toCameraDirection;
+layout (location = 5) out vec3 toCameraDirection;
 
 const float density = 0.0035;
 const float gradient = 5.0;
@@ -40,11 +40,11 @@ void main()
     vec4 positionRelativeToCamera = mvp.view * worldPosition;
     gl_Position = mvp.projection * positionRelativeToCamera;
 
-    outNormal = vec4(inNormal, 0.0);
-    outNormal = transpose(inverse(world_matrices[pco.model_index])) * outNormal;
+    outNormal = inNormal;
+    outNormal = mat3(transpose(inverse(world_matrices[pco.model_index]))) * outNormal;
     outTexCoord = inTexCoord;
-    fragPos = worldPosition;
-    toCameraDirection = (inverse(mvp.view) * vec4(0.0, 0.0, 0.0, 1.0)) - worldPosition;
+    fragPos = vec3(worldPosition);
+    toCameraDirection = (inverse(mvp.view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
 
     float distance = length(positionRelativeToCamera.xyz);
     visibility = exp(-pow((distance * density), gradient));

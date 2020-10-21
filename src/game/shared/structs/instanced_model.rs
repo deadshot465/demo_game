@@ -83,7 +83,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
             let instance_buffer =
                 Self::create_instance_buffer(graphics_arc.clone(), instance_data.as_slice())
                     .expect("Failed to create instance buffer.");
-            let mut loaded_instance = InstancedModel {
+            let loaded_instance = InstancedModel {
                 model: loaded_model,
                 instance_data,
                 instance_buffer: ManuallyDrop::new(instance_buffer),

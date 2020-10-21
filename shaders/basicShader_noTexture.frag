@@ -22,11 +22,11 @@ layout (push_constant) uniform PushConstant
     vec4 sky_color;
 } pco;
 
-layout (location = 1) in vec4 inNormal;
+layout (location = 1) in vec3 inNormal;
 layout (location = 2) in vec2 inTexCoord;
-layout (location = 3) in vec4 fragPos;
+layout (location = 3) in vec3 fragPos;
 layout (location = 4) in float visibility;
-layout (location = 5) in vec4 toCameraDirection;
+layout (location = 5) in vec3 toCameraDirection;
 
 layout (location = 0) out vec4 fragColor;
 
@@ -45,17 +45,17 @@ void main()
 
     // Diffuse Light
     // Pointing from the pixel to the light
-    vec4 lightDirection = vec4(directional_light.light_position, 1.0) - fragPos;
+    vec3 lightDirection = directional_light.light_position - fragPos;
     lightDirection = normalize(lightDirection);
-    vec4 normal = normalize(inNormal);
+    vec3 normal = normalize(inNormal);
     float diffuseIntensity = max(dot(normal, lightDirection), 0.0);
     vec4 diffuse = directional_light.diffuse * diffuseIntensity * tex_color;
 
     // Specular Lighting
-    vec4 normalizedToCameraDirection = normalize(toCameraDirection);
+    vec3 normalizedToCameraDirection = normalize(toCameraDirection);
     // Pointing from the light to the surface
-    vec4 incomingLightDirection = -lightDirection;
-    vec4 reflectedLightDirection = reflect(incomingLightDirection, normal);
+    vec3 incomingLightDirection = -lightDirection;
+    vec3 reflectedLightDirection = reflect(incomingLightDirection, normal);
     float specularFactor = dot(reflectedLightDirection, normalizedToCameraDirection);
     specularFactor = max(specularFactor, 0.0);
     float dampedSpecular = pow(specularFactor, shine_dampers[pco.model_index]);
