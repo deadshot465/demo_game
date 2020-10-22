@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 
 #[allow(dead_code)]
 pub struct Thread {
-    pub command_pool: Arc<Mutex<ash::vk::CommandPool>>,
+    pub command_pools: Vec<Arc<Mutex<ash::vk::CommandPool>>>,
     pub work_received: AtomicBool,
     destroying: Arc<AtomicBool>,
     notify: Receiver<()>,
@@ -19,7 +19,7 @@ pub struct Thread {
 }
 
 impl Thread {
-    pub fn new(device: &ash::Device, queue_index: u32) -> Self {
+    pub fn new(device: &ash::Device, queue_index: u32, inflight_frame_count: usize) -> Self {
         let task_queue = Arc::new(ArrayQueue::new(1000));
         let (sender, receiver) = bounded(1000);
         let destroying = Arc::new(AtomicBool::new(false));
@@ -32,9 +32,13 @@ impl Thread {
         let destroying_clone = destroying.clone();
         let queue = task_queue.clone();
         unsafe {
-            let command_pool = device
-                .create_command_pool(&pool_info, None)
-                .expect("Failed to create command pool for thread.");
+            let mut command_pools = vec![];
+            for _ in 0..inflight_frame_count {
+                let command_pool = device
+                    .create_command_pool(&pool_info, None)
+                    .expect("Failed to create command pool for thread.");
+                command_pools.push(Arc::new(Mutex::new(command_pool)));
+            }
             Thread {
                 destroying,
                 work_received: AtomicBool::new(false),
@@ -63,7 +67,7 @@ impl Thread {
                 })),
                 task_queue: task_queue.clone(),
                 work_sender: sender,
-                command_pool: Arc::new(Mutex::new(command_pool)),
+                command_pools,
             }
         }
     }
@@ -102,24 +106,38 @@ impl Drop for Thread {
 pub struct ThreadPool {
     pub threads: Vec<Thread>,
     pub thread_count: usize,
+    pub inflight_frame_count: usize,
 }
 
 impl ThreadPool {
-    pub fn new(thread_count: usize, device: &ash::Device, queue_index: u32) -> Self {
+    pub fn new(
+        thread_count: usize,
+        inflight_frame_count: usize,
+        device: &ash::Device,
+        queue_index: u32,
+    ) -> Self {
         let mut threads = vec![];
         for _ in 0..thread_count {
-            threads.push(Thread::new(device, queue_index));
+            threads.push(Thread::new(device, queue_index, inflight_frame_count));
         }
         ThreadPool {
             threads,
             thread_count,
+            inflight_frame_count,
         }
     }
 
-    pub fn set_thread_count(&mut self, thread_count: u32, device: &ash::Device, queue_index: u32) {
+    pub fn set_thread_count(
+        &mut self,
+        thread_count: u32,
+        inflight_frame_count: usize,
+        device: &ash::Device,
+        queue_index: u32,
+    ) {
         self.threads.clear();
         for _ in 0..thread_count {
-            self.threads.push(Thread::new(device, queue_index));
+            self.threads
+                .push(Thread::new(device, queue_index, inflight_frame_count));
         }
     }
 
@@ -136,12 +154,12 @@ impl ThreadPool {
 
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
         loop {
-            if let Some(pool) = self
+            if let Some(thread) = self
                 .threads
                 .iter()
-                .find(|thread| thread.task_queue.is_empty())
+                .find(|thread| (*thread).task_queue.is_empty())
             {
-                return pool.command_pool.clone();
+                return thread.command_pools[0].clone();
             }
         }
     }

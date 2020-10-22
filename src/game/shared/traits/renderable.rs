@@ -27,6 +27,7 @@ where
         pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
         descriptor_set: DescriptorSet,
         thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
     );
 
     fn get_ssbo_index(&self) -> usize;
@@ -51,7 +52,7 @@ where
         Ok(())
     }
 
-    fn get_command_buffers(&self) -> Vec<CommandType>;
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandType>;
     fn set_position(&mut self, position: Vec3A);
     fn set_scale(&mut self, scale: Vec3A);
     fn set_rotation(&mut self, rotation: Vec3A);

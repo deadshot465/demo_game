@@ -13,6 +13,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 use winapi::_core::sync::atomic::{AtomicPtr, AtomicUsize};
@@ -48,8 +49,7 @@ where
         model_index: usize,
         ssbo_index: usize,
         graphics: Weak<RwLock<GraphicsType>>,
-        command_pool: Arc<Mutex<CommandPool>>,
-        command_buffer: CommandType,
+        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
         size_ratio_z: f32,
@@ -67,8 +67,7 @@ where
             texture_data,
             graphics,
             Vec3A::new(x, 0.0, z),
-            command_pool,
-            command_buffer,
+            command_data,
             height_generator,
             size_ratio_x,
             size_ratio_z,
@@ -88,8 +87,7 @@ where
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         graphics: Weak<RwLock<GraphicsType>>,
         position: Vec3A,
-        command_pool: Arc<Mutex<CommandPool>>,
-        command_buffer: CommandType,
+        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
         size_ratio_z: f32,
@@ -156,8 +154,7 @@ where
             index_buffer: None,
             texture: vec![texture],
             is_disposed: false,
-            command_pool: Some(command_pool),
-            command_buffer: Some(command_buffer),
+            command_data,
             shader_type: ShaderType::Terrain,
             model_index,
         };
@@ -208,15 +205,30 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         let (terrain_send, terrain_recv) = bounded(5);
         rayon::spawn(move || {
             let graphics_arc = graphics_arc;
-            let (command_pool, command_buffer) =
-                Graphics::get_command_pool_and_secondary_command_buffer(
-                    &*graphics_arc.read(),
-                    model_index,
-                );
+            let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let mut command_data = HashMap::new();
+            for i in 0..inflight_frame_count {
+                let (command_pool, command_buffer) =
+                    Graphics::get_command_pool_and_secondary_command_buffer(
+                        &*graphics_arc.read(),
+                        model_index,
+                        i,
+                    );
+                let entry = command_data
+                    .entry(i)
+                    .or_insert((None, CommandBuffer::null()));
+                *entry = (Some(command_pool), command_buffer);
+            }
             let (image, texture_index) = Graphics::create_image_from_file(
                 "textures/TexturesCom_Grass0150_1_seamless_S.jpg",
                 graphics_arc.clone(),
-                command_pool.clone(),
+                command_data
+                    .get(&0)
+                    .map(|(pool, _)| pool.clone().unwrap())
+                    .unwrap(),
                 SamplerAddressMode::REPEAT,
             )
             .expect("Failed to create image from file.");
@@ -228,8 +240,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 model_index,
                 ssbo_index,
                 graphics,
-                command_pool,
-                command_buffer,
+                command_data,
                 height_generator,
                 size_ratio_x,
                 size_ratio_z,
@@ -252,8 +263,11 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         let mut mesh = self.model.meshes[0].lock();
         let vertices = mesh.primitives[0].vertices.to_vec();
         let indices = mesh.primitives[0].indices.to_vec();
-        let command_pool = mesh.command_pool.clone().unwrap();
-
+        let command_pool = mesh
+            .command_data
+            .get(&0)
+            .map(|(pool, _)| pool.clone().unwrap())
+            .unwrap();
         let (vertex_buffer, index_buffer) =
             Graphics::create_vertex_and_index_buffer(graphics, vertices, indices, command_pool)?;
         mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
@@ -315,6 +329,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
         descriptor_set: DescriptorSet,
         thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
     ) {
         self.model.render(
             inheritance_info,
@@ -325,6 +340,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
             pipeline,
             descriptor_set,
             thread_pool,
+            frame_index,
         );
     }
 
@@ -348,8 +364,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.rotation
     }
 
-    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
-        self.model.get_command_buffers()
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        self.model.get_command_buffers(frame_index)
     }
 
     fn set_position(&mut self, position: Vec3A) {

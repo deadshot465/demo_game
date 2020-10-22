@@ -36,8 +36,8 @@ where
     pub is_disposed: bool,
     pub ssbo_index: usize,
     pub model_index: usize,
-    pub command_pool: Arc<Mutex<CommandPool>>,
-    pub command_buffer: CommandBuffer,
+    pub command_data:
+        std::collections::HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
 }
 
 impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
@@ -73,12 +73,24 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
             .recv()
             .expect("Failed to receive instanced model data.");
             let model_index = model_index.fetch_add(1, Ordering::SeqCst);
+            let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
             let graphics_lock = graphics_arc.read();
-            let (command_pool, command_buffer) =
-                Graphics::get_command_pool_and_secondary_command_buffer(
-                    &*graphics_lock,
-                    model_index,
-                );
+            let mut command_data = std::collections::HashMap::new();
+            for i in 0..inflight_frame_count {
+                let (command_pool, command_buffer) =
+                    Graphics::get_command_pool_and_secondary_command_buffer(
+                        &*graphics_lock,
+                        model_index,
+                        i,
+                    );
+                let entry = command_data
+                    .entry(i)
+                    .or_insert((None, CommandBuffer::null()));
+                *entry = (Some(command_pool), command_buffer);
+            }
             drop(graphics_lock);
             let instance_buffer =
                 Self::create_instance_buffer(graphics_arc.clone(), instance_data.as_slice())
@@ -94,8 +106,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
                 is_disposed: false,
                 ssbo_index,
                 model_index,
-                command_pool,
-                command_buffer,
+                command_data: std::collections::HashMap::new(),
             };
             /*loaded_instance
             .create_vertex_and_index_buffer(graphics_arc)
@@ -122,11 +133,16 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
         }
         let vertices = vertices.iter().flatten().copied().collect::<Vec<_>>();
         let indices = indices.iter().flatten().copied().collect::<Vec<_>>();
+        let command_pool = self
+            .command_data
+            .get(&0)
+            .map(|(pool, _)| pool.clone().unwrap())
+            .unwrap();
         let (vertex_buffer, index_buffer) = Graphics::create_vertex_and_index_buffer(
             graphics,
             vertices.clone(),
             indices.clone(),
-            self.command_pool.clone(),
+            command_pool,
         )?;
         self.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
         self.index_buffer = Some(ManuallyDrop::new(index_buffer));
@@ -195,8 +211,7 @@ where
             is_disposed: true,
             ssbo_index: 0,
             model_index: 0,
-            command_pool: self.command_pool.clone(),
-            command_buffer: self.command_buffer.clone(),
+            command_data: self.command_data.clone(),
         }
     }
 }
@@ -218,6 +233,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
         descriptor_set: DescriptorSet,
         thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
     ) {
         let thread_count = thread_pool.thread_count;
         let mut push_constant = push_constant;
@@ -253,7 +269,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
                             .inheritance_info(inheritance)
                             .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                             .build();
-                        let command_buffer = mesh_lock.command_buffer.unwrap();
+                        let (_, command_buffer) = mesh_lock.command_data.get(&frame_index).unwrap();
+                        let command_buffer = *command_buffer;
                         let result = device_clone
                             .begin_command_buffer(command_buffer, &command_buffer_begin_info);
                         if let Err(e) = result {
@@ -345,8 +362,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.get_rotation()
     }
 
-    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
-        self.model.get_command_buffers()
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        self.model.get_command_buffers(frame_index)
     }
 
     fn set_position(&mut self, position: Vec3A) {

@@ -67,6 +67,7 @@ pub struct Graphics {
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager: ResourceManagerHandle,
     pub is_initialized: bool,
+    pub inflight_buffer_count: usize,
     entry: Entry,
     instance: Instance,
     surface_loader: Surface,
@@ -82,7 +83,6 @@ pub struct Graphics {
     sky_color: Vec4,
     frame_data: Vec<FrameData>,
     current_frame: AtomicUsize,
-    inflight_buffer_count: usize,
 }
 
 impl Graphics {
@@ -134,14 +134,12 @@ impl Graphics {
             .unwrap();
         let mut frame_data = vec![];
         for _ in 0..inflight_buffer_count {
-            let command_pool_create_info = CommandPoolCreateInfo::builder()
-                .queue_family_index(
-                    physical_device
-                        .queue_indices
-                        .graphics_family
-                        .unwrap_or_default(),
-                )
-                .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+            let command_pool_create_info = CommandPoolCreateInfo::builder().queue_family_index(
+                physical_device
+                    .queue_indices
+                    .graphics_family
+                    .unwrap_or_default(),
+            );
             unsafe {
                 let command_pool = device
                     .create_command_pool(&command_pool_create_info, None)
@@ -163,6 +161,7 @@ impl Graphics {
         let cpu_count = num_cpus::get();
         let thread_pool = Arc::new(ThreadPool::new(
             cpu_count,
+            inflight_buffer_count,
             device.as_ref(),
             physical_device
                 .queue_indices
@@ -481,21 +480,21 @@ impl Graphics {
         }
     }
 
-    pub fn get_command_pool(graphics: &Self, model_index: usize) -> Arc<Mutex<CommandPool>> {
+    pub fn get_command_pool(
+        graphics: &Self,
+        model_index: usize,
+        frame_index: usize,
+    ) -> Arc<Mutex<CommandPool>> {
         let thread_count = graphics.thread_pool.thread_count;
-        graphics.thread_pool.threads[model_index % thread_count]
-            .command_pool
-            .clone()
+        graphics.thread_pool.threads[model_index % thread_count].command_pools[frame_index].clone()
     }
 
     pub fn get_command_pool_and_secondary_command_buffer(
         graphics: &Self,
         model_index: usize,
+        frame_index: usize,
     ) -> (Arc<Mutex<CommandPool>>, CommandBuffer) {
-        let thread_count = graphics.thread_pool.thread_count;
-        let pool_handle = graphics.thread_pool.threads[model_index % thread_count]
-            .command_pool
-            .clone();
+        let pool_handle = Self::get_command_pool(graphics, model_index, frame_index);
         let command_pool = *pool_handle.lock();
         let device = graphics.logical_device.as_ref();
         let command_buffer = Self::create_secondary_command_buffer(device, command_pool);
@@ -547,7 +546,7 @@ impl Graphics {
             return Ok(());
         }
         unsafe {
-            let current_frame = self.get_current_frame();
+            let (current_frame, frame_index) = self.get_current_frame();
             let fences = vec![current_frame.fence];
             self.logical_device
                 .wait_for_fences(fences.as_slice(), true, 1_000_000_000)
@@ -584,7 +583,11 @@ impl Graphics {
             }
             self.logical_device
                 .reset_command_pool(current_frame.command_pool, CommandPoolResetFlags::empty())?;
-            self.begin_draw(self.frame_buffers[image_index as usize], current_frame)?;
+            self.begin_draw(
+                self.frame_buffers[image_index as usize],
+                current_frame,
+                frame_index,
+            )?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
@@ -651,11 +654,14 @@ impl Graphics {
         Ok(())
     }
 
-    pub fn update_secondary_command_buffers(
+    pub fn recreate_swapchain(&mut self) {}
+
+    fn update_secondary_command_buffers(
         &self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
         viewport: Viewport,
         scissor: Rect2D,
+        frame_index: usize,
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self
             .resource_manager
@@ -679,21 +685,25 @@ impl Graphics {
                     pipeline_clone,
                     descriptor_set,
                     self.thread_pool.clone(),
+                    frame_index,
                 );
             }
         }
         self.thread_pool.wait()?;
         let resource_lock = resource_manager.read();
-        let command_buffers = resource_lock.command_buffers.to_vec();
+        let command_buffers = resource_lock
+            .command_buffers
+            .get(&frame_index)
+            .unwrap()
+            .to_vec();
         Ok(command_buffers)
     }
-
-    pub fn recreate_swapchain(&mut self) {}
 
     fn begin_draw(
         &self,
         frame_buffer: Framebuffer,
         current_frame: &FrameData,
+        frame_index: usize,
     ) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
@@ -755,7 +765,7 @@ impl Graphics {
         unsafe {
             let result = self.logical_device.begin_command_buffer(
                 current_frame.main_command_buffer,
-                &CommandBufferBeginInfo::builder(),
+                &CommandBufferBeginInfo::builder().flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             );
             if let Err(e) = result {
                 log::error!("Error beginning command buffer: {}", e.to_string());
@@ -765,8 +775,12 @@ impl Graphics {
                 &*renderpass_ptr.load(Ordering::SeqCst),
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
-            let command_buffers =
-                self.update_secondary_command_buffers(inheritance_ptr, viewports[0], scissors[0])?;
+            let command_buffers = self.update_secondary_command_buffers(
+                inheritance_ptr,
+                viewports[0],
+                scissors[0],
+                frame_index,
+            )?;
             self.logical_device.cmd_execute_commands(
                 current_frame.main_command_buffer,
                 command_buffers.as_slice(),
@@ -783,10 +797,13 @@ impl Graphics {
         Ok(())
     }
 
-    fn get_current_frame(&self) -> &FrameData {
+    fn get_current_frame(&self) -> (&FrameData, usize) {
         let current_frame = self.current_frame.load(Ordering::SeqCst);
         let inflight_buffer_count = self.inflight_buffer_count;
-        &self.frame_data[current_frame % inflight_buffer_count]
+        (
+            &self.frame_data[current_frame % inflight_buffer_count],
+            current_frame % inflight_buffer_count,
+        )
     }
 
     unsafe fn dispose(&mut self) -> anyhow::Result<()> {
@@ -1269,8 +1286,9 @@ impl Drop for Graphics {
                 .expect("Failed to wait for device to idle.");
             self.dispose().expect("Failed to dispose graphics.");
             for thread in self.thread_pool.threads.iter() {
-                self.logical_device
-                    .destroy_command_pool(*thread.command_pool.lock(), None);
+                for pool in thread.command_pools.iter() {
+                    self.logical_device.destroy_command_pool(*pool.lock(), None);
+                }
             }
             self.logical_device
                 .destroy_descriptor_set_layout(self.ssbo_descriptor_set_layout, None);

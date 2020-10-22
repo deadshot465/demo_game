@@ -297,8 +297,7 @@ where
                 texture,
                 texture_index: texture_index.unwrap_or_default(),
                 is_disposed: false,
-                command_pool: None,
-                command_buffer: None,
+                command_data: std::collections::HashMap::new(),
                 sampler_resource: None,
                 shader_type,
             };
@@ -471,15 +470,27 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             loaded_model.model_metadata.world_matrix = loaded_model.get_world_matrix();
             {
                 let graphics_lock = graphics_arc.read();
-                let device = graphics_lock.logical_device.as_ref();
+                let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
                 for mesh in loaded_model.skinned_meshes.iter_mut() {
                     let mut mesh_lock = mesh.lock();
-                    let pool = Graphics::get_command_pool(&*graphics_lock, mesh_lock.model_index);
+                    let model_index = mesh_lock.model_index;
                     for primitive in mesh_lock.primitives.iter_mut() {
-                        primitive.command_pool = Some(pool.clone());
-                        let command_buffer =
-                            Graphics::create_secondary_command_buffer(device, *pool.lock());
-                        primitive.command_buffer = Some(command_buffer);
+                        for i in 0..inflight_frame_count {
+                            let (pool, command_buffer) =
+                                Graphics::get_command_pool_and_secondary_command_buffer(
+                                    &*graphics_lock,
+                                    model_index,
+                                    i,
+                                );
+                            let entry = primitive
+                                .command_data
+                                .entry(i)
+                                .or_insert((None, CommandBuffer::null()));
+                            (*entry) = (Some(pool), command_buffer);
+                        }
                     }
                 }
             }
@@ -501,7 +512,11 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 let graphics_clone = graphics.clone();
                 let vertices = primitive.vertices.clone();
                 let indices = primitive.indices.clone();
-                let cmd_pool = primitive.command_pool.as_ref().cloned().unwrap();
+                let cmd_pool = primitive
+                    .command_data
+                    .get(&0)
+                    .map(|(pool, _)| pool.clone().unwrap())
+                    .unwrap();
                 let (buffer_send, buffer_recv) = bounded(5);
                 rayon::spawn(move || {
                     let result = Graphics::create_vertex_and_index_buffer(
@@ -676,6 +691,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
         descriptor_set: DescriptorSet,
         thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
     ) {
         let thread_count = thread_pool.thread_count;
         let pipeline_layout = pipeline
@@ -708,7 +724,9 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
                                 .inheritance_info(inheritance)
                                 .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                                 .build();
-                            let command_buffer = primitive.command_buffer.unwrap();
+                            let (_, command_buffer) =
+                                primitive.command_data.get(&frame_index).unwrap();
+                            let command_buffer = *command_buffer;
                             let result = device
                                 .begin_command_buffer(command_buffer, &command_buffer_begin_info);
                             if let Err(e) = result {
@@ -835,7 +853,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         Ok(())
     }
 
-    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
         let buffers = self
             .skinned_meshes
             .iter()
@@ -843,7 +861,12 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
                 m.lock()
                     .primitives
                     .iter()
-                    .map(|p| p.command_buffer.unwrap())
+                    .map(|p| {
+                        p.command_data
+                            .get(&frame_index)
+                            .map(|(_, buffer)| *buffer)
+                            .unwrap()
+                    })
                     .collect::<Vec<_>>()
             })
             .flatten()

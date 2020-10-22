@@ -14,6 +14,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 use winapi::_core::sync::atomic::{AtomicPtr, AtomicUsize};
@@ -48,8 +49,7 @@ where
         ssbo_index: usize,
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
         graphics: Weak<RwLock<GraphicsType>>,
-        command_pool: Arc<Mutex<CommandPool>>,
-        command_buffer: CommandType,
+        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -57,13 +57,9 @@ where
         shader_type: Option<ShaderType>,
     ) -> Self {
         let mesh = match primitive_type {
-            PrimitiveType::Rect => Self::create_rect(
-                texture_data,
-                command_pool,
-                command_buffer,
-                shader_type,
-                model_index,
-            ),
+            PrimitiveType::Rect => {
+                Self::create_rect(texture_data, command_data, shader_type, model_index)
+            }
         };
         GeometricPrimitive {
             is_disposed: false,
@@ -88,8 +84,7 @@ where
 
     fn create_rect(
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
-        command_pool: Arc<Mutex<CommandPool>>,
-        command_buffer: CommandType,
+        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         shader_type: Option<ShaderType>,
         model_index: usize,
     ) -> Mesh<BufferType, CommandType, TextureType> {
@@ -143,8 +138,7 @@ where
             index_buffer: None,
             texture,
             is_disposed: false,
-            command_pool: Some(command_pool),
-            command_buffer: Some(command_buffer),
+            command_data,
             shader_type: final_shader_type,
             model_index,
         }
@@ -174,18 +168,33 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         let (primitive_send, primitive_recv) = bounded(5);
         rayon::spawn(move || {
             let graphics_arc = graphics_arc;
-            let (command_pool, command_buffer) =
-                Graphics::get_command_pool_and_secondary_command_buffer(
-                    &*graphics_arc.read(),
-                    model_index,
-                );
+            let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let mut command_data = HashMap::new();
+            for i in 0..inflight_frame_count {
+                let (command_pool, command_buffer) =
+                    Graphics::get_command_pool_and_secondary_command_buffer(
+                        &*graphics_arc.read(),
+                        model_index,
+                        i,
+                    );
+                let entry = command_data
+                    .entry(i)
+                    .or_insert((None, CommandBuffer::null()));
+                *entry = (Some(command_pool), command_buffer);
+            }
             let texture_data = match texture_name {
                 None => None,
                 Some(file_name) => Some(
                     Graphics::create_image_from_file(
                         file_name,
                         graphics_arc.clone(),
-                        command_pool.clone(),
+                        command_data
+                            .get(&0)
+                            .map(|(pool, _)| pool.clone().unwrap())
+                            .unwrap(),
                         SamplerAddressMode::REPEAT,
                     )
                     .expect("Failed to create texture for geometric primitive."),
@@ -197,8 +206,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
                 ssbo_index,
                 texture_data,
                 graphics,
-                command_pool,
-                command_buffer,
+                command_data,
                 position,
                 scale,
                 rotation,
@@ -229,7 +237,11 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         let mut mesh = mutable_model.meshes[0].lock();
         let vertices = mesh.primitives[0].vertices.to_vec();
         let indices = mesh.primitives[0].indices.to_vec();
-        let command_pool = mesh.command_pool.clone().unwrap();
+        let command_pool = mesh
+            .command_data
+            .get(&0)
+            .map(|(pool, _)| pool.clone().unwrap())
+            .unwrap();
         let (vertex_buffer, index_buffer) =
             Graphics::create_vertex_and_index_buffer(graphics, vertices, indices, command_pool)?;
         mesh.vertex_buffer = Some(ManuallyDrop::new(vertex_buffer));
@@ -289,6 +301,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
         descriptor_set: DescriptorSet,
         thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
     ) {
         let model = self.model.as_ref().unwrap();
         model.render(
@@ -300,6 +313,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
             pipeline,
             descriptor_set,
             thread_pool,
+            frame_index,
         );
     }
 
@@ -323,8 +337,11 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.as_ref().unwrap().rotation
     }
 
-    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
-        self.model.as_ref().unwrap().get_command_buffers()
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        self.model
+            .as_ref()
+            .unwrap()
+            .get_command_buffers(frame_index)
     }
 
     fn set_position(&mut self, position: Vec3A) {

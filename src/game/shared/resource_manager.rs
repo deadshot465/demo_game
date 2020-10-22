@@ -1,6 +1,7 @@
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
@@ -27,7 +28,7 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
-    pub command_buffers: Vec<CommandType>,
+    pub command_buffers: HashMap<usize, Vec<CommandType>>,
     pub model_queue: ModelQueue<GraphicsType, BufferType, CommandType, TextureType>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
@@ -76,7 +77,7 @@ where
         ResourceManager {
             resource: vec![],
             textures: vec![],
-            command_buffers: vec![],
+            command_buffers: HashMap::new(),
             model_queue: vec![],
         }
     }
@@ -158,13 +159,20 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn get_all_command_buffers(&mut self) {
-        let model_command_buffers = self
-            .model_queue
-            .iter()
-            .map(|m| m.lock().get_command_buffers())
-            .flatten()
-            .collect::<Vec<_>>();
-        self.command_buffers = model_command_buffers;
+        let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        for i in 0..inflight_frame_count {
+            let model_command_buffers = self
+                .model_queue
+                .iter()
+                .map(|m| m.lock().get_command_buffers(i))
+                .flatten()
+                .collect::<Vec<_>>();
+            let entry = self.command_buffers.entry(i).or_insert(vec![]);
+            *entry = model_command_buffers;
+        }
     }
 
     pub fn add_model(

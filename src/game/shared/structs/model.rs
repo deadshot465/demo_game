@@ -267,8 +267,7 @@ where
             index_buffer: None,
             texture: textures,
             is_disposed: false,
-            command_buffer: None,
-            command_pool: None,
+            command_data: std::collections::HashMap::new(),
             shader_type,
             model_index: model_index.fetch_add(1, Ordering::SeqCst),
         }
@@ -322,14 +321,25 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             loaded_model.model_metadata.world_matrix = loaded_model.get_world_matrix();
             {
                 let graphics_lock = graphics_arc.read();
-                let device = graphics_lock.logical_device.as_ref();
+                let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
                 for mesh in loaded_model.meshes.iter_mut() {
                     let mut mesh_lock = mesh.lock();
-                    let pool = Graphics::get_command_pool(&*graphics_lock, mesh_lock.model_index);
-                    let command_buffer =
-                        Graphics::create_secondary_command_buffer(device, *pool.lock());
-                    mesh_lock.command_pool = Some(pool.clone());
-                    mesh_lock.command_buffer = Some(command_buffer);
+                    for i in 0..inflight_frame_count {
+                        let (pool, command_buffer) =
+                            Graphics::get_command_pool_and_secondary_command_buffer(
+                                &*graphics_lock,
+                                mesh_lock.model_index,
+                                i,
+                            );
+                        let entry = mesh_lock
+                            .command_data
+                            .entry(i)
+                            .or_insert((None, CommandBuffer::null()));
+                        *entry = (Some(pool), command_buffer);
+                    }
                 }
                 drop(graphics_lock);
             }
@@ -364,8 +374,11 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 .flatten()
                 .copied()
                 .collect::<Vec<_>>();
-            let cmd_pool = mesh_lock.command_pool.clone().unwrap();
-            let pool = cmd_pool.clone();
+            let pool = mesh_lock
+                .command_data
+                .get(&0)
+                .map(|(pool, _)| pool.clone().unwrap())
+                .unwrap();
             let g = graphics.clone();
             let (buffer_send, buffer_recv) = bounded(5);
             rayon::spawn(move || {
@@ -488,6 +501,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
         descriptor_set: DescriptorSet,
         thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
     ) {
         let thread_count = thread_pool.thread_count;
         let mut push_constant = push_constant;
@@ -520,7 +534,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
                             .inheritance_info(inheritance)
                             .flags(CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
                             .build();
-                        let command_buffer = mesh_lock.command_buffer.unwrap();
+                        let (_, command_buffer) = mesh_lock.command_data.get(&frame_index).unwrap();
+                        let command_buffer = *command_buffer;
                         let result = device_clone
                             .begin_command_buffer(command_buffer, &command_buffer_begin_info);
                         if let Err(e) = result {
@@ -612,11 +627,17 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.rotation
     }
 
-    fn get_command_buffers(&self) -> Vec<CommandBuffer> {
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
         let buffers = self
             .meshes
             .iter()
-            .map(|m| m.lock().command_buffer.unwrap())
+            .map(|m| {
+                m.lock()
+                    .command_data
+                    .get(&frame_index)
+                    .map(|(_, buffer)| *buffer)
+                    .unwrap()
+            })
             .collect::<Vec<_>>();
         buffers
     }
