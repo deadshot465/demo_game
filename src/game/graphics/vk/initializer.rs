@@ -119,7 +119,8 @@ impl Initializer {
             )
             .sampler_anisotropy(physical_device.feature_support.sampler_anisotropy)
             .sample_rate_shading(physical_device.feature_support.sample_rate_shading)
-            .geometry_shader(physical_device.feature_support.geometry_shader);
+            .geometry_shader(physical_device.feature_support.geometry_shader)
+            .shader_clip_distance(physical_device.feature_support.shader_clip_distance);
         let mut indexing_features = PhysicalDeviceDescriptorIndexingFeatures::builder()
             .runtime_descriptor_array(physical_device.feature_support.runtime_descriptor_array)
             .descriptor_binding_partially_bound(

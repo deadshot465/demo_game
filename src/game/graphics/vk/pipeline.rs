@@ -10,11 +10,18 @@ use crate::game::graphics::vk::Shader;
 use crate::game::shared::structs::{InstanceData, InstancedVertex, SkinnedVertex};
 use crate::game::structs::{BlendMode, PushConstant, Vertex};
 
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub enum RenderPassType {
+    Primary,
+    Offscreen,
+}
+
+#[derive(Clone)]
 pub struct Pipeline {
-    pub render_pass: RenderPass,
-    logical_device: Arc<Device>,
+    pub render_pass: HashMap<RenderPassType, RenderPass>,
     pub pipeline_layouts: HashMap<ShaderType, PipelineLayout>,
     pub graphic_pipelines: HashMap<ShaderType, Vec<ash::vk::Pipeline>>,
+    logical_device: Arc<Device>,
     owned_renderpass: bool,
     pipeline_caches: HashMap<ShaderType, Arc<RwLock<Vec<Vec<u8>>>>>,
     shader_types: Vec<(ShaderType, String)>,
@@ -54,7 +61,7 @@ impl Pipeline {
             .collect::<HashMap<_, _>>();
         Pipeline {
             logical_device: device,
-            render_pass: RenderPass::null(),
+            render_pass: HashMap::new(),
             pipeline_layouts: HashMap::new(),
             graphic_pipelines: HashMap::new(),
             owned_renderpass: false,
@@ -63,7 +70,91 @@ impl Pipeline {
         }
     }
 
-    pub fn create_renderpass(
+    pub fn create_offscreen_renderpass(
+        &mut self,
+        graphics_format: Format,
+        depth_format: Format,
+    ) -> anyhow::Result<()> {
+        let mut attachment_descriptions = vec![];
+        attachment_descriptions.push(
+            AttachmentDescription::builder()
+                .format(graphics_format)
+                .final_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .initial_layout(ImageLayout::UNDEFINED)
+                .load_op(AttachmentLoadOp::CLEAR)
+                .samples(SampleCountFlags::TYPE_1)
+                .stencil_load_op(AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(AttachmentStoreOp::DONT_CARE)
+                .store_op(AttachmentStoreOp::STORE)
+                .build(),
+        );
+        attachment_descriptions.push(
+            AttachmentDescription::builder()
+                .format(depth_format)
+                .final_layout(ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .initial_layout(ImageLayout::UNDEFINED)
+                .load_op(AttachmentLoadOp::CLEAR)
+                .samples(SampleCountFlags::TYPE_1)
+                .stencil_load_op(AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(AttachmentStoreOp::DONT_CARE)
+                .store_op(AttachmentStoreOp::DONT_CARE)
+                .build(),
+        );
+
+        let color_reference = vec![AttachmentReference::builder()
+            .attachment(0)
+            .layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build()];
+        let depth_reference = AttachmentReference::builder()
+            .attachment(1)
+            .layout(ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+        let subpass_description = vec![SubpassDescription::builder()
+            .color_attachments(color_reference.as_slice())
+            .depth_stencil_attachment(&depth_reference)
+            .pipeline_bind_point(PipelineBindPoint::GRAPHICS)
+            .build()];
+
+        let mut subpass_dependencies = vec![];
+        subpass_dependencies.push(
+            SubpassDependency::builder()
+                .dependency_flags(DependencyFlags::BY_REGION)
+                .dst_access_mask(AccessFlags::COLOR_ATTACHMENT_WRITE)
+                .dst_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_subpass(0)
+                .src_access_mask(AccessFlags::SHADER_READ)
+                .src_stage_mask(PipelineStageFlags::FRAGMENT_SHADER)
+                .src_subpass(SUBPASS_EXTERNAL)
+                .build(),
+        );
+
+        subpass_dependencies.push(
+            SubpassDependency::builder()
+                .dependency_flags(DependencyFlags::BY_REGION)
+                .dst_access_mask(AccessFlags::SHADER_READ)
+                .dst_stage_mask(PipelineStageFlags::FRAGMENT_SHADER)
+                .dst_subpass(SUBPASS_EXTERNAL)
+                .src_access_mask(AccessFlags::COLOR_ATTACHMENT_WRITE)
+                .src_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_subpass(0)
+                .build(),
+        );
+
+        let renderpass_create_info = RenderPassCreateInfo::builder()
+            .attachments(attachment_descriptions.as_slice())
+            .dependencies(subpass_dependencies.as_slice())
+            .subpasses(subpass_description.as_slice());
+        unsafe {
+            let renderpass = self
+                .logical_device
+                .create_render_pass(&renderpass_create_info, None)?;
+            self.render_pass
+                .insert(RenderPassType::Offscreen, renderpass);
+        }
+        Ok(())
+    }
+
+    pub fn create_normal_renderpass(
         &mut self,
         graphics_format: Format,
         depth_format: Format,
@@ -109,18 +200,34 @@ impl Pipeline {
                 .build(),
         );
 
-        let subpass_dependency = vec![SubpassDependency::builder()
-            .dst_access_mask(
-                AccessFlags::COLOR_ATTACHMENT_READ | AccessFlags::COLOR_ATTACHMENT_WRITE,
-            )
-            .src_access_mask(
-                AccessFlags::COLOR_ATTACHMENT_READ | AccessFlags::COLOR_ATTACHMENT_WRITE,
-            )
-            .dst_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .src_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .dst_subpass(0)
-            .src_subpass(SUBPASS_EXTERNAL)
-            .build()];
+        let mut subpass_dependency = vec![];
+        subpass_dependency.push(
+            SubpassDependency::builder()
+                .dst_access_mask(
+                    AccessFlags::COLOR_ATTACHMENT_READ | AccessFlags::COLOR_ATTACHMENT_WRITE,
+                )
+                .src_access_mask(AccessFlags::MEMORY_READ)
+                .dst_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_stage_mask(PipelineStageFlags::BOTTOM_OF_PIPE)
+                .dst_subpass(0)
+                .src_subpass(SUBPASS_EXTERNAL)
+                .dependency_flags(DependencyFlags::BY_REGION)
+                .build(),
+        );
+
+        subpass_dependency.push(
+            SubpassDependency::builder()
+                .dst_access_mask(AccessFlags::MEMORY_READ)
+                .src_access_mask(
+                    AccessFlags::COLOR_ATTACHMENT_READ | AccessFlags::COLOR_ATTACHMENT_WRITE,
+                )
+                .dst_stage_mask(PipelineStageFlags::BOTTOM_OF_PIPE)
+                .src_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_subpass(SUBPASS_EXTERNAL)
+                .src_subpass(0)
+                .dependency_flags(DependencyFlags::BY_REGION)
+                .build(),
+        );
 
         let color_reference = vec![AttachmentReference::builder()
             .attachment(0)
@@ -148,10 +255,11 @@ impl Pipeline {
             .dependencies(subpass_dependency.as_slice())
             .subpasses(subpass_description.as_slice());
         unsafe {
-            self.render_pass = self
+            let renderpass = self
                 .logical_device
                 .create_render_pass(&renderpass_info, None)
                 .expect("Failed to create renderpass.");
+            self.render_pass.insert(RenderPassType::Primary, renderpass);
             self.owned_renderpass = true;
         }
     }
@@ -276,7 +384,11 @@ impl Pipeline {
                     .build()];
                 let ptr_shaders = _shaders.clone();
                 let pipeline_layout = *self.pipeline_layouts.get(&shader_type).unwrap();
-                let render_pass = self.render_pass;
+                let render_pass = self
+                    .render_pass
+                    .get(&RenderPassType::Primary)
+                    .cloned()
+                    .unwrap();
                 let device = self.logical_device.clone();
                 let caches = self.pipeline_caches.get(&shader_type).cloned().unwrap();
                 let (pipeline_send, pipeline_recv) = crossbeam::channel::bounded(5);
@@ -460,8 +572,9 @@ impl Drop for Pipeline {
             }
 
             if self.owned_renderpass {
-                self.logical_device
-                    .destroy_render_pass(self.render_pass, None);
+                for (_, renderpass) in self.render_pass.iter() {
+                    self.logical_device.destroy_render_pass(*renderpass, None);
+                }
             }
 
             log::info!("Graphic pipelines successfully destroyed.");

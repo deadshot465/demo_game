@@ -29,6 +29,7 @@ pub struct FeatureSupport {
     pub runtime_descriptor_array: bool,
     pub descriptor_binding_partially_bound: bool,
     pub multi_draw_indirect: bool,
+    pub shader_clip_distance: bool,
 }
 
 pub struct PhysicalDevice {
@@ -85,6 +86,7 @@ impl PhysicalDevice {
                     .descriptor_binding_partially_bound
                     == TRUE,
                 multi_draw_indirect: features.multi_draw_indirect == TRUE,
+                shader_clip_distance: features.shader_clip_distance == TRUE,
             };
 
             log::info!("Geometry shader: {}", feature_support.geometry_shader);
@@ -112,6 +114,10 @@ impl PhysicalDevice {
             log::info!(
                 "Multi draw indirect: {}",
                 feature_support.multi_draw_indirect
+            );
+            log::info!(
+                "Shader clip distance: {}",
+                feature_support.shader_clip_distance
             );
 
             PhysicalDevice {

@@ -18,7 +18,7 @@ use vk_mem::*;
 
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{
-    DynamicBufferObject, DynamicModel, Initializer, ThreadPool, UniformBuffers,
+    DynamicBufferObject, DynamicModel, Initializer, RenderPassType, ThreadPool, UniformBuffers,
 };
 use crate::game::shared::enums::ImageFormat;
 use crate::game::shared::structs::{Directional, PushConstant, ViewProjection};
@@ -30,6 +30,10 @@ use crate::game::{Camera, ResourceManager};
 use ash::prelude::VkResult;
 
 const SSBO_DATA_COUNT: usize = 50;
+const REFLECTION_WIDTH: u32 = 320;
+const REFLECTION_HEIGHT: u32 = 180;
+const REFRACTION_WIDTH: u32 = 1280;
+const REFRACTION_HEIGHT: u32 = 720;
 
 type ResourceManagerHandle =
     Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>;
@@ -47,6 +51,18 @@ struct FrameData {
     pub fence: Fence,
     pub command_pool: CommandPool,
     pub main_command_buffer: CommandBuffer,
+}
+
+struct OffscreenFramebuffer {
+    pub framebuffer: Framebuffer,
+    pub color_image: ManuallyDrop<super::Image>,
+    pub depth_image: ManuallyDrop<super::Image>,
+    pub width: u32,
+    pub height: u32,
+}
+
+struct OffscreenPass {
+    pub framebuffers: [ManuallyDrop<OffscreenFramebuffer>; 2],
 }
 
 pub struct Graphics {
@@ -83,6 +99,7 @@ pub struct Graphics {
     sky_color: Vec4,
     frame_data: Vec<FrameData>,
     current_frame: AtomicUsize,
+    offscreen_pass: OffscreenPass,
 }
 
 impl Graphics {
@@ -222,7 +239,22 @@ impl Graphics {
         } else {
             std::mem::size_of::<Mat4>()
         };
-        let pipeline = super::Pipeline::new(device.clone());
+        let mut pipeline = super::Pipeline::new(device.clone());
+        let color_format = swapchain.format.format;
+        pipeline.create_normal_renderpass(color_format, depth_format, sample_count);
+        pipeline.create_offscreen_renderpass(color_format, depth_format)?;
+        let offscreen_renderpass = pipeline
+            .render_pass
+            .get(&RenderPassType::Offscreen)
+            .cloned()
+            .expect("Failed to get offscreen renderpass.");
+        let offscreen_pass = Self::create_offscreen_pass(
+            Arc::downgrade(&device),
+            color_format,
+            depth_format,
+            Arc::downgrade(&allocator),
+            offscreen_renderpass,
+        )?;
 
         let sky_color: Vec4 = Vec4::new(0.5, 0.5, 0.5, 1.0);
         Ok(Graphics {
@@ -264,6 +296,7 @@ impl Graphics {
             frame_data,
             current_frame: AtomicUsize::new(0),
             inflight_buffer_count,
+            offscreen_pass,
         })
     }
 
@@ -510,13 +543,6 @@ impl Graphics {
         //self.create_dynamic_model_buffers()?;
         self.create_primary_ssbo()?;
         self.allocate_descriptor_set()?;
-        let color_format: Format = self.swapchain.format.format;
-        let depth_format = self.depth_format;
-        let sample_count = self.sample_count;
-        self.pipeline
-            .write()
-            .expect("Failed to lock pipeline for creating the renderpass.")
-            .create_renderpass(color_format, depth_format, sample_count);
         self.create_graphics_pipeline(ShaderType::BasicShader)?;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
         self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
@@ -531,7 +557,10 @@ impl Graphics {
             self.pipeline
                 .read()
                 .expect("Failed to lock pipeline for creating frame buffers.")
-                .render_pass,
+                .render_pass
+                .get(&RenderPassType::Primary)
+                .cloned()
+                .unwrap(),
             &self.swapchain,
             &self.depth_image,
             &self.msaa_image,
@@ -540,6 +569,8 @@ impl Graphics {
         self.is_initialized = true;
         Ok(())
     }
+
+    pub fn recreate_swapchain(&mut self) {}
 
     pub fn render(&self) -> anyhow::Result<()> {
         if !self.is_initialized {
@@ -650,348 +681,6 @@ impl Graphics {
                 mapped,
                 vp_size,
             );
-        }
-        Ok(())
-    }
-
-    pub fn recreate_swapchain(&mut self) {}
-
-    fn update_secondary_command_buffers(
-        &self,
-        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
-        viewport: Viewport,
-        scissor: Rect2D,
-        frame_index: usize,
-    ) -> anyhow::Result<Vec<CommandBuffer>> {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager.");
-        {
-            let push_constant = self.push_constant;
-            let ptr = inheritance_info;
-            let resource_lock = resource_manager.read();
-            for model in resource_lock.model_queue.iter() {
-                let ptr_clone = ptr.clone();
-                let device_clone = self.logical_device.clone();
-                let pipeline_clone = self.pipeline.clone();
-                let descriptor_set = self.descriptor_sets[0];
-                model.lock().render(
-                    ptr_clone,
-                    push_constant,
-                    viewport,
-                    scissor,
-                    device_clone,
-                    pipeline_clone,
-                    descriptor_set,
-                    self.thread_pool.clone(),
-                    frame_index,
-                );
-            }
-        }
-        self.thread_pool.wait()?;
-        let resource_lock = resource_manager.read();
-        let command_buffers = resource_lock
-            .command_buffers
-            .get(&frame_index)
-            .unwrap()
-            .to_vec();
-        Ok(command_buffers)
-    }
-
-    fn begin_draw(
-        &self,
-        frame_buffer: Framebuffer,
-        current_frame: &FrameData,
-        frame_index: usize,
-    ) -> anyhow::Result<()> {
-        let clear_color = ClearColorValue {
-            float32: self.sky_color.into(),
-        };
-        let clear_depth = ClearDepthStencilValue::builder().depth(1.0).stencil(0);
-        let clear_values = vec![
-            ClearValue { color: clear_color },
-            ClearValue {
-                depth_stencil: *clear_depth,
-            },
-        ];
-        let extent = self.swapchain.extent;
-        let render_area = Rect2D::builder().extent(extent).offset(Offset2D::default());
-        let mut renderpass_ptr = AtomicPtr::new(std::ptr::null_mut());
-        {
-            let renderpass_begin_info = Box::new(
-                RenderPassBeginInfo::builder()
-                    .render_pass(
-                        self.pipeline
-                            .read()
-                            .expect("Failed to lock pipeline for beginning the renderpass.")
-                            .render_pass,
-                    )
-                    .clear_values(clear_values.as_slice())
-                    .render_area(*render_area)
-                    .framebuffer(frame_buffer),
-            );
-            renderpass_ptr = AtomicPtr::new(Box::into_raw(renderpass_begin_info));
-        }
-        let renderpass_ptr = Arc::new(renderpass_ptr);
-        let viewports = vec![Viewport::builder()
-            .width(extent.width as f32)
-            .height(extent.height as f32)
-            .x(0.0)
-            .y(0.0)
-            .min_depth(0.0)
-            .max_depth(1.0)
-            .build()];
-        let scissors = vec![Rect2D::builder()
-            .extent(extent)
-            .offset(Offset2D::default())
-            .build()];
-        let mut inheritance_ptr = AtomicPtr::new(std::ptr::null_mut());
-        {
-            let inheritance_info = Box::new(
-                CommandBufferInheritanceInfo::builder()
-                    .framebuffer(frame_buffer)
-                    .render_pass(
-                        self.pipeline
-                            .read()
-                            .expect("Failed to lock pipeline for creating the inheritance info.")
-                            .render_pass,
-                    )
-                    .build(),
-            );
-            inheritance_ptr = AtomicPtr::new(Box::into_raw(inheritance_info));
-        }
-        let inheritance_ptr = Arc::new(inheritance_ptr);
-        unsafe {
-            let result = self.logical_device.begin_command_buffer(
-                current_frame.main_command_buffer,
-                &CommandBufferBeginInfo::builder().flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-            );
-            if let Err(e) = result {
-                log::error!("Error beginning command buffer: {}", e.to_string());
-            }
-            self.logical_device.cmd_begin_render_pass(
-                current_frame.main_command_buffer,
-                &*renderpass_ptr.load(Ordering::SeqCst),
-                SubpassContents::SECONDARY_COMMAND_BUFFERS,
-            );
-            let command_buffers = self.update_secondary_command_buffers(
-                inheritance_ptr,
-                viewports[0],
-                scissors[0],
-                frame_index,
-            )?;
-            self.logical_device.cmd_execute_commands(
-                current_frame.main_command_buffer,
-                command_buffers.as_slice(),
-            );
-            self.logical_device
-                .cmd_end_render_pass(current_frame.main_command_buffer);
-            let result = self
-                .logical_device
-                .end_command_buffer(current_frame.main_command_buffer);
-            if let Err(e) = result {
-                log::error!("Error ending command buffer: {}", e.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn get_current_frame(&self) -> (&FrameData, usize) {
-        let current_frame = self.current_frame.load(Ordering::SeqCst);
-        let inflight_buffer_count = self.inflight_buffer_count;
-        (
-            &self.frame_data[current_frame % inflight_buffer_count],
-            current_frame % inflight_buffer_count,
-        )
-    }
-
-    unsafe fn dispose(&mut self) -> anyhow::Result<()> {
-        for frame in self.frame_data.iter() {
-            let fences = [frame.fence];
-            self.logical_device
-                .wait_for_fences(&fences[0..], true, u64::MAX)?;
-            self.logical_device
-                .destroy_semaphore(frame.completed_semaphore, None);
-            self.logical_device
-                .destroy_semaphore(frame.acquired_semaphore, None);
-            self.logical_device.destroy_fence(frame.fence, None);
-            let command_buffers = vec![frame.main_command_buffer];
-            self.logical_device
-                .free_command_buffers(frame.command_pool, command_buffers.as_slice());
-            self.logical_device
-                .destroy_command_pool(frame.command_pool, None);
-        }
-        for buffer in self.frame_buffers.iter() {
-            self.logical_device.destroy_framebuffer(*buffer, None);
-        }
-        let pipeline = &mut *self
-            .pipeline
-            .write()
-            .expect("Failed to lock pipeline for disposal.");
-        ManuallyDrop::drop(pipeline);
-        self.logical_device
-            .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
-        ManuallyDrop::drop(&mut self.uniform_buffers);
-        ManuallyDrop::drop(&mut self.msaa_image);
-        ManuallyDrop::drop(&mut self.depth_image);
-        ManuallyDrop::drop(&mut self.swapchain);
-        Ok(())
-    }
-
-    fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
-        let resource_manager = self.resource_manager.upgrade().expect(
-            "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
-        );
-        let resource_lock = resource_manager.read();
-        let total_texture_count = resource_lock.get_texture_count();
-        drop(resource_lock);
-        drop(resource_manager);
-        let mut descriptor_set_layout_binding = vec![];
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(0)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                .stage_flags(ShaderStageFlags::VERTEX)
-                .build(),
-        );
-
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(1)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                .stage_flags(ShaderStageFlags::FRAGMENT)
-                .build(),
-        );
-
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(2)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT)
-                .build(),
-        );
-
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(3)
-                .descriptor_count(total_texture_count as u32)
-                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .stage_flags(ShaderStageFlags::FRAGMENT)
-                .build(),
-        );
-
-        let create_info = DescriptorSetLayoutCreateInfo::builder()
-            .bindings(descriptor_set_layout_binding.as_slice());
-        unsafe {
-            let descriptor_set_layout = self
-                .logical_device
-                .create_descriptor_set_layout(&create_info, None)?;
-            log::info!("Descriptor set layout successfully created.");
-            self.descriptor_set_layout = descriptor_set_layout;
-            Ok(())
-        }
-    }
-
-    /*fn create_dynamic_model_buffers(&mut self) -> anyhow::Result<()> {
-        let arc = self.resource_manager.upgrade();
-        if arc.is_none() {
-            panic!("Resource manager has been destroyed.");
-        }
-        let resource_manager = arc.unwrap();
-        let resource_lock = resource_manager.read().unwrap();
-        if resource_lock.models.is_empty() && resource_lock.skinned_models.is_empty() {
-            return Err(anyhow::anyhow!("There are no models in resource manager."));
-        }
-        let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
-        let mut matrices = vec![Mat4::identity(); model_count];
-        for model in resource_lock.models.iter() {
-            let model_lock = model.lock();
-            matrices[model_lock.model_index] = model_lock.get_world_matrix();
-        }
-        for model in resource_lock.skinned_models.iter() {
-            let model_lock = model.lock();
-            matrices[model_lock.model_index] = model_lock.get_world_matrix();
-        }
-        drop(resource_lock);
-        drop(resource_manager);
-        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
-        let buffer_size = dynamic_alignment * DeviceSize::try_from(matrices.len())?;
-        let mut dynamic_model = DynamicModel {
-            model_matrices: matrices,
-            buffer: std::ptr::null_mut()
-        };
-        dynamic_model.buffer = aligned_alloc::aligned_alloc(buffer_size as usize, dynamic_alignment as usize) as *mut Mat4;
-        assert_ne!(dynamic_model.buffer, std::ptr::null_mut());
-
-        let mut buffer = super::Buffer::new(
-            Arc::downgrade(&self.logical_device),
-            buffer_size,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT, Arc::downgrade(&self.allocator));
-        unsafe {
-            for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
-                let ptr = std::mem::transmute::<usize, *mut Mat4>(
-                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
-                        (i * (dynamic_alignment as usize))
-                );
-                *ptr = model.clone();
-            }
-            let mapped = buffer.map_memory(WHOLE_SIZE, 0);
-            std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
-        }
-        self.dynamic_objects.models = dynamic_model;
-        self.uniform_buffers.model_buffer = Some(ManuallyDrop::new(buffer));
-        Ok(())
-    }*/
-
-    fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
-        let resource_lock = resource_manager.read();
-        let is_models_empty = resource_lock.model_queue.is_empty();
-        if is_models_empty {
-            return Err(anyhow::anyhow!("There are no models in resource manager."));
-        }
-        let mut model_metadata = PrimarySSBOData {
-            world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
-            object_colors: [Vec4::zero(); SSBO_DATA_COUNT],
-            reflectivities: [0.0; SSBO_DATA_COUNT],
-            shine_dampers: [0.0; SSBO_DATA_COUNT],
-        };
-        for model in resource_lock.model_queue.iter() {
-            let model_lock = model.lock();
-            let metadata = model_lock.get_model_metadata();
-            let ssbo_index = model_lock.get_ssbo_index();
-            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
-            model_metadata.object_colors[ssbo_index] = metadata.object_color;
-            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
-        }
-        let buffer_size = std::mem::size_of::<PrimarySSBOData>();
-        drop(resource_lock);
-        drop(resource_manager);
-        let mut buffer = super::Buffer::new(
-            Arc::downgrade(&self.logical_device),
-            buffer_size as u64,
-            BufferUsageFlags::STORAGE_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
-            Arc::downgrade(&self.allocator),
-        );
-        unsafe {
-            let mapped = buffer.map_memory(buffer_size as u64, 0);
-            std::ptr::copy_nonoverlapping(
-                &model_metadata as *const _ as *const std::ffi::c_void,
-                mapped,
-                buffer_size,
-            );
-            self.uniform_buffers.primary_ssbo = Some(ManuallyDrop::new(buffer));
-            log::info!("Primary SSBO successfully created.");
         }
         Ok(())
     }
@@ -1136,6 +825,201 @@ impl Graphics {
         }
     }
 
+    fn begin_draw(
+        &self,
+        frame_buffer: Framebuffer,
+        current_frame: &FrameData,
+        frame_index: usize,
+    ) -> anyhow::Result<()> {
+        let clear_color = ClearColorValue {
+            float32: self.sky_color.into(),
+        };
+        let clear_depth = ClearDepthStencilValue::builder().depth(1.0).stencil(0);
+        let clear_values = vec![
+            ClearValue { color: clear_color },
+            ClearValue {
+                depth_stencil: *clear_depth,
+            },
+        ];
+        let extent = self.swapchain.extent;
+        let render_area = Rect2D::builder().extent(extent).offset(Offset2D::default());
+        let mut renderpass_ptr = AtomicPtr::new(std::ptr::null_mut());
+        {
+            let renderpass_begin_info = Box::new(
+                RenderPassBeginInfo::builder()
+                    .render_pass(
+                        self.pipeline
+                            .read()
+                            .expect("Failed to lock pipeline for beginning the renderpass.")
+                            .render_pass
+                            .get(&RenderPassType::Primary)
+                            .cloned()
+                            .unwrap(),
+                    )
+                    .clear_values(clear_values.as_slice())
+                    .render_area(*render_area)
+                    .framebuffer(frame_buffer),
+            );
+            renderpass_ptr = AtomicPtr::new(Box::into_raw(renderpass_begin_info));
+        }
+        let renderpass_ptr = Arc::new(renderpass_ptr);
+        let viewports = vec![Viewport::builder()
+            .width(extent.width as f32)
+            .height(extent.height as f32)
+            .x(0.0)
+            .y(0.0)
+            .min_depth(0.0)
+            .max_depth(1.0)
+            .build()];
+        let scissors = vec![Rect2D::builder()
+            .extent(extent)
+            .offset(Offset2D::default())
+            .build()];
+        let mut inheritance_ptr = AtomicPtr::new(std::ptr::null_mut());
+        {
+            let inheritance_info = Box::new(
+                CommandBufferInheritanceInfo::builder()
+                    .framebuffer(frame_buffer)
+                    .render_pass(
+                        self.pipeline
+                            .read()
+                            .expect("Failed to lock pipeline for creating the inheritance info.")
+                            .render_pass
+                            .get(&RenderPassType::Primary)
+                            .cloned()
+                            .unwrap(),
+                    )
+                    .build(),
+            );
+            inheritance_ptr = AtomicPtr::new(Box::into_raw(inheritance_info));
+        }
+        let inheritance_ptr = Arc::new(inheritance_ptr);
+        unsafe {
+            let result = self.logical_device.begin_command_buffer(
+                current_frame.main_command_buffer,
+                &CommandBufferBeginInfo::builder().flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            );
+            if let Err(e) = result {
+                log::error!("Error beginning command buffer: {}", e.to_string());
+            }
+            self.logical_device.cmd_begin_render_pass(
+                current_frame.main_command_buffer,
+                &*renderpass_ptr.load(Ordering::SeqCst),
+                SubpassContents::SECONDARY_COMMAND_BUFFERS,
+            );
+            let command_buffers = self.update_secondary_command_buffers(
+                inheritance_ptr,
+                viewports[0],
+                scissors[0],
+                frame_index,
+            )?;
+            self.logical_device.cmd_execute_commands(
+                current_frame.main_command_buffer,
+                command_buffers.as_slice(),
+            );
+            self.logical_device
+                .cmd_end_render_pass(current_frame.main_command_buffer);
+            let result = self
+                .logical_device
+                .end_command_buffer(current_frame.main_command_buffer);
+            if let Err(e) = result {
+                log::error!("Error ending command buffer: {}", e.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
+        let resource_manager = self.resource_manager.upgrade().expect(
+            "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
+        );
+        let resource_lock = resource_manager.read();
+        let total_texture_count = resource_lock.get_texture_count();
+        drop(resource_lock);
+        drop(resource_manager);
+        let mut descriptor_set_layout_binding = vec![];
+        descriptor_set_layout_binding.push(
+            DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_count(1)
+                .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                .stage_flags(ShaderStageFlags::VERTEX)
+                .build(),
+        );
+
+        descriptor_set_layout_binding.push(
+            DescriptorSetLayoutBinding::builder()
+                .binding(1)
+                .descriptor_count(1)
+                .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                .stage_flags(ShaderStageFlags::FRAGMENT)
+                .build(),
+        );
+
+        descriptor_set_layout_binding.push(
+            DescriptorSetLayoutBinding::builder()
+                .binding(2)
+                .descriptor_count(1)
+                .descriptor_type(DescriptorType::STORAGE_BUFFER)
+                .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT)
+                .build(),
+        );
+
+        descriptor_set_layout_binding.push(
+            DescriptorSetLayoutBinding::builder()
+                .binding(3)
+                .descriptor_count(total_texture_count as u32)
+                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(ShaderStageFlags::FRAGMENT)
+                .build(),
+        );
+
+        let create_info = DescriptorSetLayoutCreateInfo::builder()
+            .bindings(descriptor_set_layout_binding.as_slice());
+        unsafe {
+            let descriptor_set_layout = self
+                .logical_device
+                .create_descriptor_set_layout(&create_info, None)?;
+            log::info!("Descriptor set layout successfully created.");
+            self.descriptor_set_layout = descriptor_set_layout;
+            Ok(())
+        }
+    }
+
+    fn create_frame_buffers(
+        frame_width: u32,
+        frame_height: u32,
+        renderpass: RenderPass,
+        swapchain: &super::Swapchain,
+        depth_image: &super::Image,
+        msaa_image: &super::Image,
+        device: &Device,
+    ) -> Vec<Framebuffer> {
+        let mut frame_buffers = vec![];
+        let image_count = swapchain.swapchain_images.len();
+        for i in 0..image_count {
+            let image_views = vec![
+                msaa_image.image_view,
+                depth_image.image_view,
+                swapchain.swapchain_images[i].image_view,
+            ];
+            let frame_buffer_info = FramebufferCreateInfo::builder()
+                .height(frame_height)
+                .width(frame_width)
+                .layers(1)
+                .attachments(image_views.as_slice())
+                .render_pass(renderpass);
+            unsafe {
+                frame_buffers.push(
+                    device
+                        .create_framebuffer(&frame_buffer_info, None)
+                        .expect("Failed to create framebuffer."),
+                );
+            }
+        }
+        frame_buffers
+    }
+
     fn create_graphics_pipeline(&mut self, shader_type: ShaderType) -> anyhow::Result<()> {
         let shaders = vec![
             super::Shader::new(
@@ -1181,38 +1065,314 @@ impl Graphics {
         Ok(())
     }
 
-    fn create_frame_buffers(
-        frame_width: u32,
-        frame_height: u32,
-        renderpass: RenderPass,
-        swapchain: &super::Swapchain,
-        depth_image: &super::Image,
-        msaa_image: &super::Image,
-        device: &Device,
-    ) -> Vec<Framebuffer> {
-        let mut frame_buffers = vec![];
-        let image_count = swapchain.swapchain_images.len();
-        for i in 0..image_count {
+    fn create_offscreen_pass(
+        device: Weak<Device>,
+        color_format: Format,
+        depth_format: Format,
+        allocator: Weak<ShardedLock<Allocator>>,
+        offscreen_renderpass: RenderPass,
+    ) -> anyhow::Result<OffscreenPass> {
+        let reflection_image = super::Image::new(
+            device.clone(),
+            ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            color_format,
+            SampleCountFlags::TYPE_1,
+            Extent2D::builder()
+                .height(REFLECTION_HEIGHT)
+                .width(REFLECTION_WIDTH)
+                .build(),
+            ImageType::TYPE_2D,
+            1,
+            ImageAspectFlags::COLOR,
+            allocator.clone(),
+        );
+
+        let reflection_depth_image = super::Image::new(
+            device.clone(),
+            ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            depth_format,
+            SampleCountFlags::TYPE_1,
+            Extent2D::builder()
+                .height(REFLECTION_HEIGHT)
+                .width(REFLECTION_WIDTH)
+                .build(),
+            ImageType::TYPE_2D,
+            1,
+            ImageAspectFlags::DEPTH,
+            allocator.clone(),
+        );
+
+        let image_views = vec![
+            reflection_image.image_view,
+            reflection_depth_image.image_view,
+        ];
+
+        let framebuffer_info = FramebufferCreateInfo::builder()
+            .width(REFLECTION_WIDTH)
+            .height(REFLECTION_HEIGHT)
+            .render_pass(offscreen_renderpass)
+            .attachments(image_views.as_slice())
+            .layers(1);
+        let device_arc = device
+            .upgrade()
+            .expect("Failed to upgrade logical device to create offscreen framebuffer.");
+
+        unsafe {
+            let framebuffer = device_arc.create_framebuffer(&framebuffer_info, None)?;
+            let first_framebuffer = OffscreenFramebuffer {
+                framebuffer,
+                color_image: ManuallyDrop::new(reflection_image),
+                depth_image: ManuallyDrop::new(reflection_depth_image),
+                width: REFLECTION_WIDTH,
+                height: REFLECTION_HEIGHT,
+            };
+
+            let refraction_image = super::Image::new(
+                device.clone(),
+                ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
+                MemoryPropertyFlags::DEVICE_LOCAL,
+                color_format,
+                SampleCountFlags::TYPE_1,
+                Extent2D::builder()
+                    .height(REFRACTION_HEIGHT)
+                    .width(REFRACTION_WIDTH)
+                    .build(),
+                ImageType::TYPE_2D,
+                1,
+                ImageAspectFlags::COLOR,
+                allocator.clone(),
+            );
+
+            let refraction_depth_image = super::Image::new(
+                device.clone(),
+                ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                MemoryPropertyFlags::DEVICE_LOCAL,
+                depth_format,
+                SampleCountFlags::TYPE_1,
+                Extent2D::builder()
+                    .height(REFRACTION_HEIGHT)
+                    .width(REFRACTION_WIDTH)
+                    .build(),
+                ImageType::TYPE_2D,
+                1,
+                ImageAspectFlags::DEPTH,
+                allocator.clone(),
+            );
+
             let image_views = vec![
-                msaa_image.image_view,
-                depth_image.image_view,
-                swapchain.swapchain_images[i].image_view,
+                refraction_image.image_view,
+                refraction_depth_image.image_view,
             ];
-            let frame_buffer_info = FramebufferCreateInfo::builder()
-                .height(frame_height)
-                .width(frame_width)
-                .layers(1)
+
+            let framebuffer_info = FramebufferCreateInfo::builder()
+                .width(REFRACTION_WIDTH)
+                .height(REFRACTION_HEIGHT)
+                .render_pass(offscreen_renderpass)
                 .attachments(image_views.as_slice())
-                .render_pass(renderpass);
-            unsafe {
-                frame_buffers.push(
-                    device
-                        .create_framebuffer(&frame_buffer_info, None)
-                        .expect("Failed to create framebuffer."),
+                .layers(1);
+            let framebuffer = device_arc.create_framebuffer(&framebuffer_info, None)?;
+
+            let second_framebuffer = OffscreenFramebuffer {
+                framebuffer,
+                color_image: ManuallyDrop::new(refraction_image),
+                depth_image: ManuallyDrop::new(refraction_depth_image),
+                width: REFRACTION_WIDTH,
+                height: REFRACTION_HEIGHT,
+            };
+
+            let framebuffers = [
+                ManuallyDrop::new(first_framebuffer),
+                ManuallyDrop::new(second_framebuffer),
+            ];
+            Ok(OffscreenPass { framebuffers })
+        }
+    }
+
+    fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade Weak of resource manager for creating primary SSBO.");
+        let resource_lock = resource_manager.read();
+        let is_models_empty = resource_lock.model_queue.is_empty();
+        if is_models_empty {
+            return Err(anyhow::anyhow!("There are no models in resource manager."));
+        }
+        let mut model_metadata = PrimarySSBOData {
+            world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
+            object_colors: [Vec4::zero(); SSBO_DATA_COUNT],
+            reflectivities: [0.0; SSBO_DATA_COUNT],
+            shine_dampers: [0.0; SSBO_DATA_COUNT],
+        };
+        for model in resource_lock.model_queue.iter() {
+            let model_lock = model.lock();
+            let metadata = model_lock.get_model_metadata();
+            let ssbo_index = model_lock.get_ssbo_index();
+            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
+            model_metadata.object_colors[ssbo_index] = metadata.object_color;
+            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
+        }
+        let buffer_size = std::mem::size_of::<PrimarySSBOData>();
+        drop(resource_lock);
+        drop(resource_manager);
+        let mut buffer = super::Buffer::new(
+            Arc::downgrade(&self.logical_device),
+            buffer_size as u64,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
+            Arc::downgrade(&self.allocator),
+        );
+        unsafe {
+            let mapped = buffer.map_memory(buffer_size as u64, 0);
+            std::ptr::copy_nonoverlapping(
+                &model_metadata as *const _ as *const std::ffi::c_void,
+                mapped,
+                buffer_size,
+            );
+            self.uniform_buffers.primary_ssbo = Some(ManuallyDrop::new(buffer));
+            log::info!("Primary SSBO successfully created.");
+        }
+        Ok(())
+    }
+
+    unsafe fn dispose(&mut self) -> anyhow::Result<()> {
+        for frame in self.frame_data.iter() {
+            let fences = [frame.fence];
+            self.logical_device
+                .wait_for_fences(&fences[0..], true, u64::MAX)?;
+            self.logical_device
+                .destroy_semaphore(frame.completed_semaphore, None);
+            self.logical_device
+                .destroy_semaphore(frame.acquired_semaphore, None);
+            self.logical_device.destroy_fence(frame.fence, None);
+            let command_buffers = vec![frame.main_command_buffer];
+            self.logical_device
+                .free_command_buffers(frame.command_pool, command_buffers.as_slice());
+            self.logical_device
+                .destroy_command_pool(frame.command_pool, None);
+        }
+        for buffer in self.frame_buffers.iter() {
+            self.logical_device.destroy_framebuffer(*buffer, None);
+        }
+        let pipeline = &mut *self
+            .pipeline
+            .write()
+            .expect("Failed to lock pipeline for disposal.");
+        ManuallyDrop::drop(pipeline);
+        self.logical_device
+            .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
+        ManuallyDrop::drop(&mut self.uniform_buffers);
+        ManuallyDrop::drop(&mut self.msaa_image);
+        ManuallyDrop::drop(&mut self.depth_image);
+        ManuallyDrop::drop(&mut self.swapchain);
+        Ok(())
+    }
+
+    fn get_current_frame(&self) -> (&FrameData, usize) {
+        let current_frame = self.current_frame.load(Ordering::SeqCst);
+        let inflight_buffer_count = self.inflight_buffer_count;
+        (
+            &self.frame_data[current_frame % inflight_buffer_count],
+            current_frame % inflight_buffer_count,
+        )
+    }
+
+    /*fn create_dynamic_model_buffers(&mut self) -> anyhow::Result<()> {
+        let arc = self.resource_manager.upgrade();
+        if arc.is_none() {
+            panic!("Resource manager has been destroyed.");
+        }
+        let resource_manager = arc.unwrap();
+        let resource_lock = resource_manager.read().unwrap();
+        if resource_lock.models.is_empty() && resource_lock.skinned_models.is_empty() {
+            return Err(anyhow::anyhow!("There are no models in resource manager."));
+        }
+        let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
+        let mut matrices = vec![Mat4::identity(); model_count];
+        for model in resource_lock.models.iter() {
+            let model_lock = model.lock();
+            matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        for model in resource_lock.skinned_models.iter() {
+            let model_lock = model.lock();
+            matrices[model_lock.model_index] = model_lock.get_world_matrix();
+        }
+        drop(resource_lock);
+        drop(resource_manager);
+        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
+        let buffer_size = dynamic_alignment * DeviceSize::try_from(matrices.len())?;
+        let mut dynamic_model = DynamicModel {
+            model_matrices: matrices,
+            buffer: std::ptr::null_mut()
+        };
+        dynamic_model.buffer = aligned_alloc::aligned_alloc(buffer_size as usize, dynamic_alignment as usize) as *mut Mat4;
+        assert_ne!(dynamic_model.buffer, std::ptr::null_mut());
+
+        let mut buffer = super::Buffer::new(
+            Arc::downgrade(&self.logical_device),
+            buffer_size,
+            BufferUsageFlags::UNIFORM_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT, Arc::downgrade(&self.allocator));
+        unsafe {
+            for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
+                let ptr = std::mem::transmute::<usize, *mut Mat4>(
+                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
+                        (i * (dynamic_alignment as usize))
+                );
+                *ptr = model.clone();
+            }
+            let mapped = buffer.map_memory(WHOLE_SIZE, 0);
+            std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
+        }
+        self.dynamic_objects.models = dynamic_model;
+        self.uniform_buffers.model_buffer = Some(ManuallyDrop::new(buffer));
+        Ok(())
+    }*/
+
+    fn update_secondary_command_buffers(
+        &self,
+        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
+        viewport: Viewport,
+        scissor: Rect2D,
+        frame_index: usize,
+    ) -> anyhow::Result<Vec<CommandBuffer>> {
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager.");
+        {
+            let push_constant = self.push_constant;
+            let ptr = inheritance_info;
+            let resource_lock = resource_manager.read();
+            for model in resource_lock.model_queue.iter() {
+                let ptr_clone = ptr.clone();
+                let device_clone = self.logical_device.clone();
+                let pipeline_clone = self.pipeline.clone();
+                let descriptor_set = self.descriptor_sets[0];
+                model.lock().render(
+                    ptr_clone,
+                    push_constant,
+                    viewport,
+                    scissor,
+                    device_clone,
+                    pipeline_clone,
+                    descriptor_set,
+                    self.thread_pool.clone(),
+                    frame_index,
                 );
             }
         }
-        frame_buffers
+        self.thread_pool.wait()?;
+        let resource_lock = resource_manager.read();
+        let command_buffers = resource_lock
+            .command_buffers
+            .get(&frame_index)
+            .unwrap()
+            .to_vec();
+        Ok(command_buffers)
     }
 
     /*fn update_dynamic_buffer(&mut self, _delta_time: f64) -> anyhow::Result<()> {

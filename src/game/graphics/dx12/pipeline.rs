@@ -147,28 +147,6 @@ impl Pipeline {
 
     /*unsafe fn create_graphics_pipeline(device: &ComPtr<ID3D12Device2>,
                                     root_signature: &ComPtr<ID3D12RootSignature>) -> ComPtr<ID3D12PipelineState> {
-        let pipeline_desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
-            pRootSignature: root_signature.as_raw(),
-            VS: Default::default(),
-            PS: Default::default(),
-            DS: Default::default(),
-            HS: Default::default(),
-            GS: Default::default(),
-            StreamOutput: Default::default(),
-            BlendState: Default::default(),
-            SampleMask: 0,
-            RasterizerState: Default::default(),
-            DepthStencilState: Default::default(),
-            InputLayout: Default::default(),
-            IBStripCutValue: 0,
-            PrimitiveTopologyType: 0,
-            NumRenderTargets: 0,
-            RTVFormats: [],
-            DSVFormat: 0,
-            SampleDesc: Default::default(),
-            NodeMask: 0,
-            CachedPSO: Default::default(),
-            Flags: 0
-        };
+
     }*/
 }

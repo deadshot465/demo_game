@@ -15,7 +15,7 @@ pub use dynamic_object::*;
 pub use graphics::Graphics;
 pub use initializer::Initializer;
 pub use physical_device::PhysicalDevice;
-pub use pipeline::Pipeline;
+pub use pipeline::{Pipeline, RenderPassType};
 pub use shader::Shader;
 pub use swapchain::Swapchain;
 pub use thread::*;
