@@ -47,10 +47,12 @@ impl Buffer {
         let allocation_info = AllocationCreateInfo {
             usage: match usage_flag {
                 BufferUsageFlags::TRANSFER_SRC => MemoryUsage::CpuOnly,
-                x if (x & BufferUsageFlags::TRANSFER_DST) == BufferUsageFlags::empty() => {
-                    MemoryUsage::CpuToGpu
+                x if (x & BufferUsageFlags::VERTEX_BUFFER) != BufferUsageFlags::empty()
+                    || (x & BufferUsageFlags::INDEX_BUFFER) != BufferUsageFlags::empty() =>
+                {
+                    MemoryUsage::GpuOnly
                 }
-                _ => MemoryUsage::GpuOnly,
+                _ => MemoryUsage::CpuToGpu,
             },
             flags: if (memory_properties & MemoryPropertyFlags::HOST_VISIBLE)
                 == MemoryPropertyFlags::HOST_VISIBLE

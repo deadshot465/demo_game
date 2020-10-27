@@ -61,8 +61,27 @@ struct OffscreenFramebuffer {
     pub height: u32,
 }
 
+impl Drop for OffscreenFramebuffer {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.color_image);
+            ManuallyDrop::drop(&mut self.depth_image);
+        }
+    }
+}
+
 struct OffscreenPass {
     pub framebuffers: [ManuallyDrop<OffscreenFramebuffer>; 2],
+}
+
+impl Drop for OffscreenPass {
+    fn drop(&mut self) {
+        unsafe {
+            for buffer in self.framebuffers.iter_mut() {
+                ManuallyDrop::drop(buffer);
+            }
+        }
+    }
 }
 
 pub struct Graphics {
@@ -99,7 +118,7 @@ pub struct Graphics {
     sky_color: Vec4,
     frame_data: Vec<FrameData>,
     current_frame: AtomicUsize,
-    offscreen_pass: OffscreenPass,
+    offscreen_pass: ManuallyDrop<OffscreenPass>,
 }
 
 impl Graphics {
@@ -296,7 +315,7 @@ impl Graphics {
             frame_data,
             current_frame: AtomicUsize::new(0),
             inflight_buffer_count,
-            offscreen_pass,
+            offscreen_pass: ManuallyDrop::new(offscreen_pass),
         })
     }
 
@@ -1257,6 +1276,13 @@ impl Graphics {
         for buffer in self.frame_buffers.iter() {
             self.logical_device.destroy_framebuffer(*buffer, None);
         }
+        for buffer in self.offscreen_pass.framebuffers.iter_mut() {
+            self.logical_device
+                .destroy_framebuffer(buffer.framebuffer, None);
+            ManuallyDrop::drop(buffer);
+        }
+        ManuallyDrop::drop(&mut self.offscreen_pass);
+
         let pipeline = &mut *self
             .pipeline
             .write()
