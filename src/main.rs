@@ -84,6 +84,10 @@ fn main() -> anyhow::Result<()> {
                             frame_count = 0;
                             last_second = time::Instant::now();
                         }
+                        /*if let Some(ui_manager) = game.ui_manager.clone() {
+                            let mut borrowed = ui_manager.borrow_mut();
+                            borrowed.start_input();
+                        }*/
                     }
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
@@ -109,10 +113,25 @@ fn main() -> anyhow::Result<()> {
                         _ => (),
                     },
                     Event::MainEventsCleared => {
+                        /*if let Some(ui_manager) = game.ui_manager.clone() {
+                            let mut borrowed = ui_manager.borrow_mut();
+                            borrowed.end_input();
+                        }*/
+
                         rt.block_on(async {
                             game.update(delta_time).expect("Failed to update the game.");
                             game.render(delta_time).expect("Failed to render the game.");
                         });
+                        /*game.window
+                        .read()
+                        .expect("Failed to lock window handle.")
+                        .request_redraw();*/
+                    }
+                    Event::RedrawEventsCleared => {
+                        /*if let Some(ui_manager) = game.ui_manager.clone() {
+                            let mut borrowed = ui_manager.borrow_mut();
+                            borrowed.clear();
+                        }*/
                     }
                     _ => (),
                 }

@@ -11,6 +11,8 @@ file_names = {
     'water.frag': 'water_frag.spv',
     'instance.vert': 'instance_vert.spv',
     'instance.frag': 'instance_frag.spv',
+    'ui.vert': 'ui_vert.spv',
+    'ui.frag': 'ui_frag.spv'
 }
 
 # Compile shaders

@@ -219,7 +219,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 instance_count,
             )?;
         }
-        self.generate_terrain(0, 0)?;
+        //self.generate_terrain(0, 0)?;
         Ok(())
     }
 
@@ -443,5 +443,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.geometric_primitive_tasks.clear();
         self.instanced_model_tasks.clear();
         Ok(())
+    }
+
+    fn get_model_count(&self) -> Arc<AtomicUsize> {
+        self.model_count.clone()
     }
 }

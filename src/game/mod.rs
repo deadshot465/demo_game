@@ -1,14 +1,17 @@
 pub mod graphics;
 pub mod scenes;
 pub mod shared;
+pub mod ui;
 pub use scenes::*;
 pub use shared::*;
+pub use ui::*;
 
 use ash::vk::CommandBuffer;
 use crossbeam::sync::ShardedLock;
 use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use winapi::um::d3d12::ID3D12GraphicsCommandList;
@@ -36,6 +39,8 @@ where
     pub camera: Rc<RefCell<Camera>>,
     pub graphics: Arc<RwLock<GraphicsType>>,
     pub scene_manager: SceneManager,
+    pub ui_manager:
+        Option<Rc<RefCell<UIManager<GraphicsType, BufferType, CommandType, TextureType>>>>,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -45,20 +50,27 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         height: f64,
         event_loop: &EventLoop<()>,
     ) -> anyhow::Result<Self> {
-        let window = WindowBuilder::new()
-            .with_title(title)
-            .with_inner_size(winit::dpi::LogicalSize::new(width, height))
-            .build(event_loop)
-            .expect("Failed to create window.");
+        let window = Arc::new(ShardedLock::new(
+            WindowBuilder::new()
+                .with_title(title)
+                .with_inner_size(winit::dpi::LogicalSize::new(width, height))
+                .build(event_loop)
+                .expect("Failed to create window."),
+        ));
         let camera = Rc::new(RefCell::new(Camera::new(width, height)));
         let resource_manager = Arc::new(RwLock::new(ResourceManager::new()));
-        let graphics = Graphics::new(&window, camera.clone(), Arc::downgrade(&resource_manager))?;
+        let graphics = Graphics::new(
+            Arc::downgrade(&window),
+            camera.clone(),
+            Arc::downgrade(&resource_manager),
+        )?;
         Ok(Game {
-            window: Arc::new(ShardedLock::new(window)),
+            window,
             resource_manager,
             camera,
             graphics: Arc::new(RwLock::new(graphics)),
             scene_manager: SceneManager::new(),
+            ui_manager: None,
         })
     }
 
@@ -76,13 +88,18 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     pub fn load_content(&mut self) -> anyhow::Result<()> {
         self.scene_manager.load_content()?;
         self.scene_manager.wait_for_all_tasks()?;
-        let mut lock = self.graphics.write();
-        lock.initialize()?;
-        drop(lock);
-        let mut lock = self.resource_manager.write();
-        lock.create_ssbo()?;
-        lock.get_all_command_buffers();
-        drop(lock);
+        /*let graphics_lock = self.graphics.read();
+        let ui_manager = Rc::new(RefCell::new(UIManager::new(&*graphics_lock)));
+        drop(graphics_lock);*/
+        let mut graphics_lock = self.graphics.write();
+        //graphics_lock.ui_manager = Some(ui_manager.clone());
+        graphics_lock.initialize()?;
+        drop(graphics_lock);
+        let mut graphics_lock = self.resource_manager.write();
+        graphics_lock.create_ssbo()?;
+        graphics_lock.get_all_command_buffers();
+        drop(graphics_lock);
+        //self.ui_manager = Some(ui_manager);
         Ok(())
     }
 
@@ -92,6 +109,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if let Some(ui_manager) = self.ui_manager.as_ref() {
+            let mut borrowed = ui_manager.borrow_mut();
+            borrowed.prerender();
+        }
         self.scene_manager.render(delta_time)?;
         Ok(())
     }
@@ -115,6 +136,7 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             camera,
             graphics: Arc::new(RwLock::new(graphics)),
             scene_manager: SceneManager::new(),
+            ui_manager: None,
         }
     }
 

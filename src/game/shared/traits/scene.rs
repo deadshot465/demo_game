@@ -1,6 +1,8 @@
 use crate::game::enums::ShaderType;
 use crate::game::structs::PrimitiveType;
 use glam::{Vec3A, Vec4};
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 pub trait Scene {
     fn initialize(&mut self);
@@ -36,4 +38,5 @@ pub trait Scene {
         shader_type: Option<ShaderType>,
     ) -> anyhow::Result<()>;
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()>;
+    fn get_model_count(&self) -> Arc<AtomicUsize>;
 }

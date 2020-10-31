@@ -52,7 +52,7 @@ pub struct Graphics {
 
 impl Graphics {
     pub unsafe fn new(
-        _window: &winit::window::Window,
+        window: &winit::window::Window,
         camera: Rc<RefCell<Camera>>,
         resource_manager: ResourceManagerHandle,
     ) -> Self {
@@ -74,9 +74,9 @@ impl Graphics {
             &command_queue.command_queue,
             factory.as_raw(),
             tearing_support,
-            _window.inner_size().width,
-            _window.inner_size().height,
-            _window.hwnd() as HWND,
+            window.inner_size().width,
+            window.inner_size().height,
+            window.hwnd() as HWND,
         );
         let descriptor_heap = DescriptorHeap::new(&device, &swap_chain);
         let pipeline = Pipeline::new(&device);

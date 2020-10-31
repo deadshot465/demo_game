@@ -1,5 +1,7 @@
 use crate::game::shared::traits::Scene;
 use std::cell::RefCell;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 pub struct SceneManager {
     pub current_index: usize,
@@ -85,5 +87,14 @@ impl SceneManager {
         if found {
             self.current_index = index;
         }
+    }
+
+    pub fn get_scene_model_count(&self) -> Arc<AtomicUsize> {
+        let current_index = self.current_index;
+        self.scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow()
+            .get_model_count()
     }
 }

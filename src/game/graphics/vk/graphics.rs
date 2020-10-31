@@ -26,7 +26,7 @@ use crate::game::shared::traits::GraphicsBase;
 use crate::game::shared::util::interpolate_alpha;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
-use crate::game::{Camera, ResourceManager};
+use crate::game::{Camera, ResourceManager, UIManager};
 use ash::prelude::VkResult;
 
 const SSBO_DATA_COUNT: usize = 50;
@@ -37,6 +37,7 @@ const REFRACTION_HEIGHT: u32 = 720;
 
 type ResourceManagerHandle =
     Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>;
+type UIManagerHandle = Rc<RefCell<UIManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>;
 
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -103,41 +104,47 @@ pub struct Graphics {
     pub resource_manager: ResourceManagerHandle,
     pub is_initialized: bool,
     pub inflight_buffer_count: usize,
+    pub instance: Instance,
+    pub physical_device: super::PhysicalDevice,
+    pub ui_manager: Option<UIManagerHandle>,
+    pub depth_format: Format,
+    pub sample_count: SampleCountFlags,
+    window: Weak<ShardedLock<winit::window::Window>>,
     entry: Entry,
-    instance: Instance,
     surface_loader: Surface,
     debug_messenger: DebugUtilsMessengerEXT,
     surface: SurfaceKHR,
-    physical_device: super::PhysicalDevice,
     depth_image: ManuallyDrop<super::Image>,
     msaa_image: ManuallyDrop<super::Image>,
     uniform_buffers: ManuallyDrop<UniformBuffers>,
     camera: Rc<RefCell<Camera>>,
-    sample_count: SampleCountFlags,
-    depth_format: Format,
     sky_color: Vec4,
     frame_data: Vec<FrameData>,
     current_frame: AtomicUsize,
     offscreen_pass: ManuallyDrop<OffscreenPass>,
+    //checkpoint_fn: NvDeviceDiagnosticCheckpointsFn,
 }
 
 impl Graphics {
     pub fn new(
-        window: &winit::window::Window,
+        window: Weak<ShardedLock<winit::window::Window>>,
         camera: Rc<RefCell<Camera>>,
         resource_manager: ResourceManagerHandle,
     ) -> anyhow::Result<Self> {
+        let window_ptr = window.upgrade().expect("Failed to upgrade window handle.");
+        let window_handle = window_ptr.read().expect("Failed to lock window handle.");
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
         let entry = Entry::new()?;
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation")?];
-        let instance = Initializer::create_instance(debug, &enabled_layers, &entry, window)?;
+        let instance =
+            Initializer::create_instance(debug, &enabled_layers, &entry, &*window_handle)?;
         let surface_loader = Surface::new(&entry, &instance);
         let debug_messenger = if debug {
             Initializer::create_debug_messenger(&instance, &entry)
         } else {
             DebugUtilsMessengerEXT::null()
         };
-        let surface = Initializer::create_surface(window, &entry, &instance)?;
+        let surface = Initializer::create_surface(&*window_handle, &entry, &instance)?;
         let physical_device = super::PhysicalDevice::new(&instance, &surface_loader, surface);
         let (logical_device, graphics_queue, present_queue, compute_queue) =
             Initializer::create_logical_device(&instance, &physical_device, &enabled_layers, debug);
@@ -158,7 +165,7 @@ impl Graphics {
             &surface_loader,
             surface,
             &physical_device,
-            window,
+            &*window_handle,
             &instance,
             Arc::downgrade(&device),
             Arc::downgrade(&allocator),
@@ -276,6 +283,9 @@ impl Graphics {
         )?;
 
         let sky_color: Vec4 = Vec4::new(0.5, 0.5, 0.5, 1.0);
+        /*let checkpoint_fn = NvDeviceDiagnosticCheckpointsFn::load(|name| unsafe {
+            std::mem::transmute(instance.get_device_proc_addr(device.handle(), name.as_ptr()))
+        });*/
         Ok(Graphics {
             entry,
             instance,
@@ -283,6 +293,7 @@ impl Graphics {
             debug_messenger,
             surface,
             physical_device,
+            ui_manager: None,
             logical_device: device,
             graphics_queue: Arc::new(Mutex::new(graphics_queue)),
             present_queue: Arc::new(Mutex::new(present_queue)),
@@ -316,6 +327,8 @@ impl Graphics {
             current_frame: AtomicUsize::new(0),
             inflight_buffer_count,
             offscreen_pass: ManuallyDrop::new(offscreen_pass),
+            window,
+            //checkpoint_fn,
         })
     }
 
@@ -633,6 +646,17 @@ impl Graphics {
             }
             self.logical_device
                 .reset_command_pool(current_frame.command_pool, CommandPoolResetFlags::empty())?;
+
+            let extent = self.swapchain.extent;
+            let viewports = vec![Viewport::builder()
+                .width(extent.width as f32)
+                .height(extent.height as f32)
+                .x(0.0)
+                .y(0.0)
+                .min_depth(0.0)
+                .max_depth(1.0)
+                .build()];
+
             self.begin_draw(
                 self.frame_buffers[image_index as usize],
                 current_frame,
@@ -642,7 +666,7 @@ impl Graphics {
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
             let command_buffers = vec![current_frame.main_command_buffer];
-            let complete_semaphores = vec![current_frame.completed_semaphore];
+            let mut complete_semaphores = vec![current_frame.completed_semaphore];
             let acquired_semaphores = vec![current_frame.acquired_semaphore];
             let submit_info = vec![SubmitInfo::builder()
                 .command_buffers(command_buffers.as_slice())
@@ -657,8 +681,37 @@ impl Graphics {
                     submit_info.as_slice(),
                     fences[0],
                 )
-                .expect("Failed to submit the queue.");
+                .expect("Failed to submit queue for execution.");
 
+            /*let window_handle = self
+                .window
+                .upgrade()
+                .expect("Failed to upgrade window handle.");
+            let window_lock = window_handle.read().expect("Failed to lock window handle.");
+            let winit::dpi::PhysicalSize {
+                width: w,
+                height: h,
+            } = window_lock.inner_size();
+            drop(window_lock);
+            drop(window_handle);
+            let ui_overlay_finished = if let Some(ui_manager) = self.ui_manager.as_ref() {
+                let mut borrowed = ui_manager.borrow_mut();
+                Some(borrowed.render(
+                    self.frame_buffers[image_index as usize],
+                    viewports[0],
+                    nuklear::Vec2 {
+                        x: (w / extent.width) as f32,
+                        y: (h / extent.height) as f32,
+                    },
+                    complete_semaphores[0],
+                ))
+            } else {
+                None
+            };
+
+            if let Some(semaphore) = ui_overlay_finished {
+                complete_semaphores = vec![semaphore];
+            }*/
             let image_indices = vec![image_index];
             let swapchain = vec![self.swapchain.swapchain];
             let present_info = PresentInfoKHR::builder()
@@ -926,12 +979,36 @@ impl Graphics {
                 &*renderpass_ptr.load(Ordering::SeqCst),
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
-            let command_buffers = self.update_secondary_command_buffers(
-                inheritance_ptr,
+            let mut command_buffers = self.update_secondary_command_buffers(
+                inheritance_ptr.clone(),
                 viewports[0],
                 scissors[0],
                 frame_index,
             )?;
+            /*if let Some(ui_manager) = self.ui_manager.as_ref() {
+                let mut ui_manager = ui_manager.borrow_mut();
+                let window = self
+                    .window
+                    .upgrade()
+                    .expect("Failed to upgrade window handle.");
+                let window_lock = window.read().expect("Failed to lock window handle.");
+                let winit::dpi::PhysicalSize {
+                    width: w,
+                    height: h,
+                } = window_lock.inner_size();
+                drop(window_lock);
+                drop(window);
+                let ui_cmd_buffer = ui_manager.render(
+                    self.logical_device.clone(),
+                    viewports[0],
+                    w,
+                    h,
+                    nuklear::Vec2 { x: 1.0, y: 1.0 },
+                    inheritance_ptr,
+                    frame_index,
+                );
+                command_buffers.push(ui_cmd_buffer);
+            }*/
             self.logical_device.cmd_execute_commands(
                 current_frame.main_command_buffer,
                 command_buffers.as_slice(),

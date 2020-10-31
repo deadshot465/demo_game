@@ -40,15 +40,17 @@ impl Initializer {
             .engine_name(&*engine_name)
             .engine_version(make_version(0, 0, 1));
 
-        let extensions = Self::get_required_extensions(debug, window)?;
+        let extensions = Self::get_required_extensions(debug, window, entry)?;
         let layers = enabled_layers
             .iter()
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
 
+        let extension_ptrs = extensions.iter().map(|s| s.as_ptr()).collect::<Vec<_>>();
+
         let mut instance_info = InstanceCreateInfo::builder()
             .application_info(&app_info)
-            .enabled_extension_names(extensions.as_slice())
+            .enabled_extension_names(extension_ptrs.as_slice())
             .enabled_layer_names(layers.as_slice());
 
         if debug {
@@ -105,11 +107,11 @@ impl Initializer {
             .iter()
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
-        let extensions = vec![Swapchain::name()];
-        let extensions = extensions
-            .into_iter()
-            .map(|e| e.as_ptr())
-            .collect::<Vec<_>>();
+        let mut extensions = vec![Swapchain::name()];
+        if debug {
+            extensions.push(ash::vk::NvDeviceDiagnosticCheckpointsFn::name());
+        }
+        let extensions = extensions.iter().map(|e| e.as_ptr()).collect::<Vec<_>>();
         let features = PhysicalDeviceFeatures::builder()
             .tessellation_shader(physical_device.feature_support.tessellation_shader)
             .shader_sampled_image_array_dynamic_indexing(
@@ -622,15 +624,33 @@ impl Initializer {
     fn get_required_extensions(
         debug: bool,
         window: &winit::window::Window,
-    ) -> anyhow::Result<Vec<*const i8>> {
+        entry: &Entry,
+    ) -> anyhow::Result<Vec<CString>> {
         let extensions = enumerate_required_extensions(window)
             .with_context(|| "Failed to enumerate required extensions.")?;
         let mut extensions = extensions
             .into_iter()
-            .map(|extension| extension.as_ptr())
+            .map(|s| s.to_owned())
             .collect::<Vec<_>>();
         if debug {
-            extensions.push(DebugUtils::name().as_ptr());
+            let instance_extensions = entry.enumerate_instance_extension_properties()?;
+            let nv_checkpoint_extension =
+                std::ffi::CString::new("VK_KHR_get_physical_device_properties2")
+                    .expect("Failed to construct extension name.");
+            let mut required_debug_extensions = vec![DebugUtils::name().to_owned()];
+            required_debug_extensions.push(nv_checkpoint_extension);
+            for extension in instance_extensions.iter() {
+                let extension_name = extension.extension_name.as_ptr();
+                unsafe {
+                    let extension_name = std::ffi::CStr::from_ptr(extension_name).to_owned();
+                    for required_extension in required_debug_extensions.iter() {
+                        if required_extension.to_str()? == extension_name.to_str()? {
+                            extensions.push(extension_name.clone());
+                            log::warn!("Instance extension enabled: {}", extension_name.to_str()?);
+                        }
+                    }
+                }
+            }
         }
         Ok(extensions)
     }

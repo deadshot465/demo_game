@@ -43,8 +43,8 @@ where
     pub const VERTEX_COUNT: u32 = 128;
 
     fn create_terrain(
-        grid_x: i32,
-        grid_z: i32,
+        _grid_x: i32,
+        _grid_z: i32,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         model_index: usize,
         ssbo_index: usize,
