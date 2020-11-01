@@ -5,6 +5,7 @@ use vk_mem::Allocator;
 
 use super::physical_device::QueueIndices;
 
+#[derive(Clone)]
 pub struct Swapchain {
     pub swapchain: SwapchainKHR,
     pub extent: Extent2D,

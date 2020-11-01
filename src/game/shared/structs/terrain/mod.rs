@@ -16,7 +16,7 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
-use winapi::_core::sync::atomic::{AtomicPtr, AtomicUsize};
+use std::sync::atomic::{AtomicPtr, AtomicUsize};
 
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where

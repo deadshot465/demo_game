@@ -32,6 +32,7 @@ pub struct FeatureSupport {
     pub shader_clip_distance: bool,
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct PhysicalDevice {
     pub physical_device: ash::vk::PhysicalDevice,
     pub queue_indices: QueueIndices,
