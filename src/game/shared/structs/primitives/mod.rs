@@ -16,8 +16,8 @@ use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
-use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
+use std::sync::{Arc, Weak};
 
 #[derive(Copy, Clone, Debug)]
 pub enum PrimitiveType {
@@ -48,7 +48,7 @@ where
         model_index: usize,
         ssbo_index: usize,
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         position: Vec3A,
         scale: Vec3A,
@@ -147,7 +147,7 @@ where
 
 impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
         primitive_type: PrimitiveType,
         texture_name: Option<&'static str>,
         model_index: usize,
@@ -229,7 +229,10 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         Ok(primitive_recv)
     }
 
-    fn create_buffer(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffer(
+        &mut self,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
+    ) -> anyhow::Result<()> {
         let mutable_model = self
             .model
             .as_mut()

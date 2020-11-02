@@ -19,6 +19,7 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::ffi::{c_void, CStr, CString};
+use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 use vk_mem::Allocator;
 
@@ -463,7 +464,7 @@ impl Initializer {
 
     pub fn create_image_from_file(
         file_name: &str,
-        graphics: Arc<RwLock<Graphics>>,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
         command_pool: Arc<Mutex<CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<(Arc<ShardedLock<super::Image>>, usize)> {
@@ -529,7 +530,7 @@ impl Initializer {
         width: u32,
         height: u32,
         format: ImageFormat,
-        graphics: Arc<RwLock<Graphics>>,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<super::Image> {

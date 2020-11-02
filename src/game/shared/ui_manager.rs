@@ -1,26 +1,21 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::Drawer;
-use ash::version::DeviceV1_0;
-use ash::vk::{
-    CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo, CommandBufferUsageFlags,
-    CommandPool, Framebuffer, Semaphore, Viewport,
-};
+use ash::vk::{CommandBuffer, Framebuffer, Semaphore, Viewport};
 use nuklear::{
-    font_cyrillic_glyph_ranges, AntiAliasing, Context, ConvertConfig, DrawNullTexture, Flags,
-    FontAtlas, FontAtlasFormat, FontConfig, FontID, LayoutFormat, PanelFlags, TextAlignment,
+    AntiAliasing, Context, ConvertConfig, Flags, FontAtlas, FontID, LayoutFormat, PanelFlags,
+    TextAlignment,
 };
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::Arc;
+use std::mem::ManuallyDrop;
+use winit::event::{ElementState, MouseScrollDelta, VirtualKeyCode};
 
 const MAX_VERTEX_MEMORY: usize = 512 * 1024;
 const MAX_INDEX_MEMORY: usize = 128 * 1024;
 const MAX_COMMANDS_MEMORY: usize = 64 * 1024;
 const RATIO_W: [f32; 2] = [0.15, 0.85];
 const RATIO_WC: [f32; 3] = [0.15, 0.50, 0.35];
+const MOUSE_SENSITIVITY: f64 = 22.0;
 
 struct Media {
     font_14: FontID,
@@ -45,7 +40,7 @@ where
     phantom_4: PhantomData<&'static TextureType>,
     context: Context,
     convert_config: ConvertConfig,
-    drawer: Drawer,
+    drawer: ManuallyDrop<Drawer>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -64,8 +59,66 @@ where
         self.context.input_end();
     }
 
-    pub fn start_input(&mut self) {
-        self.context.input_begin();
+    pub fn input_button(
+        &mut self,
+        button: winit::event::MouseButton,
+        x: f64,
+        y: f64,
+        element_state: ElementState,
+    ) {
+        use winit::event::MouseButton;
+        self.context.input_button(
+            match button {
+                MouseButton::Right => nuklear::Button::Right,
+                MouseButton::Left => nuklear::Button::Left,
+                MouseButton::Middle => nuklear::Button::Middle,
+                _ => nuklear::Button::Max,
+            },
+            x as i32,
+            y as i32,
+            element_state == ElementState::Pressed,
+        );
+    }
+
+    pub fn input_key(&mut self, key: VirtualKeyCode, element_state: ElementState) {
+        use nuklear::Key;
+        self.context.input_key(
+            match key {
+                VirtualKeyCode::Up => Key::Up,
+                VirtualKeyCode::Down => Key::Down,
+                VirtualKeyCode::Left => Key::Left,
+                VirtualKeyCode::Right => Key::Right,
+                VirtualKeyCode::Delete => Key::Del,
+                VirtualKeyCode::Back => Key::Backspace,
+                _ => Key::None,
+            },
+            element_state == ElementState::Pressed,
+        );
+    }
+
+    pub fn input_motion(&mut self, x: f64, y: f64) {
+        self.context.input_motion(x as i32, y as i32);
+    }
+
+    pub fn input_scroll(&mut self, mouse_scroll_delta: MouseScrollDelta) {
+        self.context.input_scroll(match mouse_scroll_delta {
+            MouseScrollDelta::LineDelta(x, y) => {
+                let altered_x = (x as f64) * MOUSE_SENSITIVITY;
+                let altered_y = (y as f64) * MOUSE_SENSITIVITY;
+                nuklear::Vec2 {
+                    x: altered_x as f32,
+                    y: altered_y as f32,
+                }
+            }
+            MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition { x, y }) => nuklear::Vec2 {
+                x: (x * MOUSE_SENSITIVITY) as f32,
+                y: (y * MOUSE_SENSITIVITY) as f32,
+            },
+        });
+    }
+
+    pub fn input_unicode(&mut self, c: char) {
+        self.context.input_unicode(c);
     }
 
     pub fn prerender(&mut self) {
@@ -89,6 +142,10 @@ where
         ctx.button_text("Push me.");
         drawer.set_font_size(ctx, 14);
         ctx.end();
+    }
+
+    pub fn start_input(&mut self) {
+        self.context.input_begin();
     }
 
     fn set_ui_header(drawer: &mut Drawer, ctx: &mut Context, title: &str) {
@@ -153,7 +210,7 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
             phantom_4: PhantomData,
             context: ctx,
             convert_config,
-            drawer,
+            drawer: ManuallyDrop::new(drawer),
         }
     }
 
@@ -174,5 +231,20 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
             convert_config,
             wait_semaphore,
         )
+    }
+}
+
+impl<GraphicsType, BufferType, CommandType, TextureType> Drop
+    for UIManager<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.drawer);
+        }
     }
 }

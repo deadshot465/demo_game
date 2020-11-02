@@ -63,6 +63,8 @@ fn main() -> anyhow::Result<()> {
                 game
             });
             log::info!("Game content loaded.");
+            let mut mouse_x = 0.0;
+            let mut mouse_y = 0.0;
             event_loop.run(move |event, _target, control_flow| {
                 let game = &mut game;
                 let rt = &mut rt;
@@ -73,30 +75,33 @@ fn main() -> anyhow::Result<()> {
                         frame_count += 1;
                         let elapsed = last_second.elapsed().as_secs_f64();
                         if elapsed > 1.0 {
-                            game.window
-                                .read()
-                                .expect("Failed to lock window handle.")
-                                .set_title(&format!(
-                                    "Demo Engine / FPS: {} / Frame Time: {}",
-                                    frame_count,
-                                    1000 / frame_count
-                                ));
+                            game.window.borrow().set_title(&format!(
+                                "Demo Engine / FPS: {} / Frame Time: {}",
+                                frame_count,
+                                1000 / frame_count
+                            ));
                             frame_count = 0;
                             last_second = time::Instant::now();
                         }
-                        /*if let Some(ui_manager) = game.ui_manager.clone() {
+                        if let Some(ui_manager) = game.ui_manager.as_ref() {
                             let mut borrowed = ui_manager.borrow_mut();
                             borrowed.start_input();
-                        }*/
+                        }
                     }
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
                             *control_flow = ControlFlow::Exit;
                         }
+                        WindowEvent::ReceivedCharacter(c) => {
+                            if let Some(ui) = game.ui_manager.as_ref() {
+                                ui.borrow_mut().input_unicode(c);
+                            }
+                        }
                         WindowEvent::KeyboardInput {
                             input:
                                 KeyboardInput {
                                     virtual_keycode: Some(virtual_key_code),
+                                    state,
                                     ..
                                 },
                             ..
@@ -108,15 +113,39 @@ fn main() -> anyhow::Result<()> {
                                     CameraType::Watch(glam::Vec3A::zero()),
                                     virtual_key_code,
                                 );
+                                if let Some(ui) = game.ui_manager.as_ref() {
+                                    ui.borrow_mut().input_key(virtual_key_code, state);
+                                }
                             }
                         },
+                        WindowEvent::CursorMoved {
+                            position: winit::dpi::PhysicalPosition { x, y },
+                            ..
+                        } => {
+                            mouse_x = x;
+                            mouse_y = y;
+                            if let Some(ui) = game.ui_manager.as_ref() {
+                                ui.borrow_mut().input_motion(x, y);
+                            }
+                        }
+                        WindowEvent::MouseInput { state, button, .. } => {
+                            if let Some(ui) = game.ui_manager.as_ref() {
+                                ui.borrow_mut()
+                                    .input_button(button, mouse_x, mouse_y, state);
+                            }
+                        }
+                        WindowEvent::MouseWheel { delta, .. } => {
+                            if let Some(ui) = game.ui_manager.as_ref() {
+                                ui.borrow_mut().input_scroll(delta);
+                            }
+                        }
                         _ => (),
                     },
                     Event::MainEventsCleared => {
-                        /*if let Some(ui_manager) = game.ui_manager.clone() {
+                        if let Some(ui_manager) = game.ui_manager.as_ref() {
                             let mut borrowed = ui_manager.borrow_mut();
                             borrowed.end_input();
-                        }*/
+                        }
 
                         rt.block_on(async {
                             game.update(delta_time).expect("Failed to update the game.");

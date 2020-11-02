@@ -17,9 +17,7 @@ use std::sync::{Arc, Weak};
 use vk_mem::*;
 
 use crate::game::enums::ShaderType;
-use crate::game::graphics::vk::{
-    DynamicBufferObject, DynamicModel, Initializer, RenderPassType, ThreadPool, UniformBuffers,
-};
+use crate::game::graphics::vk::{Initializer, RenderPassType, ThreadPool, UniformBuffers};
 use crate::game::shared::enums::ImageFormat;
 use crate::game::shared::structs::{Directional, PushConstant, ViewProjection};
 use crate::game::shared::traits::GraphicsBase;
@@ -35,9 +33,11 @@ const REFLECTION_HEIGHT: u32 = 180;
 const REFRACTION_WIDTH: u32 = 1280;
 const REFRACTION_HEIGHT: u32 = 720;
 
-type ResourceManagerHandle =
-    Weak<RwLock<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>;
-type UIManagerHandle = Rc<RefCell<UIManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>;
+type ResourceManagerHandle = Weak<
+    RwLock<ManuallyDrop<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+>;
+type UIManagerHandle =
+    Rc<RefCell<ManuallyDrop<UIManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>>;
 
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -86,7 +86,6 @@ impl Drop for OffscreenPass {
 }
 
 pub struct Graphics {
-    pub dynamic_objects: DynamicBufferObject,
     pub logical_device: Arc<Device>,
     pub pipeline: Arc<ShardedLock<ManuallyDrop<super::Pipeline>>>,
     pub descriptor_sets: Vec<DescriptorSet>,
@@ -109,7 +108,9 @@ pub struct Graphics {
     pub ui_manager: Option<UIManagerHandle>,
     pub depth_format: Format,
     pub sample_count: SampleCountFlags,
-    window: Weak<ShardedLock<winit::window::Window>>,
+    window: Rc<RefCell<winit::window::Window>>,
+    window_width: u32,
+    window_height: u32,
     entry: Entry,
     surface_loader: Surface,
     debug_messenger: DebugUtilsMessengerEXT,
@@ -127,12 +128,11 @@ pub struct Graphics {
 
 impl Graphics {
     pub fn new(
-        window: Weak<ShardedLock<winit::window::Window>>,
+        window: Rc<RefCell<winit::window::Window>>,
         camera: Rc<RefCell<Camera>>,
         resource_manager: ResourceManagerHandle,
     ) -> anyhow::Result<Self> {
-        let window_ptr = window.upgrade().expect("Failed to upgrade window handle.");
-        let window_handle = window_ptr.read().expect("Failed to lock window handle.");
+        let window_handle = window.borrow();
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
         let entry = Entry::new()?;
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation")?];
@@ -254,17 +254,6 @@ impl Graphics {
         let ssbo_descriptor_set_layout =
             Initializer::create_ssbo_descriptor_set_layout(device.as_ref());
         let uniform_buffers = UniformBuffers::new(view_projection, directional);
-        let min_alignment = physical_device
-            .device_properties
-            .limits
-            .min_uniform_buffer_offset_alignment;
-        let min_alignment = min_alignment as usize;
-        let dynamic_alignment = if min_alignment > 0 {
-            let mat4_size = std::mem::size_of::<Mat4>();
-            (mat4_size + (min_alignment - 1)) & !(min_alignment - 1)
-        } else {
-            std::mem::size_of::<Mat4>()
-        };
         let mut pipeline = super::Pipeline::new(device.clone());
         let color_format = swapchain.format.format;
         pipeline.create_normal_renderpass(color_format, depth_format, sample_count);
@@ -286,6 +275,11 @@ impl Graphics {
         /*let checkpoint_fn = NvDeviceDiagnosticCheckpointsFn::load(|name| unsafe {
             std::mem::transmute(instance.get_device_proc_addr(device.handle(), name.as_ptr()))
         });*/
+        let winit::dpi::PhysicalSize {
+            width: window_width,
+            height: window_height,
+        } = window_handle.inner_size();
+        drop(window_handle);
         Ok(Graphics {
             entry,
             instance,
@@ -306,12 +300,6 @@ impl Graphics {
             push_constant: PushConstant::new(0, 0, sky_color),
             camera,
             resource_manager,
-            dynamic_objects: DynamicBufferObject {
-                models: DynamicModel::new(),
-                meshes: DynamicModel::new(),
-                min_alignment: min_alignment as DeviceSize,
-                dynamic_alignment: dynamic_alignment as DeviceSize,
-            },
             descriptor_pool: Arc::new(Mutex::new(DescriptorPool::null())),
             descriptor_sets: vec![],
             pipeline: Arc::new(ShardedLock::new(ManuallyDrop::new(pipeline))),
@@ -328,12 +316,14 @@ impl Graphics {
             inflight_buffer_count,
             offscreen_pass: ManuallyDrop::new(offscreen_pass),
             window,
+            window_width,
+            window_height,
             //checkpoint_fn,
         })
     }
 
     pub fn create_vertex_and_index_buffer<VertexType: 'static + Send + Sync>(
-        graphics: Arc<RwLock<Self>>,
+        graphics: Arc<RwLock<ManuallyDrop<Self>>>,
         vertices: Vec<VertexType>,
         indices: Vec<u32>,
         command_pool: Arc<Mutex<ash::vk::CommandPool>>,
@@ -447,7 +437,7 @@ impl Graphics {
 
     pub fn create_gltf_textures(
         images: Vec<gltf::image::Data>,
-        graphics: Arc<RwLock<Self>>,
+        graphics: Arc<RwLock<ManuallyDrop<Self>>>,
         command_pool: Arc<Mutex<CommandPool>>,
     ) -> anyhow::Result<(Vec<Arc<ShardedLock<super::Image>>>, usize)> {
         let mut textures = vec![];
@@ -456,7 +446,7 @@ impl Graphics {
         for image in images.iter() {
             let buffer_size = image.width * image.height * 4;
             let pool = command_pool.clone();
-            let g = graphics.clone();
+            let graphics_clone = graphics.clone();
             let width = image.width;
             let height = image.height;
             let format = image.format;
@@ -481,7 +471,7 @@ impl Graphics {
                         Format::R8G8B8 => ImageFormat::GltfFormat(Format::R8G8B8A8),
                         _ => ImageFormat::GltfFormat(format),
                     },
-                    g,
+                    graphics_clone,
                     pool,
                     SamplerAddressMode::REPEAT,
                 );
@@ -517,7 +507,7 @@ impl Graphics {
 
     pub fn create_image_from_file(
         file_name: &str,
-        graphics: Arc<RwLock<Self>>,
+        graphics: Arc<RwLock<ManuallyDrop<Self>>>,
         command_pool: Arc<Mutex<CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<(Arc<ShardedLock<super::Image>>, usize)> {
@@ -661,6 +651,7 @@ impl Graphics {
                 self.frame_buffers[image_index as usize],
                 current_frame,
                 frame_index,
+                viewports.as_slice(),
             )?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -683,25 +674,14 @@ impl Graphics {
                 )
                 .expect("Failed to submit queue for execution.");
 
-            /*let window_handle = self
-                .window
-                .upgrade()
-                .expect("Failed to upgrade window handle.");
-            let window_lock = window_handle.read().expect("Failed to lock window handle.");
-            let winit::dpi::PhysicalSize {
-                width: w,
-                height: h,
-            } = window_lock.inner_size();
-            drop(window_lock);
-            drop(window_handle);
             let ui_overlay_finished = if let Some(ui_manager) = self.ui_manager.as_ref() {
                 let mut borrowed = ui_manager.borrow_mut();
                 Some(borrowed.render(
                     self.frame_buffers[image_index as usize],
                     viewports[0],
                     nuklear::Vec2 {
-                        x: (w / extent.width) as f32,
-                        y: (h / extent.height) as f32,
+                        x: (self.window_width / extent.width) as f32,
+                        y: (self.window_height / extent.height) as f32,
                     },
                     complete_semaphores[0],
                 ))
@@ -711,7 +691,7 @@ impl Graphics {
 
             if let Some(semaphore) = ui_overlay_finished {
                 complete_semaphores = vec![semaphore];
-            }*/
+            }
             let image_indices = vec![image_index];
             let swapchain = vec![self.swapchain.swapchain];
             let present_info = PresentInfoKHR::builder()
@@ -902,6 +882,7 @@ impl Graphics {
         frame_buffer: Framebuffer,
         current_frame: &FrameData,
         frame_index: usize,
+        viewports: &[Viewport],
     ) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
@@ -935,14 +916,6 @@ impl Graphics {
             renderpass_ptr = AtomicPtr::new(Box::into_raw(renderpass_begin_info));
         }
         let renderpass_ptr = Arc::new(renderpass_ptr);
-        let viewports = vec![Viewport::builder()
-            .width(extent.width as f32)
-            .height(extent.height as f32)
-            .x(0.0)
-            .y(0.0)
-            .min_depth(0.0)
-            .max_depth(1.0)
-            .build()];
         let scissors = vec![Rect2D::builder()
             .extent(extent)
             .offset(Offset2D::default())
@@ -979,36 +952,12 @@ impl Graphics {
                 &*renderpass_ptr.load(Ordering::SeqCst),
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
-            let mut command_buffers = self.update_secondary_command_buffers(
+            let command_buffers = self.update_secondary_command_buffers(
                 inheritance_ptr.clone(),
                 viewports[0],
                 scissors[0],
                 frame_index,
             )?;
-            /*if let Some(ui_manager) = self.ui_manager.as_ref() {
-                let mut ui_manager = ui_manager.borrow_mut();
-                let window = self
-                    .window
-                    .upgrade()
-                    .expect("Failed to upgrade window handle.");
-                let window_lock = window.read().expect("Failed to lock window handle.");
-                let winit::dpi::PhysicalSize {
-                    width: w,
-                    height: h,
-                } = window_lock.inner_size();
-                drop(window_lock);
-                drop(window);
-                let ui_cmd_buffer = ui_manager.render(
-                    self.logical_device.clone(),
-                    viewports[0],
-                    w,
-                    h,
-                    nuklear::Vec2 { x: 1.0, y: 1.0 },
-                    inheritance_ptr,
-                    frame_index,
-                );
-                command_buffers.push(ui_cmd_buffer);
-            }*/
             self.logical_device.cmd_execute_commands(
                 current_frame.main_command_buffer,
                 command_buffers.as_slice(),

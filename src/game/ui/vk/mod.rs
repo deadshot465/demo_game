@@ -125,6 +125,9 @@ impl Drawer {
             shader_stage_info.as_slice(),
         );
 
+        device.destroy_shader_module(vertex_shader, None);
+        device.destroy_shader_module(fragment_shader, None);
+
         let command_pool = Self::create_command_pool(&device, graphics_queue_index);
         let command_buffer = Self::allocate_command_buffers(&device, command_pool);
         let mut nk_allocator = nuklear::Allocator::new_vec();
@@ -234,10 +237,18 @@ impl Drawer {
             let fences = [self.command_finished];
             {
                 let device = &self.logical_device;
-                device.wait_for_fences(&fences[0..], true, u64::MAX);
-                device.reset_fences(&fences[0..]);
-                device.reset_command_pool(self.command_pool, CommandPoolResetFlags::empty());
-                device.begin_command_buffer(cmd_buffer, &cmd_begin_info);
+                device
+                    .wait_for_fences(&fences[0..], true, u64::MAX)
+                    .expect("Failed to wait for fences for Nuklear.");
+                device
+                    .reset_fences(&fences[0..])
+                    .expect("Failed to reset fences for Nuklear.");
+                device
+                    .reset_command_pool(self.command_pool, CommandPoolResetFlags::empty())
+                    .expect("Failed to reset command pool for Nuklear.");
+                device
+                    .begin_command_buffer(cmd_buffer, &cmd_begin_info)
+                    .expect("Failed to begin command buffer for Nuklear.");
                 device.cmd_begin_render_pass(
                     cmd_buffer,
                     &renderpass_begin_info,
@@ -294,7 +305,9 @@ impl Drawer {
             }
             context.clear();
             device.cmd_end_render_pass(cmd_buffer);
-            device.end_command_buffer(cmd_buffer);
+            device
+                .end_command_buffer(cmd_buffer)
+                .expect("Failed to end command buffer for Nuklear.");
 
             let wait_stages = [PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
             let cmd_buffers = [cmd_buffer];
@@ -307,11 +320,13 @@ impl Drawer {
                 .wait_semaphores(&wait_semaphores[0..])
                 .build()];
 
-            device.queue_submit(
-                self.graphics_queue,
-                submit_info.as_slice(),
-                self.command_finished,
-            );
+            device
+                .queue_submit(
+                    self.graphics_queue,
+                    submit_info.as_slice(),
+                    self.command_finished,
+                )
+                .expect("Failed to submit queue for Nuklear.");
             self.render_completed
         }
     }
@@ -909,6 +924,11 @@ impl Drawer {
         );
         texture.create_image_view(device);
 
+        unsafe {
+            device.free_memory(staging_buffer.device_memory, None);
+            device.destroy_buffer(staging_buffer.buffer, None);
+        }
+
         let sampler_info = SamplerCreateInfo::builder()
             .unnormalized_coordinates(false)
             .mipmap_mode(SamplerMipmapMode::LINEAR)
@@ -932,5 +952,35 @@ impl Drawer {
                 .expect("Failed to create sampler for Nuklear texture.")
         };
         (texture, sampler)
+    }
+}
+
+impl Drop for Drawer {
+    fn drop(&mut self) {
+        let device = &self.logical_device;
+        let fences = [self.command_finished];
+        unsafe {
+            device
+                .wait_for_fences(&fences[0..], true, u64::MAX)
+                .expect("Failed to wait for fences for Nuklear.");
+            device.destroy_semaphore(self.render_completed, None);
+            device.destroy_fence(self.command_finished, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_render_pass(self.renderpass, None);
+            device.destroy_command_pool(self.command_pool, None);
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            device.destroy_sampler(self.font_sampler, None);
+            device.free_memory(self.font_image.device_memory, None);
+            device.destroy_image_view(self.font_image.image_view, None);
+            device.destroy_image(self.font_image.image, None);
+            device.free_memory(self.uniform_buffer.device_memory, None);
+            device.destroy_buffer(self.uniform_buffer.buffer, None);
+            device.free_memory(self.index_buffer.device_memory, None);
+            device.destroy_buffer(self.index_buffer.buffer, None);
+            device.free_memory(self.vertex_buffer.device_memory, None);
+            device.destroy_buffer(self.vertex_buffer.buffer, None);
+        }
     }
 }

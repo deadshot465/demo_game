@@ -39,7 +39,7 @@ where
     pub meshes: Vec<Arc<Mutex<Mesh<BufferType, CommandType, TextureType>>>>,
     pub is_disposed: bool,
     pub model_name: String,
-    pub graphics: Weak<RwLock<GraphicsType>>,
+    pub graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
     pub ssbo_index: usize,
 }
 
@@ -57,7 +57,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -277,7 +277,7 @@ where
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(
         file_name: &'static str,
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -355,7 +355,10 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model_recv)
     }
 
-    fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffers(
+        &mut self,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
+    ) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             log::info!("Creating buffer for mesh {}...", index);

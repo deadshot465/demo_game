@@ -4,6 +4,7 @@ use ash::vk::{
 };
 use glam::Mat4;
 use parking_lot::RwLock;
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use crate::game::graphics::vk::{Buffer, Graphics};
@@ -19,7 +20,10 @@ pub struct SSBO {
 }
 
 impl SSBO {
-    pub fn new(graphics: Arc<RwLock<Graphics>>, data: &[Mat4; 500]) -> anyhow::Result<Self> {
+    pub fn new(
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
+        data: &[Mat4; 500],
+    ) -> anyhow::Result<Self> {
         let graphics_lock = graphics.read();
         let device = graphics_lock.logical_device.clone();
         let allocator = graphics_lock.allocator.clone();

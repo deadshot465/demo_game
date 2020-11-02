@@ -31,8 +31,13 @@ use winapi::Interface;
 use winit::platform::windows::WindowExtWindows;
 use wio::com::ComPtr;
 
-type ResourceManagerHandle =
-    Weak<RwLock<ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>>>;
+type ResourceManagerHandle = Weak<
+    RwLock<
+        ManuallyDrop<
+            ResourceManager<Graphics, Resource, ComPtr<ID3D12GraphicsCommandList>, Resource>,
+        >,
+    >,
+>;
 
 #[allow(dead_code)]
 pub struct Graphics {

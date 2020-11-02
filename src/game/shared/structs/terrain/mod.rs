@@ -15,8 +15,8 @@ use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
-use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
+use std::sync::{Arc, Weak};
 
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -48,7 +48,7 @@ where
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         model_index: usize,
         ssbo_index: usize,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
@@ -85,7 +85,7 @@ where
         model_index: usize,
         ssbo_index: usize,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         position: Vec3A,
         command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
@@ -192,7 +192,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         grid_z: i32,
         model_index: usize,
         ssbo_index: usize,
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
         size_ratio_z: f32,
@@ -259,7 +259,10 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         Ok(terrain_recv)
     }
 
-    fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffers(
+        &mut self,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
+    ) -> anyhow::Result<()> {
         let mut mesh = self.model.meshes[0].lock();
         let vertices = mesh.primitives[0].vertices.to_vec();
         let indices = mesh.primitives[0].indices.to_vec();

@@ -3,6 +3,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use parking_lot::RwLock;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -23,9 +24,10 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
-    graphics: Weak<RwLock<GraphicsType>>,
-    resource_manager:
-        Weak<RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+    graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
+    resource_manager: Weak<
+        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
+    >,
     scene_name: String,
     model_count: Arc<AtomicUsize>,
     ssbo_count: AtomicUsize,
@@ -50,9 +52,11 @@ where
 {
     pub fn new(
         resource_manager: Weak<
-            RwLock<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
+            RwLock<
+                ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
+            >,
         >,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
     ) -> Self {
         GameScene {
             graphics,

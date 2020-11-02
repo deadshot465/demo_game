@@ -42,7 +42,7 @@ where
     pub model_name: String,
     pub ssbo_index: usize,
     pub animations: HashMap<String, Animation>,
-    graphics: Weak<RwLock<GraphicsType>>,
+    graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -60,7 +60,7 @@ where
         document: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
-        graphics: Weak<RwLock<GraphicsType>>,
+        graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -429,7 +429,7 @@ where
 impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(
         file_name: &'static str,
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -504,7 +504,10 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model_recv)
     }
 
-    fn create_buffers(&mut self, graphics: Arc<RwLock<Graphics>>) -> anyhow::Result<()> {
+    fn create_buffers(
+        &mut self,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
+    ) -> anyhow::Result<()> {
         let mut handles = HashMap::new();
         for (index, mesh) in self.skinned_meshes.iter().enumerate() {
             let mut mesh_lock = mesh.lock();

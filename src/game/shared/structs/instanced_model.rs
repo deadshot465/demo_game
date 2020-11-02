@@ -43,7 +43,7 @@ where
 impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(
         file_name: &'static str,
-        graphics: Weak<RwLock<Graphics>>,
+        graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
         position: Vec3A,
         scale: Vec3A,
         rotation: Vec3A,
@@ -120,7 +120,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
 
     fn create_vertex_and_index_buffer(
         &mut self,
-        graphics: Arc<RwLock<Graphics>>,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
     ) -> anyhow::Result<()> {
         let mut vertices = vec![];
         let mut indices = vec![];
@@ -152,7 +152,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn create_instance_buffer(
-        graphics: Arc<RwLock<Graphics>>,
+        graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
         instance_data: &[InstanceData],
     ) -> anyhow::Result<Buffer> {
         let buffer_size = (std::mem::size_of::<InstanceData>() * instance_data.len()) as u64;
