@@ -5,8 +5,6 @@ pub struct UniformBuffers {
     pub is_disposed: bool,
     pub view_projection: ManuallyDrop<super::Buffer>,
     pub directional_light: ManuallyDrop<super::Buffer>,
-    pub model_buffer: Option<ManuallyDrop<super::Buffer>>,
-    pub mesh_buffer: Option<ManuallyDrop<super::Buffer>>,
     pub primary_ssbo: Option<ManuallyDrop<super::Buffer>>,
 }
 
@@ -16,8 +14,6 @@ impl UniformBuffers {
             is_disposed: false,
             view_projection: ManuallyDrop::new(view_projection),
             directional_light: ManuallyDrop::new(directional_light),
-            model_buffer: None,
-            mesh_buffer: None,
             primary_ssbo: None,
         }
     }
@@ -36,12 +32,6 @@ impl Disposable for UniformBuffers {
         unsafe {
             ManuallyDrop::drop(&mut self.view_projection);
             ManuallyDrop::drop(&mut self.directional_light);
-            if let Some(buffer) = self.model_buffer.as_mut() {
-                ManuallyDrop::drop(buffer);
-            }
-            if let Some(buffer) = self.mesh_buffer.as_mut() {
-                ManuallyDrop::drop(buffer);
-            }
             if let Some(buffer) = self.primary_ssbo.as_mut() {
                 ManuallyDrop::drop(buffer);
             }

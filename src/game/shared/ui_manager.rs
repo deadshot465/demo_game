@@ -41,6 +41,7 @@ where
     context: Context,
     convert_config: ConvertConfig,
     drawer: ManuallyDrop<Drawer>,
+    is_initialized: bool,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -122,6 +123,9 @@ where
     }
 
     pub fn prerender(&mut self) {
+        if !self.is_initialized {
+            return;
+        }
         let ctx = &mut self.context;
         let drawer = &mut self.drawer;
         drawer.set_font_size(ctx, 20);
@@ -130,22 +134,34 @@ where
         ctx.begin(
             nuklear::nk_string!("Basic User Interface"),
             nuklear::Rect {
-                x: 320.0,
+                x: 50.0,
                 y: 50.0,
-                w: 275.0,
-                h: 610.0,
+                w: 300.0,
+                h: 300.0,
             },
             flags,
         );
         Self::set_ui_header(drawer, ctx, "Basic Image");
-        Self::set_ui_widget(drawer, ctx, 35.0, false);
-        ctx.button_text("Push me.");
+        Self::set_ui_widget(drawer, ctx, 100.0, true);
+        ctx.image(nuklear::Image::with_id(0));
         drawer.set_font_size(ctx, 14);
         ctx.end();
     }
 
+    pub fn set_disposing(&mut self) {
+        self.is_initialized = false;
+    }
+
+    pub fn set_initialized(&mut self) {
+        self.is_initialized = true;
+    }
+
     pub fn start_input(&mut self) {
         self.context.input_begin();
+    }
+
+    pub fn wait_idle(&self) {
+        self.drawer.wait_idle();
     }
 
     fn set_ui_header(drawer: &mut Drawer, ctx: &mut Context, title: &str) {
@@ -172,7 +188,7 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
 
         let mut drawer = unsafe {
             Drawer::new(
-                graphics.logical_device.as_ref().clone(),
+                graphics.logical_device.clone(),
                 graphics.instance.clone(),
                 graphics.physical_device.physical_device,
                 *graphics.graphics_queue.lock(),
@@ -211,6 +227,7 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
             context: ctx,
             convert_config,
             drawer: ManuallyDrop::new(drawer),
+            is_initialized: true,
         }
     }
 
@@ -221,6 +238,9 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
         scale: nuklear::Vec2,
         wait_semaphore: Semaphore,
     ) -> Semaphore {
+        if !self.is_initialized {
+            return Semaphore::null();
+        }
         let context = &mut self.context;
         let convert_config = &mut self.convert_config;
         self.drawer.draw(

@@ -566,16 +566,19 @@ impl Drop for Pipeline {
                     self.logical_device.destroy_pipeline(*pipeline, None);
                 }
             }
+            self.graphic_pipelines.clear();
 
             for (_, layout) in self.pipeline_layouts.iter() {
                 self.logical_device.destroy_pipeline_layout(*layout, None);
             }
+            self.pipeline_layouts.clear();
 
             if self.owned_renderpass {
                 for (_, renderpass) in self.render_pass.iter() {
                     self.logical_device.destroy_render_pass(*renderpass, None);
                 }
             }
+            self.render_pass.clear();
 
             log::info!("Graphic pipelines successfully destroyed.");
         }

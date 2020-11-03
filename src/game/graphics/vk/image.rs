@@ -20,7 +20,7 @@ pub struct Image {
     pub mapped_memory: *mut c_void,
     pub width: u32,
     pub height: u32,
-    image: ash::vk::Image,
+    pub image: ash::vk::Image,
     logical_device: Weak<ash::Device>,
     is_disposed: bool,
     allocator: Weak<ShardedLock<Allocator>>,

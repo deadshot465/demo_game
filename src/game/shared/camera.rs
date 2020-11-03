@@ -73,6 +73,12 @@ impl Camera {
         self.projection
     }
 
+    pub fn update_window(&mut self, width: f64, height: f64) {
+        self.width = width;
+        self.height = height;
+        self.set_perspective(70.0_f32.to_radians(), (width / height) as f32, 0.1, 1000.0);
+    }
+
     fn move_camera(&mut self, key: VirtualKeyCode) {
         let x: f32 = self.position.x();
         let y: f32 = self.position.y();

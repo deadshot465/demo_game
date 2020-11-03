@@ -6,12 +6,14 @@ pub use texture::Texture;
 use ash::version::DeviceV1_0;
 use ash::vk::*;
 use ash::Device;
+use image::GenericImageView;
 use nuklear::{
     font_cyrillic_glyph_ranges, Buffer as NkBuffer, Context, ConvertConfig, DrawNullTexture,
     DrawVertexLayoutAttribute, DrawVertexLayoutElements, DrawVertexLayoutFormat, FontAtlas,
     FontAtlasFormat, FontConfig, FontID, Handle, Size, UserFont, Vec2,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 
 struct Vertex {
     position: [f32; 2],
@@ -25,8 +27,8 @@ pub struct Drawer {
     pub allocator: nuklear::Allocator,
     pub draw_null_texture: DrawNullTexture,
     nuklear_buffer: NkBuffer,
-    logical_device: Device,
-    instance: ash::Instance,
+    logical_device: Arc<Device>,
+    instance: Arc<ash::Instance>,
     physical_device: PhysicalDevice,
     graphics_queue: Queue,
     graphics_queue_index: u32,
@@ -52,12 +54,14 @@ pub struct Drawer {
     font_config: FontConfig,
     font_atlas: FontAtlas,
     fonts: HashMap<u8, FontID>,
+    textures: Vec<Texture>,
+    texture_ids: Vec<Handle>,
 }
 
 impl Drawer {
     pub unsafe fn new(
-        device: ash::Device,
-        instance: ash::Instance,
+        device: Arc<ash::Device>,
+        instance: Arc<ash::Instance>,
         physical_device: PhysicalDevice,
         graphics_queue: Queue,
         graphics_queue_index: u32,
@@ -69,40 +73,41 @@ impl Drawer {
         nk_command_buffer_size: usize,
         font_bytes: &[u8],
     ) -> Self {
-        let semaphore = Self::create_semaphore(&device);
-        let fence = Self::create_fence(&device);
-        let renderpass = Self::create_renderpass(&device, color_format, depth_format, sample_count);
+        let semaphore = Self::create_semaphore(&*device);
+        let fence = Self::create_fence(&*device);
+        let renderpass =
+            Self::create_renderpass(&*device, color_format, depth_format, sample_count);
         let vertex_buffer = Buffer::new(
-            &device,
+            &*device,
             vertex_buffer_size,
-            &instance,
+            &*instance,
             physical_device,
             BufferUsageFlags::VERTEX_BUFFER,
             MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
         );
         let index_buffer = Buffer::new(
-            &device,
+            &*device,
             index_buffer_size,
-            &instance,
+            &*instance,
             physical_device,
             BufferUsageFlags::INDEX_BUFFER,
             MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
         );
         let uniform_buffer = Buffer::new(
-            &device,
+            &*device,
             std::mem::size_of::<glam::Mat4>() as u64,
-            &instance,
+            &*instance,
             physical_device,
             BufferUsageFlags::UNIFORM_BUFFER,
             MemoryPropertyFlags::HOST_COHERENT | MemoryPropertyFlags::HOST_VISIBLE,
         );
-        let descriptor_pool = Self::create_descriptor_pool(&device);
-        let descriptor_set_layout = Self::create_descriptor_set_layout(&device);
+        let descriptor_pool = Self::create_descriptor_pool(&*device);
+        let descriptor_set_layout = Self::create_descriptor_set_layout(&*device);
         let layouts = [descriptor_set_layout];
-        let descriptor_set = Self::create_descriptor_set(&device, descriptor_pool, &layouts[0..]);
-        let pipeline_layout = Self::create_pipeline_layout(&device, &layouts[0..]);
-        let vertex_shader = Self::create_shader_module(&device, "shaders/ui_vert.spv");
-        let fragment_shader = Self::create_shader_module(&device, "shaders/ui_frag.spv");
+        let descriptor_set = Self::create_descriptor_set(&*device, descriptor_pool, &layouts[0..]);
+        let pipeline_layout = Self::create_pipeline_layout(&*device, &layouts[0..]);
+        let vertex_shader = Self::create_shader_module(&*device, "shaders/ui_vert.spv");
+        let fragment_shader = Self::create_shader_module(&*device, "shaders/ui_frag.spv");
 
         let name = std::ffi::CString::new("main").expect("Failed to create CString for shader.");
         let mut shader_stage_info = vec![PipelineShaderStageCreateInfo::builder()
@@ -118,7 +123,7 @@ impl Drawer {
                 .build(),
         );
         let pipeline = Self::create_pipeline(
-            &device,
+            &*device,
             sample_count,
             pipeline_layout,
             renderpass,
@@ -128,16 +133,16 @@ impl Drawer {
         device.destroy_shader_module(vertex_shader, None);
         device.destroy_shader_module(fragment_shader, None);
 
-        let command_pool = Self::create_command_pool(&device, graphics_queue_index);
-        let command_buffer = Self::allocate_command_buffers(&device, command_pool);
+        let command_pool = Self::create_command_pool(&*device, graphics_queue_index);
+        let command_buffer = Self::allocate_command_buffers(&*device, command_pool);
         let mut nk_allocator = nuklear::Allocator::new_vec();
         let mut font_config = Self::create_font_config(font_bytes);
         let (mut atlas, fonts) = Self::setup_font_atlas(&mut nk_allocator, &mut font_config);
         let mut draw_null_texture = DrawNullTexture::default();
         let (font_image, font_sampler) = Self::bake_font(
             &mut atlas,
-            &device,
-            &instance,
+            &*device,
+            &*instance,
             physical_device,
             command_pool,
             graphics_queue,
@@ -148,7 +153,7 @@ impl Drawer {
             &font_image,
             font_sampler,
             descriptor_set,
-            &device,
+            &*device,
         );
 
         Drawer {
@@ -203,7 +208,35 @@ impl Drawer {
             font_atlas: atlas,
             fonts,
             allocator: nk_allocator,
+            textures: vec![],
+            texture_ids: vec![],
         }
+    }
+
+    pub fn add_texture_from_file(&mut self, file_name: &str) {
+        let raw_bytes = std::fs::read(file_name).expect("Failed to open texture file for Nuklear.");
+        let texture = Self::create_texture(
+            &*self.logical_device,
+            &*self.instance,
+            self.physical_device,
+            self.command_pool,
+            self.graphics_queue,
+            raw_bytes.as_slice(),
+            self.color_format,
+        );
+        self.textures.push(texture);
+        let handle = Handle::from_id(self.textures.len() as i32);
+        self.texture_ids.push(handle);
+    }
+
+    pub fn add_texture_from_image(&mut self, image: crate::game::Image) {
+        self.textures.push(Texture {
+            image: image.image,
+            image_view: image.image_view,
+            device_memory: image.device_memory,
+        });
+        let handle = Handle::from_id(self.textures.len() as i32);
+        self.texture_ids.push(handle);
     }
 
     pub fn create_context(&mut self, font_size: u8) -> Context {
@@ -408,6 +441,15 @@ impl Drawer {
         }
     }
 
+    pub fn wait_idle(&self) {
+        unsafe {
+            let fences = [self.command_finished];
+            self.logical_device
+                .wait_for_fences(&fences[0..], true, u64::MAX)
+                .expect("Failed to wait for fences for Nuklear.");
+        }
+    }
+
     fn allocate_command_buffers(device: &ash::Device, command_pool: CommandPool) -> CommandBuffer {
         let allocate_info = CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
@@ -532,6 +574,79 @@ impl Drawer {
         font_config.set_glyph_range(font_cyrillic_glyph_ranges());
         font_config.set_ttf(font_bytes);
         font_config
+    }
+
+    fn create_texture(
+        device: &ash::Device,
+        instance: &ash::Instance,
+        physical_device: PhysicalDevice,
+        command_pool: CommandPool,
+        graphics_queue: Queue,
+        raw_data: &[u8],
+        color_format: ash::vk::Format,
+    ) -> Texture {
+        let img = image::load_from_memory(raw_data).expect("Failed to read texture from memory.");
+        let (width, height) = img.dimensions();
+        let mut texture = Texture::new(
+            width,
+            height,
+            device,
+            instance,
+            physical_device,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+        );
+        let image_memory_requirements =
+            unsafe { device.get_image_memory_requirements(texture.image) };
+        let staging_buffer = Buffer::new(
+            device,
+            image_memory_requirements.size,
+            instance,
+            physical_device,
+            BufferUsageFlags::TRANSFER_SRC,
+            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
+        );
+        let buffer_memory_requirements =
+            unsafe { device.get_buffer_memory_requirements(staging_buffer.buffer) };
+        let mapped = unsafe {
+            device
+                .map_memory(
+                    staging_buffer.device_memory,
+                    0,
+                    buffer_memory_requirements.size,
+                    MemoryMapFlags::empty(),
+                )
+                .expect("Failed to map memory for staging buffer.")
+        };
+        let rgba_raw_data = img.to_rgba();
+        let bgra_raw_data = img.to_bgra();
+        let raw_bytes = match color_format {
+            Format::B8G8R8A8_UNORM => bgra_raw_data.as_ptr(),
+            Format::R8G8B8A8_UNORM => rgba_raw_data.as_ptr(),
+            _ => panic!("The color format of the texture has to either be RGBA or BGRA."),
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                raw_bytes as *const std::ffi::c_void,
+                mapped,
+                (width * height * 4) as usize,
+            );
+            device.unmap_memory(staging_buffer.device_memory);
+        }
+        texture.copy_buffer_to_image(
+            device,
+            staging_buffer.buffer,
+            command_pool,
+            graphics_queue,
+            width,
+            height,
+        );
+        texture.create_image_view(device);
+
+        unsafe {
+            device.free_memory(staging_buffer.device_memory, None);
+            device.destroy_buffer(staging_buffer.buffer, None);
+        }
+        texture
     }
 
     fn create_pipeline(

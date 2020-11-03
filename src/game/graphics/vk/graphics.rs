@@ -103,12 +103,12 @@ pub struct Graphics {
     pub resource_manager: ResourceManagerHandle,
     pub is_initialized: bool,
     pub inflight_buffer_count: usize,
-    pub instance: Instance,
+    pub instance: Arc<Instance>,
     pub physical_device: super::PhysicalDevice,
     pub ui_manager: Option<UIManagerHandle>,
     pub depth_format: Format,
     pub sample_count: SampleCountFlags,
-    window: Rc<RefCell<winit::window::Window>>,
+    window: std::rc::Weak<RefCell<winit::window::Window>>,
     window_width: u32,
     window_height: u32,
     entry: Entry,
@@ -128,11 +128,12 @@ pub struct Graphics {
 
 impl Graphics {
     pub fn new(
-        window: Rc<RefCell<winit::window::Window>>,
+        window: std::rc::Weak<RefCell<winit::window::Window>>,
         camera: Rc<RefCell<Camera>>,
         resource_manager: ResourceManagerHandle,
     ) -> anyhow::Result<Self> {
-        let window_handle = window.borrow();
+        let window_ptr = window.upgrade().expect("Failed to upgrade window handle.");
+        let window_handle = window_ptr.borrow();
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
         let entry = Entry::new()?;
         let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation")?];
@@ -280,9 +281,10 @@ impl Graphics {
             height: window_height,
         } = window_handle.inner_size();
         drop(window_handle);
+        drop(window_ptr);
         Ok(Graphics {
             entry,
-            instance,
+            instance: Arc::new(instance),
             surface_loader,
             debug_messenger,
             surface,
@@ -562,7 +564,6 @@ impl Graphics {
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
         self.create_descriptor_set_layout()?;
-        //self.create_dynamic_model_buffers()?;
         self.create_primary_ssbo()?;
         self.allocate_descriptor_set()?;
         self.create_graphics_pipeline(ShaderType::BasicShader)?;
@@ -592,7 +593,115 @@ impl Graphics {
         Ok(())
     }
 
-    pub fn recreate_swapchain(&mut self) {}
+    pub fn recreate_swapchain(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+        if self.is_initialized {
+            unsafe {
+                self.wait_idle();
+                self.set_disposing();
+                if let Some(ui) = self.ui_manager.as_ref() {
+                    let mut borrowed = ui.borrow_mut();
+                    borrowed.wait_idle();
+                    borrowed.set_disposing();
+                }
+                self.dispose()?;
+            }
+        }
+
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        self.camera
+            .borrow_mut()
+            .update_window(width as f64, height as f64);
+        let window = self
+            .window
+            .upgrade()
+            .expect("Failed to upgrade window handle.");
+        let handle = window.borrow();
+        self.swapchain = ManuallyDrop::new(Initializer::create_swapchain(
+            &self.surface_loader,
+            self.surface,
+            &self.physical_device,
+            &*handle,
+            &*self.instance,
+            Arc::downgrade(&self.logical_device),
+            Arc::downgrade(&self.allocator),
+        ));
+        self.depth_image = ManuallyDrop::new(Initializer::create_depth_image(
+            Arc::downgrade(&self.logical_device),
+            self.depth_format,
+            &*self.swapchain,
+            self.frame_data[0].command_pool,
+            *self.graphics_queue.lock(),
+            self.sample_count,
+            Arc::downgrade(&self.allocator),
+        ));
+        self.msaa_image = ManuallyDrop::new(Initializer::create_msaa_image(
+            Arc::downgrade(&self.logical_device),
+            &*self.swapchain,
+            self.frame_data[0].command_pool,
+            *self.graphics_queue.lock(),
+            self.sample_count,
+            Arc::downgrade(&self.allocator),
+        ));
+        let view_projection = Initializer::create_view_projection(
+            &*self.camera.borrow(),
+            Arc::downgrade(&self.logical_device),
+            Arc::downgrade(&self.allocator),
+        )?;
+        let light_x = std::env::var("LIGHT_X").unwrap().parse::<f32>().unwrap();
+        let light_z = std::env::var("LIGHT_Z").unwrap().parse::<f32>().unwrap();
+        let directional_light = Directional::new(
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+            Vec3A::new(light_x, 20000.0, light_z),
+            0.1,
+            0.5,
+        );
+        let directional_light = Initializer::create_directional_light(
+            &directional_light,
+            Arc::downgrade(&self.logical_device),
+            Arc::downgrade(&self.allocator),
+        )?;
+        self.uniform_buffers =
+            ManuallyDrop::new(UniformBuffers::new(view_projection, directional_light));
+        self.pipeline = Arc::new(ShardedLock::new(ManuallyDrop::new(super::Pipeline::new(
+            self.logical_device.clone(),
+        ))));
+        {
+            let mut pipeline_handle = self
+                .pipeline
+                .write()
+                .expect("Failed to get pipeline handle.");
+            pipeline_handle.create_normal_renderpass(
+                self.swapchain.format.format,
+                self.depth_format,
+                self.sample_count,
+            );
+            pipeline_handle
+                .create_offscreen_renderpass(self.swapchain.format.format, self.depth_format)?;
+        }
+        let offscreen_renderpass = self
+            .pipeline
+            .read()
+            .expect("Failed to get read handle from Pipeline.")
+            .render_pass
+            .get(&RenderPassType::Offscreen)
+            .cloned()
+            .expect("Failed to get offscreen renderpass.");
+        self.offscreen_pass = ManuallyDrop::new(Self::create_offscreen_pass(
+            Arc::downgrade(&self.logical_device),
+            self.swapchain.format.format,
+            self.depth_format,
+            Arc::downgrade(&self.allocator),
+            offscreen_renderpass,
+        )?);
+        self.initialize()?;
+        if let Some(ui) = self.ui_manager.as_ref() {
+            let mut borrowed = ui.borrow_mut();
+            borrowed.set_initialized();
+        }
+        Ok(())
+    }
 
     pub fn render(&self) -> anyhow::Result<()> {
         if !self.is_initialized {
@@ -618,21 +727,17 @@ impl Graphics {
                 );
             }
             let mut image_index = 0_u32;
-            let mut is_suboptimal = false;
             match result {
                 Ok(index) => {
                     image_index = index.0;
-                    is_suboptimal = index.1;
                 }
                 Err(e) => match e {
-                    ash::vk::Result::ERROR_OUT_OF_DATE_KHR | ash::vk::Result::SUBOPTIMAL_KHR => {
+                    ash::vk::Result::ERROR_OUT_OF_DATE_KHR => {
+                        println!("Device out of date. (Acquiring image.)");
                         return Err(anyhow::anyhow!("Swapchain is out of date or suboptimal."));
                     }
                     _ => (),
                 },
-            }
-            if is_suboptimal {
-                return Err(anyhow::anyhow!("Swapchain is suboptimal."));
             }
             self.logical_device
                 .reset_command_pool(current_frame.command_pool, CommandPoolResetFlags::empty())?;
@@ -672,7 +777,7 @@ impl Graphics {
                     submit_info.as_slice(),
                     fences[0],
                 )
-                .expect("Failed to submit queue for execution.");
+                .expect("Failed to submit the queue.");
 
             let ui_overlay_finished = if let Some(ui_manager) = self.ui_manager.as_ref() {
                 let mut borrowed = ui_manager.borrow_mut();
@@ -700,9 +805,28 @@ impl Graphics {
                 .swapchains(swapchain.as_slice());
             {
                 let swapchain_loader = &self.swapchain.swapchain_loader;
-                swapchain_loader
-                    .queue_present(*self.present_queue.lock(), &present_info)
-                    .expect("Failed to present with the swapchain.");
+                let result =
+                    swapchain_loader.queue_present(*self.present_queue.lock(), &present_info);
+                match result {
+                    Ok(suboptimal) => {
+                        if suboptimal {
+                            let handle = self
+                                .window
+                                .upgrade()
+                                .expect("Failed to upgrade window handle.");
+                            handle.borrow().request_redraw();
+                            return Err(anyhow::anyhow!("Swapchain is suboptimal."));
+                        }
+                    }
+                    Err(e) => match e {
+                        ash::vk::Result::ERROR_OUT_OF_DATE_KHR
+                        | ash::vk::Result::SUBOPTIMAL_KHR => {
+                            println!("Device out of date. (Presenting.)");
+                            return Err(anyhow::anyhow!("Swapchain is out of date or suboptimal."));
+                        }
+                        _ => panic!("Error when submitting the queue:"),
+                    },
+                }
             }
             self.current_frame.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -1284,21 +1408,6 @@ impl Graphics {
     }
 
     unsafe fn dispose(&mut self) -> anyhow::Result<()> {
-        for frame in self.frame_data.iter() {
-            let fences = [frame.fence];
-            self.logical_device
-                .wait_for_fences(&fences[0..], true, u64::MAX)?;
-            self.logical_device
-                .destroy_semaphore(frame.completed_semaphore, None);
-            self.logical_device
-                .destroy_semaphore(frame.acquired_semaphore, None);
-            self.logical_device.destroy_fence(frame.fence, None);
-            let command_buffers = vec![frame.main_command_buffer];
-            self.logical_device
-                .free_command_buffers(frame.command_pool, command_buffers.as_slice());
-            self.logical_device
-                .destroy_command_pool(frame.command_pool, None);
-        }
         for buffer in self.frame_buffers.iter() {
             self.logical_device.destroy_framebuffer(*buffer, None);
         }
@@ -1316,6 +1425,8 @@ impl Graphics {
         ManuallyDrop::drop(pipeline);
         self.logical_device
             .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
+        self.logical_device
+            .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         ManuallyDrop::drop(&mut self.uniform_buffers);
         ManuallyDrop::drop(&mut self.msaa_image);
         ManuallyDrop::drop(&mut self.depth_image);
@@ -1331,58 +1442,6 @@ impl Graphics {
             current_frame % inflight_buffer_count,
         )
     }
-
-    /*fn create_dynamic_model_buffers(&mut self) -> anyhow::Result<()> {
-        let arc = self.resource_manager.upgrade();
-        if arc.is_none() {
-            panic!("Resource manager has been destroyed.");
-        }
-        let resource_manager = arc.unwrap();
-        let resource_lock = resource_manager.read().unwrap();
-        if resource_lock.models.is_empty() && resource_lock.skinned_models.is_empty() {
-            return Err(anyhow::anyhow!("There are no models in resource manager."));
-        }
-        let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
-        let mut matrices = vec![Mat4::identity(); model_count];
-        for model in resource_lock.models.iter() {
-            let model_lock = model.lock();
-            matrices[model_lock.model_index] = model_lock.get_world_matrix();
-        }
-        for model in resource_lock.skinned_models.iter() {
-            let model_lock = model.lock();
-            matrices[model_lock.model_index] = model_lock.get_world_matrix();
-        }
-        drop(resource_lock);
-        drop(resource_manager);
-        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
-        let buffer_size = dynamic_alignment * DeviceSize::try_from(matrices.len())?;
-        let mut dynamic_model = DynamicModel {
-            model_matrices: matrices,
-            buffer: std::ptr::null_mut()
-        };
-        dynamic_model.buffer = aligned_alloc::aligned_alloc(buffer_size as usize, dynamic_alignment as usize) as *mut Mat4;
-        assert_ne!(dynamic_model.buffer, std::ptr::null_mut());
-
-        let mut buffer = super::Buffer::new(
-            Arc::downgrade(&self.logical_device),
-            buffer_size,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT, Arc::downgrade(&self.allocator));
-        unsafe {
-            for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
-                let ptr = std::mem::transmute::<usize, *mut Mat4>(
-                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
-                        (i * (dynamic_alignment as usize))
-                );
-                *ptr = model.clone();
-            }
-            let mapped = buffer.map_memory(WHOLE_SIZE, 0);
-            std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
-        }
-        self.dynamic_objects.models = dynamic_model;
-        self.uniform_buffers.model_buffer = Some(ManuallyDrop::new(buffer));
-        Ok(())
-    }*/
 
     fn update_secondary_command_buffers(
         &self,
@@ -1426,45 +1485,6 @@ impl Graphics {
             .to_vec();
         Ok(command_buffers)
     }
-
-    /*fn update_dynamic_buffer(&mut self, _delta_time: f64) -> anyhow::Result<()> {
-        let resource_manager = self.resource_manager.upgrade().unwrap();
-        let resource_lock = resource_manager.read().unwrap();
-        let model_count = resource_lock.get_model_count() + resource_lock.get_skinned_model_count();
-        let mut matrices = vec![Mat4::identity(); model_count];
-        for model in resource_lock.models.iter() {
-            let model_lock = model.lock();
-            matrices[model_lock.model_index] = model_lock.get_world_matrix();
-        }
-        for model in resource_lock.skinned_models.iter() {
-            let model_lock = model.lock();
-            matrices[model_lock.model_index] = model_lock.get_world_matrix();
-        }
-        drop(resource_lock);
-        drop(resource_manager);
-        self.dynamic_objects.models.model_matrices = matrices;
-        let dynamic_model = &self.dynamic_objects.models;
-        let dynamic_alignment = self.dynamic_objects.dynamic_alignment;
-        unsafe {
-            for (i, model) in dynamic_model.model_matrices.iter().enumerate() {
-                let ptr = std::mem::transmute::<usize, *mut Mat4>(
-                    std::mem::transmute::<*mut Mat4, usize>(dynamic_model.buffer) +
-                        (i * (dynamic_alignment as usize))
-                );
-                *ptr = *model;
-            }
-            let mapped = self.uniform_buffers.model_buffer
-                .as_ref()
-                .unwrap()
-                .mapped_memory;
-            let buffer_size = self.uniform_buffers.model_buffer
-                .as_ref()
-                .unwrap()
-                .buffer_size;
-            std::ptr::copy_nonoverlapping(dynamic_model.buffer as *mut c_void, mapped, buffer_size as usize);
-            Ok(())
-        }
-    }*/
 }
 
 impl GraphicsBase<super::Buffer, CommandBuffer, super::Image> for Graphics {
@@ -1492,11 +1512,26 @@ unsafe impl Sync for Graphics {}
 impl Drop for Graphics {
     fn drop(&mut self) {
         unsafe {
-            log::info!("Dropping graphics...");
             self.logical_device
                 .device_wait_idle()
                 .expect("Failed to wait for device to idle.");
             self.dispose().expect("Failed to dispose graphics.");
+            for frame in self.frame_data.iter() {
+                let fences = [frame.fence];
+                self.logical_device
+                    .wait_for_fences(&fences[0..], true, u64::MAX)
+                    .expect("Failed to wait for fences of graphics.");
+                self.logical_device
+                    .destroy_semaphore(frame.completed_semaphore, None);
+                self.logical_device
+                    .destroy_semaphore(frame.acquired_semaphore, None);
+                self.logical_device.destroy_fence(frame.fence, None);
+                let command_buffers = vec![frame.main_command_buffer];
+                self.logical_device
+                    .free_command_buffers(frame.command_pool, command_buffers.as_slice());
+                self.logical_device
+                    .destroy_command_pool(frame.command_pool, None);
+            }
             for thread in self.thread_pool.threads.iter() {
                 for pool in thread.command_pools.iter() {
                     self.logical_device.destroy_command_pool(*pool.lock(), None);
@@ -1513,7 +1548,7 @@ impl Drop for Graphics {
             self.logical_device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             if self.debug_messenger != DebugUtilsMessengerEXT::null() {
-                let debug_loader = DebugUtils::new(&self.entry, &self.instance);
+                let debug_loader = DebugUtils::new(&self.entry, &*self.instance);
                 debug_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
             }
             self.instance.destroy_instance(None);

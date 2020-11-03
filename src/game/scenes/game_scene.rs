@@ -223,7 +223,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 instance_count,
             )?;
         }
-        //self.generate_terrain(0, 0)?;
+        self.generate_terrain(0, 0)?;
         Ok(())
     }
 
@@ -241,7 +241,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let graphics_lock = graphics.read();
-            graphics_lock.render()?;
+            let _ = graphics_lock.render();
         }
         Ok(())
     }

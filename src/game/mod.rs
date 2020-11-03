@@ -55,13 +55,14 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             WindowBuilder::new()
                 .with_title(title)
                 .with_inner_size(winit::dpi::LogicalSize::new(width, height))
+                .with_resizable(false)
                 .build(event_loop)
                 .expect("Failed to create window."),
         ));
         let camera = Rc::new(RefCell::new(Camera::new(width, height)));
         let resource_manager = Arc::new(RwLock::new(ManuallyDrop::new(ResourceManager::new())));
         let graphics = Graphics::new(
-            window.clone(),
+            std::rc::Rc::downgrade(&window),
             camera.clone(),
             Arc::downgrade(&resource_manager),
         )?;
@@ -163,7 +164,6 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     fn drop(&mut self) {
-        log::info!("Dropping game...");
         let initialized = self.graphics.read().is_initialized();
         if initialized {
             self.graphics.write().set_disposing();

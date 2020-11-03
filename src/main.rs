@@ -139,6 +139,15 @@ fn main() -> anyhow::Result<()> {
                                 ui.borrow_mut().input_scroll(delta);
                             }
                         }
+                        WindowEvent::Resized(winit::dpi::PhysicalSize { width, height }) => {
+                            game.graphics.write().recreate_swapchain(width, height)?;
+                            if width > 0 && height > 0 {
+                                let resource_lock = game.resource_manager.read();
+                                for model in resource_lock.model_queue.iter() {
+                                    model.lock().create_ssbo()?;
+                                }
+                            }
+                        }
                         _ => (),
                     },
                     Event::MainEventsCleared => {
@@ -151,16 +160,6 @@ fn main() -> anyhow::Result<()> {
                             game.update(delta_time).expect("Failed to update the game.");
                             game.render(delta_time).expect("Failed to render the game.");
                         });
-                        /*game.window
-                        .read()
-                        .expect("Failed to lock window handle.")
-                        .request_redraw();*/
-                    }
-                    Event::RedrawEventsCleared => {
-                        /*if let Some(ui_manager) = game.ui_manager.clone() {
-                            let mut borrowed = ui_manager.borrow_mut();
-                            borrowed.clear();
-                        }*/
                     }
                     _ => (),
                 }
