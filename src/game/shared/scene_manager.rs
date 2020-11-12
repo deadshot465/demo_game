@@ -97,4 +97,23 @@ impl SceneManager {
             .borrow()
             .get_model_count()
     }
+
+    pub fn create_ssbo(&self) -> anyhow::Result<()> {
+        let current_index = self.current_index;
+        self.scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow()
+            .create_ssbo()?;
+        Ok(())
+    }
+
+    pub fn get_command_buffers(&self) {
+        let current_index = self.current_index;
+        self.scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow()
+            .get_command_buffers();
+    }
 }

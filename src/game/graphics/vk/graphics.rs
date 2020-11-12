@@ -18,7 +18,7 @@ use vk_mem::*;
 
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Initializer, RenderPassType, ThreadPool, UniformBuffers};
-use crate::game::shared::enums::ImageFormat;
+use crate::game::shared::enums::{ImageFormat, SceneType};
 use crate::game::shared::structs::{Directional, PushConstant, ViewProjection};
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::shared::util::interpolate_alpha;
@@ -36,8 +36,9 @@ const REFRACTION_HEIGHT: u32 = 720;
 type ResourceManagerHandle = Weak<
     RwLock<ManuallyDrop<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
-type UIManagerHandle =
-    Rc<RefCell<ManuallyDrop<UIManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>>;
+type UIManagerHandle = std::rc::Weak<
+    RefCell<ManuallyDrop<UIManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+>;
 
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -55,9 +56,10 @@ struct FrameData {
 }
 
 struct OffscreenFramebuffer {
-    pub framebuffer: Framebuffer,
+    pub framebuffer: Vec<Framebuffer>,
     pub color_image: ManuallyDrop<super::Image>,
     pub depth_image: ManuallyDrop<super::Image>,
+    pub msaa_image: ManuallyDrop<super::Image>,
     pub width: u32,
     pub height: u32,
 }
@@ -67,6 +69,7 @@ impl Drop for OffscreenFramebuffer {
         unsafe {
             ManuallyDrop::drop(&mut self.color_image);
             ManuallyDrop::drop(&mut self.depth_image);
+            ManuallyDrop::drop(&mut self.msaa_image);
         }
     }
 }
@@ -101,7 +104,6 @@ pub struct Graphics {
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager: ResourceManagerHandle,
-    pub is_initialized: bool,
     pub inflight_buffer_count: usize,
     pub instance: Arc<Instance>,
     pub physical_device: super::PhysicalDevice,
@@ -123,6 +125,7 @@ pub struct Graphics {
     frame_data: Vec<FrameData>,
     current_frame: AtomicUsize,
     offscreen_pass: ManuallyDrop<OffscreenPass>,
+    is_initialized: bool,
     //checkpoint_fn: NvDeviceDiagnosticCheckpointsFn,
 }
 
@@ -217,7 +220,7 @@ impl Graphics {
         let depth_image = Initializer::create_depth_image(
             Arc::downgrade(&device),
             depth_format,
-            &swapchain,
+            swapchain.extent,
             frame_data[0].command_pool,
             graphics_queue,
             sample_count,
@@ -226,7 +229,8 @@ impl Graphics {
 
         let msaa_image = Initializer::create_msaa_image(
             Arc::downgrade(&device),
-            &swapchain,
+            swapchain.format.format,
+            swapchain.extent,
             frame_data[0].command_pool,
             graphics_queue,
             sample_count,
@@ -258,7 +262,7 @@ impl Graphics {
         let mut pipeline = super::Pipeline::new(device.clone());
         let color_format = swapchain.format.format;
         pipeline.create_normal_renderpass(color_format, depth_format, sample_count);
-        pipeline.create_offscreen_renderpass(color_format, depth_format)?;
+        pipeline.create_offscreen_renderpass(color_format, depth_format, sample_count)?;
         let offscreen_renderpass = pipeline
             .render_pass
             .get(&RenderPassType::Offscreen)
@@ -268,7 +272,11 @@ impl Graphics {
             Arc::downgrade(&device),
             color_format,
             depth_format,
+            sample_count,
+            swapchain.swapchain_images.len(),
             Arc::downgrade(&allocator),
+            frame_data[0].command_pool,
+            graphics_queue,
             offscreen_renderpass,
         )?;
 
@@ -599,7 +607,8 @@ impl Graphics {
                 self.wait_idle();
                 self.set_disposing();
                 if let Some(ui) = self.ui_manager.as_ref() {
-                    let mut borrowed = ui.borrow_mut();
+                    let ui_manager = ui.upgrade().expect("Failed to upgrade UI handle.");
+                    let mut borrowed = ui_manager.borrow_mut();
                     borrowed.wait_idle();
                     borrowed.set_disposing();
                 }
@@ -630,7 +639,7 @@ impl Graphics {
         self.depth_image = ManuallyDrop::new(Initializer::create_depth_image(
             Arc::downgrade(&self.logical_device),
             self.depth_format,
-            &*self.swapchain,
+            self.swapchain.extent,
             self.frame_data[0].command_pool,
             *self.graphics_queue.lock(),
             self.sample_count,
@@ -638,7 +647,8 @@ impl Graphics {
         ));
         self.msaa_image = ManuallyDrop::new(Initializer::create_msaa_image(
             Arc::downgrade(&self.logical_device),
-            &*self.swapchain,
+            self.swapchain.format.format,
+            self.swapchain.extent,
             self.frame_data[0].command_pool,
             *self.graphics_queue.lock(),
             self.sample_count,
@@ -677,8 +687,11 @@ impl Graphics {
                 self.depth_format,
                 self.sample_count,
             );
-            pipeline_handle
-                .create_offscreen_renderpass(self.swapchain.format.format, self.depth_format)?;
+            pipeline_handle.create_offscreen_renderpass(
+                self.swapchain.format.format,
+                self.depth_format,
+                self.sample_count,
+            )?;
         }
         let offscreen_renderpass = self
             .pipeline
@@ -692,18 +705,23 @@ impl Graphics {
             Arc::downgrade(&self.logical_device),
             self.swapchain.format.format,
             self.depth_format,
+            self.sample_count,
+            self.swapchain.swapchain_images.len(),
             Arc::downgrade(&self.allocator),
+            self.frame_data[0].command_pool,
+            *self.graphics_queue.lock(),
             offscreen_renderpass,
         )?);
         self.initialize()?;
         if let Some(ui) = self.ui_manager.as_ref() {
-            let mut borrowed = ui.borrow_mut();
+            let ui_manager = ui.upgrade().expect("Failed to upgrade UI handle.");
+            let mut borrowed = ui_manager.borrow_mut();
             borrowed.set_initialized();
         }
         Ok(())
     }
 
-    pub fn render(&self) -> anyhow::Result<()> {
+    pub fn render(&self, scene_type: SceneType) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
         }
@@ -757,6 +775,7 @@ impl Graphics {
                 current_frame,
                 frame_index,
                 viewports.as_slice(),
+                &scene_type,
             )?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -779,7 +798,8 @@ impl Graphics {
                 )
                 .expect("Failed to submit the queue.");
 
-            let ui_overlay_finished = if let Some(ui_manager) = self.ui_manager.as_ref() {
+            let ui_overlay_finished = if let Some(ui) = self.ui_manager.as_ref() {
+                let ui_manager = ui.upgrade().expect("Failed to upgrade UI handle.");
                 let mut borrowed = ui_manager.borrow_mut();
                 Some(borrowed.render(
                     self.frame_buffers[image_index as usize],
@@ -833,13 +853,17 @@ impl Graphics {
         }
     }
 
-    pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    pub fn update(&mut self, delta_time: f64, scene_type: SceneType) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
         }
         let resource_arc = self.resource_manager.upgrade().unwrap();
-        let resource_lock = resource_arc.write();
-        for model in resource_lock.model_queue.iter() {
+        let resource_lock = resource_arc.read();
+        let current_model_queue = resource_lock
+            .model_queue
+            .get(&scene_type)
+            .expect("Failed to get model queue of the current scene.");
+        for model in current_model_queue.iter() {
             let mut model_lock = model.lock();
             model_lock.update(delta_time);
         }
@@ -1007,6 +1031,7 @@ impl Graphics {
         current_frame: &FrameData,
         frame_index: usize,
         viewports: &[Viewport],
+        scene_type: &SceneType,
     ) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
@@ -1019,50 +1044,34 @@ impl Graphics {
             },
         ];
         let extent = self.swapchain.extent;
-        let render_area = Rect2D::builder().extent(extent).offset(Offset2D::default());
-        let mut renderpass_ptr = AtomicPtr::new(std::ptr::null_mut());
-        {
-            let renderpass_begin_info = Box::new(
-                RenderPassBeginInfo::builder()
-                    .render_pass(
-                        self.pipeline
-                            .read()
-                            .expect("Failed to lock pipeline for beginning the renderpass.")
-                            .render_pass
-                            .get(&RenderPassType::Primary)
-                            .cloned()
-                            .unwrap(),
-                    )
-                    .clear_values(clear_values.as_slice())
-                    .render_area(*render_area)
-                    .framebuffer(frame_buffer),
-            );
-            renderpass_ptr = AtomicPtr::new(Box::into_raw(renderpass_begin_info));
-        }
-        let renderpass_ptr = Arc::new(renderpass_ptr);
+        let mut render_area = Rect2D::builder()
+            .extent(Extent2D {
+                width: REFLECTION_WIDTH,
+                height: REFLECTION_HEIGHT,
+            })
+            .offset(Offset2D::default());
         let scissors = vec![Rect2D::builder()
             .extent(extent)
             .offset(Offset2D::default())
             .build()];
-        let mut inheritance_ptr = AtomicPtr::new(std::ptr::null_mut());
-        {
-            let inheritance_info = Box::new(
-                CommandBufferInheritanceInfo::builder()
-                    .framebuffer(frame_buffer)
-                    .render_pass(
-                        self.pipeline
-                            .read()
-                            .expect("Failed to lock pipeline for creating the inheritance info.")
-                            .render_pass
-                            .get(&RenderPassType::Primary)
-                            .cloned()
-                            .unwrap(),
-                    )
-                    .build(),
-            );
-            inheritance_ptr = AtomicPtr::new(Box::into_raw(inheritance_info));
-        }
-        let inheritance_ptr = Arc::new(inheritance_ptr);
+        let offscreen_renderpass = self
+            .pipeline
+            .read()
+            .expect("Failed to lock pipeline for beginning the renderpass.")
+            .render_pass
+            .get(&RenderPassType::Offscreen)
+            .copied()
+            .expect("Failed to get offscreen renderpass.");
+        let primary_renderpass = self
+            .pipeline
+            .read()
+            .expect("Failed to lock pipeline for beginning the renderpass.")
+            .render_pass
+            .get(&RenderPassType::Primary)
+            .copied()
+            .expect("Failed to get primary renderpass.");
+
+        // Begin command buffer
         unsafe {
             let result = self.logical_device.begin_command_buffer(
                 current_frame.main_command_buffer,
@@ -1071,20 +1080,113 @@ impl Graphics {
             if let Err(e) = result {
                 log::error!("Error beginning command buffer: {}", e.to_string());
             }
+        }
+
+        let mut all_command_buffers = vec![];
+        // First renderpass
+        let mut renderpass_begin_info = RenderPassBeginInfo::builder()
+            .render_pass(offscreen_renderpass)
+            .clear_values(clear_values.as_slice())
+            .render_area(*render_area)
+            .framebuffer(self.offscreen_pass.framebuffers[0].framebuffer[frame_index]);
+
+        let inheritance_ptr = {
+            let inheritance_info = Box::new(
+                CommandBufferInheritanceInfo::builder()
+                    .framebuffer(self.offscreen_pass.framebuffers[0].framebuffer[frame_index])
+                    .render_pass(offscreen_renderpass)
+                    .build(),
+            );
+            AtomicPtr::new(Box::into_raw(inheritance_info))
+        };
+        let inheritance_handle = Arc::new(inheritance_ptr);
+        unsafe {
             self.logical_device.cmd_begin_render_pass(
                 current_frame.main_command_buffer,
-                &*renderpass_ptr.load(Ordering::SeqCst),
+                &renderpass_begin_info,
                 SubpassContents::SECONDARY_COMMAND_BUFFERS,
             );
-            let command_buffers = self.update_secondary_command_buffers(
-                inheritance_ptr.clone(),
+            self.update_secondary_command_buffers(
+                inheritance_handle,
                 viewports[0],
                 scissors[0],
                 frame_index,
+                scene_type,
             )?;
+            self.logical_device
+                .cmd_end_render_pass(current_frame.main_command_buffer);
+            //all_command_buffers.append(&mut command_buffers);
+        }
+
+        // Second renderpass
+        renderpass_begin_info = renderpass_begin_info
+            .framebuffer(self.offscreen_pass.framebuffers[1].framebuffer[frame_index]);
+        render_area = render_area.extent(Extent2D {
+            width: REFRACTION_WIDTH,
+            height: REFRACTION_HEIGHT,
+        });
+        let inheritance_ptr = {
+            let inheritance_info = Box::new(
+                CommandBufferInheritanceInfo::builder()
+                    .framebuffer(self.offscreen_pass.framebuffers[1].framebuffer[frame_index])
+                    .render_pass(offscreen_renderpass)
+                    .build(),
+            );
+            AtomicPtr::new(Box::into_raw(inheritance_info))
+        };
+        let inheritance_handle = Arc::new(inheritance_ptr);
+        unsafe {
+            self.logical_device.cmd_begin_render_pass(
+                current_frame.main_command_buffer,
+                &renderpass_begin_info,
+                SubpassContents::SECONDARY_COMMAND_BUFFERS,
+            );
+            self.update_secondary_command_buffers(
+                inheritance_handle,
+                viewports[0],
+                scissors[0],
+                frame_index,
+                scene_type,
+            )?;
+            self.logical_device
+                .cmd_end_render_pass(current_frame.main_command_buffer);
+            //all_command_buffers.append(&mut command_buffers);
+        }
+
+        // Primary renderpass
+        render_area = render_area.extent(extent);
+        renderpass_begin_info = renderpass_begin_info
+            .render_area(*render_area)
+            .framebuffer(frame_buffer)
+            .render_pass(primary_renderpass);
+
+        let inheritance_ptr = {
+            let inheritance_info = Box::new(
+                CommandBufferInheritanceInfo::builder()
+                    .framebuffer(frame_buffer)
+                    .render_pass(primary_renderpass)
+                    .build(),
+            );
+            AtomicPtr::new(Box::into_raw(inheritance_info))
+        };
+        let inheritance_handle = Arc::new(inheritance_ptr);
+        unsafe {
+            self.logical_device.cmd_begin_render_pass(
+                current_frame.main_command_buffer,
+                &renderpass_begin_info,
+                SubpassContents::SECONDARY_COMMAND_BUFFERS,
+            );
+            let mut command_buffers = self.update_secondary_command_buffers(
+                inheritance_handle,
+                viewports[0],
+                scissors[0],
+                frame_index,
+                scene_type,
+            )?;
+            all_command_buffers.append(&mut command_buffers);
             self.logical_device.cmd_execute_commands(
                 current_frame.main_command_buffer,
-                command_buffers.as_slice(),
+                all_command_buffers.as_slice(),
             );
             self.logical_device
                 .cmd_end_render_pass(current_frame.main_command_buffer);
@@ -1238,7 +1340,11 @@ impl Graphics {
         device: Weak<Device>,
         color_format: Format,
         depth_format: Format,
+        sample_count: SampleCountFlags,
+        image_count: usize,
         allocator: Weak<ShardedLock<Allocator>>,
+        command_pool: CommandPool,
+        graphics_queue: Queue,
         offscreen_renderpass: RenderPass,
     ) -> anyhow::Result<OffscreenPass> {
         let reflection_image = super::Image::new(
@@ -1257,25 +1363,36 @@ impl Graphics {
             allocator.clone(),
         );
 
-        let reflection_depth_image = super::Image::new(
+        let reflection_depth_image = Initializer::create_depth_image(
             device.clone(),
-            ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            MemoryPropertyFlags::DEVICE_LOCAL,
             depth_format,
-            SampleCountFlags::TYPE_1,
-            Extent2D::builder()
-                .height(REFLECTION_HEIGHT)
-                .width(REFLECTION_WIDTH)
-                .build(),
-            ImageType::TYPE_2D,
-            1,
-            ImageAspectFlags::DEPTH,
+            Extent2D {
+                width: REFLECTION_WIDTH,
+                height: REFLECTION_HEIGHT,
+            },
+            command_pool,
+            graphics_queue,
+            sample_count,
+            allocator.clone(),
+        );
+
+        let reflection_msaa_image = Initializer::create_msaa_image(
+            device.clone(),
+            color_format,
+            Extent2D {
+                width: REFLECTION_WIDTH,
+                height: REFLECTION_HEIGHT,
+            },
+            command_pool,
+            graphics_queue,
+            sample_count,
             allocator.clone(),
         );
 
         let image_views = vec![
-            reflection_image.image_view,
+            reflection_msaa_image.image_view,
             reflection_depth_image.image_view,
+            reflection_image.image_view,
         ];
 
         let framebuffer_info = FramebufferCreateInfo::builder()
@@ -1289,11 +1406,15 @@ impl Graphics {
             .expect("Failed to upgrade logical device to create offscreen framebuffer.");
 
         unsafe {
-            let framebuffer = device_arc.create_framebuffer(&framebuffer_info, None)?;
+            let mut framebuffers = vec![];
+            for _ in 0..image_count {
+                framebuffers.push(device_arc.create_framebuffer(&framebuffer_info, None)?);
+            }
             let first_framebuffer = OffscreenFramebuffer {
-                framebuffer,
+                framebuffer: framebuffers,
                 color_image: ManuallyDrop::new(reflection_image),
                 depth_image: ManuallyDrop::new(reflection_depth_image),
+                msaa_image: ManuallyDrop::new(reflection_msaa_image),
                 width: REFLECTION_WIDTH,
                 height: REFLECTION_HEIGHT,
             };
@@ -1314,25 +1435,36 @@ impl Graphics {
                 allocator.clone(),
             );
 
-            let refraction_depth_image = super::Image::new(
+            let refraction_depth_image = Initializer::create_depth_image(
                 device.clone(),
-                ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                MemoryPropertyFlags::DEVICE_LOCAL,
                 depth_format,
-                SampleCountFlags::TYPE_1,
-                Extent2D::builder()
-                    .height(REFRACTION_HEIGHT)
-                    .width(REFRACTION_WIDTH)
-                    .build(),
-                ImageType::TYPE_2D,
-                1,
-                ImageAspectFlags::DEPTH,
+                Extent2D {
+                    width: REFRACTION_WIDTH,
+                    height: REFRACTION_HEIGHT,
+                },
+                command_pool,
+                graphics_queue,
+                sample_count,
+                allocator.clone(),
+            );
+
+            let refraction_msaa_image = Initializer::create_msaa_image(
+                device.clone(),
+                color_format,
+                Extent2D {
+                    width: REFRACTION_WIDTH,
+                    height: REFRACTION_HEIGHT,
+                },
+                command_pool,
+                graphics_queue,
+                sample_count,
                 allocator.clone(),
             );
 
             let image_views = vec![
-                refraction_image.image_view,
+                refraction_msaa_image.image_view,
                 refraction_depth_image.image_view,
+                refraction_image.image_view,
             ];
 
             let framebuffer_info = FramebufferCreateInfo::builder()
@@ -1341,12 +1473,16 @@ impl Graphics {
                 .render_pass(offscreen_renderpass)
                 .attachments(image_views.as_slice())
                 .layers(1);
-            let framebuffer = device_arc.create_framebuffer(&framebuffer_info, None)?;
+            let mut framebuffers = vec![];
+            for _ in 0..image_count {
+                framebuffers.push(device_arc.create_framebuffer(&framebuffer_info, None)?);
+            }
 
             let second_framebuffer = OffscreenFramebuffer {
-                framebuffer,
+                framebuffer: framebuffers,
                 color_image: ManuallyDrop::new(refraction_image),
                 depth_image: ManuallyDrop::new(refraction_depth_image),
+                msaa_image: ManuallyDrop::new(refraction_msaa_image),
                 width: REFRACTION_WIDTH,
                 height: REFRACTION_HEIGHT,
             };
@@ -1375,14 +1511,16 @@ impl Graphics {
             reflectivities: [0.0; SSBO_DATA_COUNT],
             shine_dampers: [0.0; SSBO_DATA_COUNT],
         };
-        for model in resource_lock.model_queue.iter() {
-            let model_lock = model.lock();
-            let metadata = model_lock.get_model_metadata();
-            let ssbo_index = model_lock.get_ssbo_index();
-            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
-            model_metadata.object_colors[ssbo_index] = metadata.object_color;
-            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
+        for (_, model_queue) in resource_lock.model_queue.iter() {
+            for model in model_queue.iter() {
+                let model_lock = model.lock();
+                let metadata = model_lock.get_model_metadata();
+                let ssbo_index = model_lock.get_ssbo_index();
+                model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
+                model_metadata.object_colors[ssbo_index] = metadata.object_color;
+                model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
+                model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
+            }
         }
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);
@@ -1407,27 +1545,36 @@ impl Graphics {
         Ok(())
     }
 
+    fn destroy_scene_resource(&mut self) {
+        unsafe {
+            self.logical_device
+                .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
+            self.logical_device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            ManuallyDrop::drop(&mut self.uniform_buffers);
+        }
+    }
+
     unsafe fn dispose(&mut self) -> anyhow::Result<()> {
         for buffer in self.frame_buffers.iter() {
             self.logical_device.destroy_framebuffer(*buffer, None);
         }
         for buffer in self.offscreen_pass.framebuffers.iter_mut() {
-            self.logical_device
-                .destroy_framebuffer(buffer.framebuffer, None);
+            for framebuffer in buffer.framebuffer.iter() {
+                self.logical_device.destroy_framebuffer(*framebuffer, None);
+            }
             ManuallyDrop::drop(buffer);
         }
         ManuallyDrop::drop(&mut self.offscreen_pass);
 
-        let pipeline = &mut *self
-            .pipeline
-            .write()
-            .expect("Failed to lock pipeline for disposal.");
-        ManuallyDrop::drop(pipeline);
-        self.logical_device
-            .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
-        self.logical_device
-            .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-        ManuallyDrop::drop(&mut self.uniform_buffers);
+        {
+            let pipeline = &mut *self
+                .pipeline
+                .write()
+                .expect("Failed to lock pipeline for disposal.");
+            ManuallyDrop::drop(pipeline);
+        }
+        self.destroy_scene_resource();
         ManuallyDrop::drop(&mut self.msaa_image);
         ManuallyDrop::drop(&mut self.depth_image);
         ManuallyDrop::drop(&mut self.swapchain);
@@ -1449,6 +1596,7 @@ impl Graphics {
         viewport: Viewport,
         scissor: Rect2D,
         frame_index: usize,
+        scene_type: &SceneType,
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self
             .resource_manager
@@ -1458,7 +1606,11 @@ impl Graphics {
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
             let resource_lock = resource_manager.read();
-            for model in resource_lock.model_queue.iter() {
+            let current_model_queue = resource_lock
+                .model_queue
+                .get(scene_type)
+                .expect("Failed to get model queue of the current scene.");
+            for model in current_model_queue.iter() {
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
@@ -1480,9 +1632,11 @@ impl Graphics {
         let resource_lock = resource_manager.read();
         let command_buffers = resource_lock
             .command_buffers
+            .get(scene_type)
+            .expect("Failed to get command buffers of the current scene")
             .get(&frame_index)
-            .unwrap()
-            .to_vec();
+            .cloned()
+            .unwrap();
         Ok(command_buffers)
     }
 }
@@ -1539,8 +1693,8 @@ impl Drop for Graphics {
             }
             self.logical_device
                 .destroy_descriptor_set_layout(self.ssbo_descriptor_set_layout, None);
-            self.logical_device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            /*self.logical_device
+            .destroy_descriptor_set_layout(self.descriptor_set_layout, None);*/
             self.allocator
                 .write()
                 .expect("Failed to lock the memory allocator.")

@@ -268,13 +268,12 @@ impl Initializer {
     pub fn create_depth_image(
         device: Weak<ash::Device>,
         format: Format,
-        swapchain: &super::Swapchain,
+        extent: Extent2D,
         command_pool: CommandPool,
         graphics_queue: Queue,
         sample_count: SampleCountFlags,
         allocator: Weak<ShardedLock<Allocator>>,
     ) -> super::Image {
-        let extent = swapchain.extent;
         let mut image = super::Image::new(
             device,
             ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -333,7 +332,8 @@ impl Initializer {
 
     pub fn create_msaa_image(
         device: Weak<ash::Device>,
-        swapchain: &super::Swapchain,
+        format: Format,
+        extent: Extent2D,
         command_pool: CommandPool,
         graphics_queue: Queue,
         sample_count: SampleCountFlags,
@@ -343,9 +343,9 @@ impl Initializer {
             device,
             ImageUsageFlags::TRANSIENT_ATTACHMENT | ImageUsageFlags::COLOR_ATTACHMENT,
             MemoryPropertyFlags::DEVICE_LOCAL,
-            swapchain.format.format,
+            format,
             sample_count,
-            swapchain.extent,
+            extent,
             ImageType::TYPE_2D,
             1,
             ImageAspectFlags::COLOR,
@@ -568,9 +568,9 @@ impl Initializer {
                 buffer_size as usize,
             );
         }
-        let _width = width as f32;
-        let _height = height as f32;
-        let mip_levels = _width.max(_height).log2().floor() as u32;
+        let width = width as f32;
+        let height = height as f32;
+        let mip_levels = width.max(height).log2().floor() as u32;
         let mut image = super::Image::new(
             Arc::downgrade(&device),
             ImageUsageFlags::TRANSFER_SRC
@@ -579,7 +579,10 @@ impl Initializer {
             MemoryPropertyFlags::DEVICE_LOCAL,
             image_format,
             SampleCountFlags::TYPE_1,
-            Extent2D::builder().width(width).height(height).build(),
+            Extent2D::builder()
+                .width(width as u32)
+                .height(height as u32)
+                .build(),
             ImageType::TYPE_2D,
             mip_levels,
             ImageAspectFlags::COLOR,
@@ -597,8 +600,8 @@ impl Initializer {
         );
         image.copy_buffer_to_image(
             staging.buffer,
-            width,
-            height,
+            width as u32,
+            height as u32,
             *pool_lock,
             *lock.graphics_queue.lock(),
             Some(cmd_buffer),

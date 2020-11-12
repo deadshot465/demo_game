@@ -90,20 +90,28 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     pub fn load_content(&mut self) -> anyhow::Result<()> {
         self.scene_manager.load_content()?;
         self.scene_manager.wait_for_all_tasks()?;
-        let graphics_lock = self.graphics.read();
-        let ui_manager = Rc::new(RefCell::new(ManuallyDrop::new(UIManager::new(
-            &*graphics_lock,
-        ))));
-        drop(graphics_lock);
-        let mut graphics_lock = self.graphics.write();
-        graphics_lock.ui_manager = Some(ui_manager.clone());
-        graphics_lock.initialize()?;
-        drop(graphics_lock);
-        let mut graphics_lock = self.resource_manager.write();
-        graphics_lock.create_ssbo()?;
-        graphics_lock.get_all_command_buffers();
-        drop(graphics_lock);
-        self.ui_manager = Some(ui_manager);
+        if self.ui_manager.is_none() {
+            let graphics_lock = self.graphics.read();
+            let ui_manager = Rc::new(RefCell::new(ManuallyDrop::new(UIManager::new(
+                &*graphics_lock,
+            ))));
+            drop(graphics_lock);
+            let mut graphics_lock = self.graphics.write();
+            graphics_lock.ui_manager = Some(Rc::downgrade(&ui_manager));
+            self.ui_manager = Some(ui_manager);
+        }
+
+        {
+            let mut graphics_lock = self.graphics.write();
+            let is_initialized = graphics_lock.is_initialized();
+            if !is_initialized {
+                graphics_lock.initialize()?;
+            }
+        }
+
+        self.scene_manager.create_ssbo()?;
+        self.scene_manager.get_command_buffers();
+
         Ok(())
     }
 

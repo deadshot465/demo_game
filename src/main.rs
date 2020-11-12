@@ -140,11 +140,19 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                         WindowEvent::Resized(winit::dpi::PhysicalSize { width, height }) => {
-                            game.graphics.write().recreate_swapchain(width, height)?;
+                            game.graphics
+                                .write()
+                                .recreate_swapchain(width, height)
+                                .expect("Failed to recreate swapchain.");
                             if width > 0 && height > 0 {
                                 let resource_lock = game.resource_manager.read();
-                                for model in resource_lock.model_queue.iter() {
-                                    model.lock().create_ssbo()?;
+                                for (_, model_queue) in resource_lock.model_queue.iter() {
+                                    for model in model_queue.iter() {
+                                        model
+                                            .lock()
+                                            .create_ssbo()
+                                            .expect("Failed to create SSBO for skinned models.");
+                                    }
                                 }
                             }
                         }

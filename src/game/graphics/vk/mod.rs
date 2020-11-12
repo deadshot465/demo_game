@@ -1,4 +1,5 @@
 pub mod buffer;
+pub mod descriptor;
 pub mod dynamic_object;
 pub mod graphics;
 pub mod image;
@@ -11,6 +12,7 @@ pub mod thread;
 pub mod uniform_buffers;
 pub use self::image::Image;
 pub use buffer::Buffer;
+pub use descriptor::*;
 pub use dynamic_object::*;
 pub use graphics::Graphics;
 pub use initializer::Initializer;

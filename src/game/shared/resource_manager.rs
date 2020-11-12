@@ -4,6 +4,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::game::enums::SceneType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::Renderable;
@@ -28,8 +29,9 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
-    pub command_buffers: HashMap<usize, Vec<CommandType>>,
-    pub model_queue: ModelQueue<GraphicsType, BufferType, CommandType, TextureType>,
+    pub command_buffers: HashMap<SceneType, HashMap<usize, Vec<CommandType>>>,
+    pub model_queue:
+        HashMap<SceneType, ModelQueue<GraphicsType, BufferType, CommandType, TextureType>>,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -78,7 +80,7 @@ where
             resource: vec![],
             textures: vec![],
             command_buffers: HashMap::new(),
-            model_queue: vec![],
+            model_queue: HashMap::new(),
         }
     }
 
@@ -109,7 +111,11 @@ where
     }
 
     pub fn get_model_count(&self) -> usize {
-        self.model_queue.len()
+        let mut count = 0;
+        self.model_queue
+            .iter()
+            .for_each(|(_, model_queue)| count += model_queue.len());
+        count
     }
 
     pub fn get_texture_count(&self) -> usize {
@@ -150,48 +156,69 @@ where
 }
 
 impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn create_ssbo(&mut self) -> anyhow::Result<()> {
-        for model in self.model_queue.iter_mut() {
+    pub fn create_ssbo(&self, scene_type: SceneType) -> anyhow::Result<()> {
+        let current_model_queue = self
+            .model_queue
+            .get(&scene_type)
+            .expect("Failed to get model queue of the current scene.");
+        for model in current_model_queue.iter() {
             let mut model_lock = model.lock();
             model_lock.create_ssbo()?;
         }
         Ok(())
     }
 
-    pub fn get_all_command_buffers(&mut self) {
+    pub fn get_all_command_buffers(&mut self, scene_type: SceneType) {
         let inflight_frame_count = std::env::var("INFLIGHT_BUFFER_COUNT")
             .unwrap()
             .parse::<usize>()
             .unwrap();
+        let current_model_queue = self
+            .model_queue
+            .get(&scene_type)
+            .expect("Failed to get model queue of the current scene.");
         for i in 0..inflight_frame_count {
-            let model_command_buffers = self
-                .model_queue
+            let model_command_buffers = current_model_queue
                 .iter()
                 .map(|m| m.lock().get_command_buffers(i))
                 .flatten()
                 .collect::<Vec<_>>();
-            let entry = self.command_buffers.entry(i).or_insert(vec![]);
+            let current_scene = self
+                .command_buffers
+                .entry(scene_type)
+                .or_insert_with(HashMap::new);
+            let entry = current_scene.entry(i).or_insert(vec![]);
             *entry = model_command_buffers;
         }
     }
 
     pub fn add_model(
         &mut self,
+        scene_type: SceneType,
         model: impl Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static,
     ) -> Arc<Mutex<Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static>>>
     {
-        self.model_queue.push(Arc::new(Mutex::new(Box::new(model))));
-        let reference = self.model_queue.last().cloned().unwrap();
+        let model_queue = self
+            .model_queue
+            .get_mut(&scene_type)
+            .expect("Failed to get model queue of the specified scene.");
+        model_queue.push(Arc::new(Mutex::new(Box::new(model))));
+        let reference = model_queue.last().cloned().unwrap();
         reference
     }
 
     pub fn add_clone(
         &mut self,
+        scene_type: SceneType,
         model: Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static>,
     ) -> Arc<Mutex<Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static>>>
     {
-        self.model_queue.push(Arc::new(Mutex::new(model)));
-        let reference = self.model_queue.last().cloned().unwrap();
+        let model_queue = self
+            .model_queue
+            .get_mut(&scene_type)
+            .expect("Failed to get model queue of the specified scene.");
+        model_queue.push(Arc::new(Mutex::new(model)));
+        let reference = model_queue.last().cloned().unwrap();
         reference
     }
 }
@@ -214,9 +241,11 @@ where
             texture_lock.dispose();
         }
 
-        for model in self.model_queue.iter() {
-            let mut model_lock = model.lock();
-            model_lock.dispose();
+        for (_, model_queue) in self.model_queue.iter() {
+            for model in model_queue.iter() {
+                let mut model_lock = model.lock();
+                model_lock.dispose();
+            }
         }
 
         for resource in self.resource.iter() {

@@ -74,15 +74,16 @@ impl Pipeline {
         &mut self,
         graphics_format: Format,
         depth_format: Format,
+        sample_count: SampleCountFlags,
     ) -> anyhow::Result<()> {
         let mut attachment_descriptions = vec![];
         attachment_descriptions.push(
             AttachmentDescription::builder()
                 .format(graphics_format)
-                .final_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .final_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .initial_layout(ImageLayout::UNDEFINED)
                 .load_op(AttachmentLoadOp::CLEAR)
-                .samples(SampleCountFlags::TYPE_1)
+                .samples(sample_count)
                 .stencil_load_op(AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(AttachmentStoreOp::DONT_CARE)
                 .store_op(AttachmentStoreOp::STORE)
@@ -94,10 +95,23 @@ impl Pipeline {
                 .final_layout(ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                 .initial_layout(ImageLayout::UNDEFINED)
                 .load_op(AttachmentLoadOp::CLEAR)
+                .samples(sample_count)
+                .stencil_load_op(AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(AttachmentStoreOp::DONT_CARE)
+                .store_op(AttachmentStoreOp::STORE)
+                .build(),
+        );
+
+        attachment_descriptions.push(
+            AttachmentDescription::builder()
+                .format(graphics_format)
+                .final_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .initial_layout(ImageLayout::UNDEFINED)
+                .load_op(AttachmentLoadOp::DONT_CARE)
                 .samples(SampleCountFlags::TYPE_1)
                 .stencil_load_op(AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(AttachmentStoreOp::DONT_CARE)
-                .store_op(AttachmentStoreOp::DONT_CARE)
+                .store_op(AttachmentStoreOp::STORE)
                 .build(),
         );
 
@@ -108,11 +122,16 @@ impl Pipeline {
         let depth_reference = AttachmentReference::builder()
             .attachment(1)
             .layout(ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        let msaa_reference = vec![AttachmentReference::builder()
+            .attachment(2)
+            .layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build()];
 
         let subpass_description = vec![SubpassDescription::builder()
             .color_attachments(color_reference.as_slice())
             .depth_stencil_attachment(&depth_reference)
             .pipeline_bind_point(PipelineBindPoint::GRAPHICS)
+            .resolve_attachments(msaa_reference.as_slice())
             .build()];
 
         let mut subpass_dependencies = vec![];

@@ -9,6 +9,7 @@ use std::sync::{Arc, Weak};
 
 use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::shared::enums::SceneType;
 use crate::game::shared::structs::{
     GeometricPrimitive, InstanceData, InstancedModel, Model, PrimitiveType, SkinnedModel, Terrain,
 };
@@ -40,6 +41,7 @@ where
         Vec<Receiver<GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>>>,
     instanced_model_tasks:
         Vec<Receiver<InstancedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
+    scene_type: SceneType,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -70,6 +72,7 @@ where
             geometric_primitive_tasks: vec![],
             ssbo_count: AtomicUsize::new(0),
             instanced_model_tasks: vec![],
+            scene_type: SceneType::Game,
         }
     }
 }
@@ -228,9 +231,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        let graphics_arc = self.graphics.upgrade().unwrap();
-        let mut graphics_lock = graphics_arc.write();
-        graphics_lock.update(delta_time)?;
+        let graphics = self.graphics.upgrade().unwrap();
+        let mut graphics_lock = graphics.write();
+        graphics_lock.update(delta_time, self.scene_type)?;
         Ok(())
     }
 
@@ -241,7 +244,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let graphics_lock = graphics.read();
-            let _ = graphics_lock.render();
+            let _ = graphics_lock.render(self.scene_type);
         }
         Ok(())
     }
@@ -260,9 +263,12 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
-        let lock = resource_manager.read();
-        let item = lock
+        let mut lock = resource_manager.write();
+        let current_model_queue = lock
             .model_queue
+            .entry(self.scene_type)
+            .or_insert_with(Vec::new);
+        let item = current_model_queue
             .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
@@ -282,7 +288,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.set_ssbo_index(ssbo_index);
             model.update_model_indices(self.model_count.clone());
             let mut lock = resource_manager.write();
-            lock.add_clone(model);
+            lock.add_clone(self.scene_type, model);
             drop(lock);
         } else {
             let task = Model::new(
@@ -316,9 +322,12 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
         let resource_manager = resource_manager.unwrap();
-        let lock = resource_manager.read();
-        let item = lock
+        let mut lock = resource_manager.write();
+        let current_model_queue = lock
             .model_queue
+            .entry(self.scene_type)
+            .or_insert_with(Vec::new);
+        let item = current_model_queue
             .iter()
             .find(|m| (*m).lock().get_name() == file_name)
             .cloned();
@@ -338,7 +347,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             model.set_ssbo_index(ssbo_index);
             model.update_model_indices(self.model_count.clone());
             let mut lock = resource_manager.write();
-            lock.add_clone(model);
+            lock.add_clone(self.scene_type, model);
             drop(lock);
         } else {
             let task = SkinnedModel::new(
@@ -425,19 +434,19 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let rm = rm.unwrap();
         let mut lock = rm.write();
         for model in models.into_iter() {
-            lock.add_model(model);
+            lock.add_model(self.scene_type, model);
         }
         for model in skinned_models.into_iter() {
-            lock.add_model(model);
+            lock.add_model(self.scene_type, model);
         }
         for terrain in terrains.into_iter() {
-            lock.add_model(terrain);
+            lock.add_model(self.scene_type, terrain);
         }
         for primitive in primitives.into_iter() {
-            lock.add_model(primitive);
+            lock.add_model(self.scene_type, primitive);
         }
         for instance in instances.into_iter() {
-            lock.add_model(instance);
+            lock.add_model(self.scene_type, instance);
         }
         drop(lock);
         drop(rm);
@@ -451,5 +460,28 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
     fn get_model_count(&self) -> Arc<AtomicUsize> {
         self.model_count.clone()
+    }
+
+    fn get_scene_type(&self) -> SceneType {
+        self.scene_type
+    }
+
+    fn create_ssbo(&self) -> anyhow::Result<()> {
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
+        let resource_lock = resource_manager.read();
+        resource_lock.create_ssbo(self.scene_type)?;
+        Ok(())
+    }
+
+    fn get_command_buffers(&self) {
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
+        let mut resource_lock = resource_manager.write();
+        resource_lock.get_all_command_buffers(self.scene_type);
     }
 }
