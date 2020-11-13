@@ -75,7 +75,7 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         self.add_model(
             "./models/merkava_tank/scene.gltf",
             Vec3A::new(1.5, 0.0, 1.5),
-            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(0.01, 0.01, 0.01),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         )?;

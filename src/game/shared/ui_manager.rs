@@ -264,7 +264,9 @@ where
 {
     fn drop(&mut self) {
         unsafe {
+            log::info!("Dropping UI manager...");
             ManuallyDrop::drop(&mut self.drawer);
+            log::info!("Successfully dropped UI manager.");
         }
     }
 }

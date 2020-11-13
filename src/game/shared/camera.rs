@@ -28,7 +28,7 @@ pub struct Camera {
 impl Camera {
     pub fn new(width: f64, height: f64) -> Self {
         let mut camera = Camera {
-            position: Vec3A::new(0.0, 10.0, -15.0),
+            position: Vec3A::new(0.0, 10.0, -10.0),
             target: Vec3A::new(0.0, 0.0, 0.0),
             width,
             height,
@@ -87,30 +87,18 @@ impl Camera {
         let ty: f32 = self.target.y();
         let tz: f32 = self.target.z();
         match key {
-            VirtualKeyCode::A => {
-                self.position = Vec3A::new(x - 2.0, y, z);
-                self.target = Vec3A::new(tx - 2.0, ty, tz);
-            }
-            VirtualKeyCode::D => {
-                self.position = Vec3A::new(x + 2.0, y, z);
-                self.target = Vec3A::new(tx + 2.0, ty, tz);
-            }
-            VirtualKeyCode::W => {
-                self.position = Vec3A::new(x, y + 2.0, z);
-                self.target = Vec3A::new(tx, ty + 2.0, tz);
-            }
-            VirtualKeyCode::S => {
-                self.position = Vec3A::new(x, y - 2.0, z);
-                self.target = Vec3A::new(tx, ty - 2.0, tz);
-            }
-            VirtualKeyCode::Q => {
-                self.position = Vec3A::new(x, y, z - 2.0);
-                self.target = Vec3A::new(tx, ty, tz - 2.0);
-            }
-            VirtualKeyCode::E => {
-                self.position = Vec3A::new(x, y, z + 2.0);
-                self.target = Vec3A::new(tx, ty, tz + 2.0);
-            }
+            VirtualKeyCode::A => self.position = Vec3A::new(x - 0.1, y, z),
+            VirtualKeyCode::J => self.target = Vec3A::new(tx - 0.1, ty, tz),
+            VirtualKeyCode::D => self.position = Vec3A::new(x + 0.1, y, z),
+            VirtualKeyCode::L => self.target = Vec3A::new(tx + 0.1, ty, tz),
+            VirtualKeyCode::W => self.position = Vec3A::new(x, y + 0.1, z),
+            VirtualKeyCode::I => self.target = Vec3A::new(tx, ty + 0.1, tz),
+            VirtualKeyCode::S => self.position = Vec3A::new(x, y - 0.1, z),
+            VirtualKeyCode::K => self.target = Vec3A::new(tx, ty - 0.1, tz),
+            VirtualKeyCode::Q => self.position = Vec3A::new(x, y, z - 0.1),
+            VirtualKeyCode::U => self.target = Vec3A::new(tx, ty, tz - 0.1),
+            VirtualKeyCode::E => self.position = Vec3A::new(x, y, z + 0.1),
+            VirtualKeyCode::O => self.target = Vec3A::new(tx, ty, tz + 0.1),
             _ => (),
         }
     }

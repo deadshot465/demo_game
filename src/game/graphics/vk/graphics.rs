@@ -857,7 +857,10 @@ impl Graphics {
         if !self.is_initialized {
             return Ok(());
         }
-        let resource_arc = self.resource_manager.upgrade().unwrap();
+        let resource_arc = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
         let resource_lock = resource_arc.read();
         let current_model_queue = resource_lock
             .model_queue
@@ -868,7 +871,6 @@ impl Graphics {
             model_lock.update(delta_time);
         }
         drop(resource_lock);
-        //self.update_dynamic_buffer(delta_time)?;
 
         let vp_size = std::mem::size_of::<ViewProjection>();
         let camera = self.camera.borrow();
@@ -1090,7 +1092,7 @@ impl Graphics {
             .render_area(*render_area)
             .framebuffer(self.offscreen_pass.framebuffers[0].framebuffer[frame_index]);
 
-        let inheritance_ptr = {
+        /*let inheritance_ptr = {
             let inheritance_info = Box::new(
                 CommandBufferInheritanceInfo::builder()
                     .framebuffer(self.offscreen_pass.framebuffers[0].framebuffer[frame_index])
@@ -1116,10 +1118,10 @@ impl Graphics {
             self.logical_device
                 .cmd_end_render_pass(current_frame.main_command_buffer);
             //all_command_buffers.append(&mut command_buffers);
-        }
+        }*/
 
         // Second renderpass
-        renderpass_begin_info = renderpass_begin_info
+        /*renderpass_begin_info = renderpass_begin_info
             .framebuffer(self.offscreen_pass.framebuffers[1].framebuffer[frame_index]);
         render_area = render_area.extent(Extent2D {
             width: REFRACTION_WIDTH,
@@ -1151,7 +1153,7 @@ impl Graphics {
             self.logical_device
                 .cmd_end_render_pass(current_frame.main_command_buffer);
             //all_command_buffers.append(&mut command_buffers);
-        }
+        }*/
 
         // Primary renderpass
         render_area = render_area.extent(extent);

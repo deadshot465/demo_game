@@ -21,6 +21,7 @@ use wio::com::ComPtr;
 #[cfg(target_os = "windows")]
 use crate::game::graphics::dx12 as DX12;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
+use crate::game::scenes::title_scene::TitleScene;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::traits::Disposable;
 use crate::game::{Camera, GameScene, ResourceManager, SceneManager};
@@ -77,11 +78,15 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn initialize(&mut self) -> bool {
-        let game_scene = GameScene::new(
+        let title_scene = TitleScene::new(
             Arc::downgrade(&self.resource_manager),
             Arc::downgrade(&self.graphics),
         );
-        self.scene_manager.register_scene(game_scene);
+        /*let game_scene = GameScene::new(
+            Arc::downgrade(&self.resource_manager),
+            Arc::downgrade(&self.graphics),
+        );*/
+        self.scene_manager.register_scene(title_scene);
         self.scene_manager.set_current_scene_by_index(0);
         self.scene_manager.initialize();
         true

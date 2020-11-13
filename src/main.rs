@@ -37,7 +37,7 @@ fn main() -> anyhow::Result<()> {
     let api = dotenv::var("API").unwrap();
     log::info!("Using API: {}", &api);
     let event_loop = EventLoop::new();
-    let mut rt = tokio::runtime::Builder::new_multi_thread()
+    let mut _rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
         .build()
@@ -48,26 +48,23 @@ fn main() -> anyhow::Result<()> {
     let mut delta_time = 0.0_f64;
     match api.as_str() {
         "VULKAN" => {
-            let mut game = rt.block_on(async {
-                let mut game =
-                    Game::<VK::Graphics, VK::Buffer, ash::vk::CommandBuffer, VK::Image>::new(
-                        "Demo game",
-                        1280.0,
-                        720.0,
-                        &event_loop,
-                    )
-                    .unwrap();
-                if game.initialize() {
-                    game.load_content().expect("Failed to load game content.");
-                }
-                game
-            });
+            let mut game = std::mem::ManuallyDrop::new(Game::<
+                VK::Graphics,
+                VK::Buffer,
+                ash::vk::CommandBuffer,
+                VK::Image,
+            >::new(
+                "Demo game", 1280.0, 720.0, &event_loop
+            )?);
+            if game.initialize() {
+                game.load_content()?;
+            }
             log::info!("Game content loaded.");
             let mut mouse_x = 0.0;
             let mut mouse_y = 0.0;
             event_loop.run(move |event, _target, control_flow| {
                 let game = &mut game;
-                let rt = &mut rt;
+                let _rt = &mut _rt;
                 match event {
                     Event::NewEvents(_) => {
                         delta_time = current_time.elapsed().as_secs_f64();
@@ -90,6 +87,9 @@ fn main() -> anyhow::Result<()> {
                     }
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
+                            unsafe {
+                                std::mem::ManuallyDrop::drop(game);
+                            }
                             *control_flow = ControlFlow::Exit;
                         }
                         WindowEvent::ReceivedCharacter(c) => {
@@ -106,9 +106,18 @@ fn main() -> anyhow::Result<()> {
                                 },
                             ..
                         } => match virtual_key_code {
-                            VirtualKeyCode::Escape => *control_flow = ControlFlow::Exit,
+                            VirtualKeyCode::Escape => {
+                                unsafe {
+                                    std::mem::ManuallyDrop::drop(game);
+                                }
+                                *control_flow = ControlFlow::Exit;
+                            }
                             _ => {
                                 let mut camera = game.camera.borrow_mut();
+                                println!(
+                                    "Position: {}, Target: {}",
+                                    camera.position, camera.target
+                                );
                                 camera.update(
                                     CameraType::Watch(glam::Vec3A::zero()),
                                     virtual_key_code,
@@ -164,10 +173,8 @@ fn main() -> anyhow::Result<()> {
                             borrowed.end_input();
                         }
 
-                        rt.block_on(async {
-                            game.update(delta_time).expect("Failed to update the game.");
-                            game.render(delta_time).expect("Failed to render the game.");
-                        });
+                        game.update(delta_time).expect("Failed to update the game.");
+                        game.render(delta_time).expect("Failed to render the game.");
                     }
                     _ => (),
                 }
@@ -176,28 +183,26 @@ fn main() -> anyhow::Result<()> {
         "DX12" => {
             #[cfg(target_os = "windows")]
             unsafe {
-                let mut game = rt.block_on(async {
-                    let mut game =
-                        Game::<
-                            DX12::Graphics,
-                            DX12::Resource,
-                            ComPtr<ID3D12GraphicsCommandList>,
-                            DX12::Resource,
-                        >::new("Demo game", 1280.0, 720.0, &event_loop);
-                    if game.initialize() {
-                        game.load_content();
-                    }
-                    game
-                });
+                let mut game =
+                    std::mem::ManuallyDrop::new(Game::<
+                        DX12::Graphics,
+                        DX12::Resource,
+                        ComPtr<ID3D12GraphicsCommandList>,
+                        DX12::Resource,
+                    >::new(
+                        "Demo game", 1280.0, 720.0, &event_loop
+                    ));
+                if game.initialize() {
+                    game.load_content();
+                }
                 println!("Game content loaded.");
                 event_loop.run(move |event, _target, control_flow| {
                     //*control_flow = ControlFlow::Poll;
                     let game = &mut game;
-                    game.update();
-                    game.render();
                     match event {
                         Event::WindowEvent { event, .. } => match event {
                             WindowEvent::CloseRequested => {
+                                std::mem::ManuallyDrop::drop(game);
                                 *control_flow = ControlFlow::Exit;
                             }
                             WindowEvent::KeyboardInput {
@@ -208,7 +213,10 @@ fn main() -> anyhow::Result<()> {
                                     },
                                 ..
                             } => match virtual_key_code {
-                                VirtualKeyCode::Escape => *control_flow = ControlFlow::Exit,
+                                VirtualKeyCode::Escape => {
+                                    std::mem::ManuallyDrop::drop(game);
+                                    *control_flow = ControlFlow::Exit;
+                                }
                                 _ => (),
                             },
                             _ => (),
