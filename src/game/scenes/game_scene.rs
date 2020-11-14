@@ -39,8 +39,9 @@ where
     scene_type: SceneType,
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
     current_entities: HashMap<String, DefaultKey>,
-    render_components:
-        Vec<Arc<Mutex<Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType>>>>>,
+    render_components: Vec<
+        Arc<Mutex<Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send>>>,
+    >,
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
 }
 
@@ -339,7 +340,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let graphics_lock = graphics.read();
-            let _ = graphics_lock.render(self.scene_type);
+            let _ = graphics_lock.render(&self.render_components);
         }
         Ok(())
     }

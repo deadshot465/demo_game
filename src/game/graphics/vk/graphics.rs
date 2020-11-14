@@ -735,7 +735,7 @@ impl Graphics {
     pub fn render(
         &self,
         renderables: &[Arc<
-            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
         >],
     ) -> anyhow::Result<()> {
         if !self.is_initialized {
@@ -791,7 +791,7 @@ impl Graphics {
                 current_frame,
                 frame_index,
                 viewports.as_slice(),
-                &scene_type,
+                renderables,
             )?;
 
             let wait_stages = vec![PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -1140,7 +1140,9 @@ impl Graphics {
         current_frame: &FrameData,
         frame_index: usize,
         viewports: &[Viewport],
-        scene_type: &SceneType,
+        renderables: &[Arc<
+            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
+        >],
     ) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
@@ -1290,7 +1292,7 @@ impl Graphics {
                 viewports[0],
                 scissors[0],
                 frame_index,
-                scene_type,
+                renderables,
             )?;
             all_command_buffers.append(&mut command_buffers);
             self.logical_device.cmd_execute_commands(
@@ -1705,7 +1707,9 @@ impl Graphics {
         viewport: Viewport,
         scissor: Rect2D,
         frame_index: usize,
-        scene_type: &SceneType,
+        renderables: &[Arc<
+            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
+        >],
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         let resource_manager = self
             .resource_manager
@@ -1714,12 +1718,12 @@ impl Graphics {
         {
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
-            let resource_lock = resource_manager.read();
+            /*let resource_lock = resource_manager.read();
             let current_model_queue = resource_lock
                 .model_queue
                 .get(scene_type)
-                .expect("Failed to get model queue of the current scene.");
-            for model in current_model_queue.iter() {
+                .expect("Failed to get model queue of the current scene.");*/
+            for model in renderables.iter() {
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
@@ -1739,13 +1743,18 @@ impl Graphics {
         }
         self.thread_pool.wait()?;
         let resource_lock = resource_manager.read();
-        let command_buffers = resource_lock
-            .command_buffers
-            .get(scene_type)
-            .expect("Failed to get command buffers of the current scene")
-            .get(&frame_index)
-            .cloned()
-            .unwrap();
+        let command_buffers = renderables
+            .iter()
+            .map(|r| r.lock().get_command_buffers(frame_index))
+            .flatten()
+            .collect::<Vec<_>>();
+        /*let command_buffers = resource_lock
+        .command_buffers
+        .get(scene_type)
+        .expect("Failed to get command buffers of the current scene")
+        .get(&frame_index)
+        .cloned()
+        .unwrap();*/
         Ok(command_buffers)
     }
 }

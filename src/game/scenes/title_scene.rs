@@ -2,12 +2,12 @@ use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::{SceneType, ShaderType};
 use crate::game::shared::structs::{PrimitiveType, WaitableTasks};
 use crate::game::structs::Model;
-use crate::game::traits::{Disposable, GraphicsBase, Scene};
+use crate::game::traits::{Disposable, GraphicsBase, Renderable, Scene};
 use crate::game::ResourceManager;
 use ash::vk::CommandBuffer;
 use crossbeam::channel::*;
 use glam::f32::{Vec3A, Vec4};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use slotmap::{DefaultKey, SlotMap};
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
@@ -31,6 +31,9 @@ where
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
     scene_type: SceneType,
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
+    render_components: Vec<
+        Arc<Mutex<Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send>>>,
+    >,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -59,6 +62,7 @@ where
             waitable_tasks: WaitableTasks::new(),
             scene_type: SceneType::Title,
             entities,
+            render_components: vec![],
         }
     }
 }
@@ -104,7 +108,7 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let graphics_lock = graphics.read();
-            let _ = graphics_lock.render(self.scene_type);
+            let _ = graphics_lock.render(&self.render_components);
         }
         Ok(())
     }
