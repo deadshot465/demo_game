@@ -29,12 +29,13 @@ impl<'a> DescriptorBuilder<'a> {
     pub fn bind_buffer(
         mut self,
         binding: u32,
+        descriptor_count: Option<u32>,
         buffer_info: &'a [DescriptorBufferInfo],
         descriptor_type: DescriptorType,
         stage_flags: ShaderStageFlags,
     ) -> Self {
         let new_binding = DescriptorSetLayoutBinding::builder()
-            .descriptor_count(1)
+            .descriptor_count(descriptor_count.unwrap_or(1))
             .descriptor_type(descriptor_type)
             .stage_flags(stage_flags)
             .binding(binding)
@@ -54,12 +55,13 @@ impl<'a> DescriptorBuilder<'a> {
     pub fn bind_image(
         mut self,
         binding: u32,
+        descriptor_count: Option<u32>,
         image_info: &'a [DescriptorImageInfo],
         descriptor_type: DescriptorType,
         stage_flags: ShaderStageFlags,
     ) -> Self {
         let new_binding = DescriptorSetLayoutBinding::builder()
-            .descriptor_count(1)
+            .descriptor_count(descriptor_count.unwrap_or(1))
             .descriptor_type(descriptor_type)
             .stage_flags(stage_flags)
             .binding(binding)
@@ -76,23 +78,18 @@ impl<'a> DescriptorBuilder<'a> {
         self
     }
 
-    pub fn build(
-        mut self,
-        descriptor_set: &'a mut DescriptorSet,
-        descriptor_set_layout: &'a mut DescriptorSetLayout,
-    ) -> bool {
+    pub fn build(mut self) -> Option<(DescriptorSet, DescriptorSetLayout)> {
+        // Build layout first.
         let layout_info =
             DescriptorSetLayoutCreateInfo::builder().bindings(self.bindings.as_slice());
-        *descriptor_set_layout = self.layout_cache.create_descriptor_layout(&layout_info);
+        let layout = self.layout_cache.create_descriptor_layout(&layout_info);
 
-        let success = self
-            .allocator
-            .allocate(descriptor_set, *descriptor_set_layout);
-        if !success {
-            false
-        } else {
+        // Allocate the descriptor set.
+        let descriptor_set = self.allocator.allocate(layout);
+        if let Some(set) = descriptor_set {
+            // Write descriptor sets
             for write in self.writes.iter_mut() {
-                write.dst_set = *descriptor_set;
+                write.dst_set = set;
             }
             unsafe {
                 let device = self
@@ -102,7 +99,9 @@ impl<'a> DescriptorBuilder<'a> {
                     .expect("Failed to upgrade device handle.");
                 device.update_descriptor_sets(self.writes.as_slice(), &[]);
             }
-            true
+            Some((set, layout))
+        } else {
+            None
         }
     }
 }

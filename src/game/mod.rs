@@ -8,6 +8,7 @@ pub use ui::*;
 
 use ash::vk::CommandBuffer;
 use parking_lot::RwLock;
+use slotmap::{DefaultKey, SlotMap};
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -43,6 +44,7 @@ where
     pub ui_manager: Option<
         Rc<RefCell<ManuallyDrop<UIManager<GraphicsType, BufferType, CommandType, TextureType>>>>,
     >,
+    entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -74,19 +76,22 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             graphics: Arc::new(RwLock::new(ManuallyDrop::new(graphics))),
             scene_manager: SceneManager::new(),
             ui_manager: None,
+            entities: Rc::new(RefCell::new(SlotMap::new())),
         })
     }
 
     pub fn initialize(&mut self) -> bool {
-        let title_scene = TitleScene::new(
+        /*let title_scene = TitleScene::new(
             Arc::downgrade(&self.resource_manager),
             Arc::downgrade(&self.graphics),
-        );
-        /*let game_scene = GameScene::new(
-            Arc::downgrade(&self.resource_manager),
-            Arc::downgrade(&self.graphics),
+            Rc::downgrade(&self.entities),
         );*/
-        self.scene_manager.register_scene(title_scene);
+        let game_scene = GameScene::new(
+            Arc::downgrade(&self.resource_manager),
+            Arc::downgrade(&self.graphics),
+            Rc::downgrade(&self.entities),
+        );
+        self.scene_manager.register_scene(game_scene);
         self.scene_manager.set_current_scene_by_index(0);
         self.scene_manager.initialize();
         true
@@ -154,6 +159,7 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             graphics: Arc::new(RwLock::new(ManuallyDrop::new(graphics))),
             scene_manager: SceneManager::new(),
             ui_manager: None,
+            entities: Rc::new(RefCell::new(SlotMap::new())),
         }
     }
 

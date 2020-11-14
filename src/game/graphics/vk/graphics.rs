@@ -17,10 +17,13 @@ use std::sync::{Arc, Weak};
 use vk_mem::*;
 
 use crate::game::enums::ShaderType;
-use crate::game::graphics::vk::{Initializer, RenderPassType, ThreadPool, UniformBuffers};
+use crate::game::graphics::vk::{
+    DescriptorAllocator, DescriptorBuilder, DescriptorLayoutCache, Initializer, RenderPassType,
+    ThreadPool, UniformBuffers,
+};
 use crate::game::shared::enums::{ImageFormat, SceneType};
 use crate::game::shared::structs::{Directional, PushConstant, ViewProjection};
-use crate::game::shared::traits::GraphicsBase;
+use crate::game::shared::traits::{GraphicsBase, Renderable};
 use crate::game::shared::util::interpolate_alpha;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
@@ -91,7 +94,7 @@ impl Drop for OffscreenPass {
 pub struct Graphics {
     pub logical_device: Arc<Device>,
     pub pipeline: Arc<ShardedLock<ManuallyDrop<super::Pipeline>>>,
-    pub descriptor_sets: Vec<DescriptorSet>,
+    pub descriptor_set: DescriptorSet,
     pub push_constant: PushConstant,
     pub descriptor_set_layout: DescriptorSetLayout,
     pub ssbo_descriptor_set_layout: DescriptorSetLayout,
@@ -110,6 +113,8 @@ pub struct Graphics {
     pub ui_manager: Option<UIManagerHandle>,
     pub depth_format: Format,
     pub sample_count: SampleCountFlags,
+    pub descriptor_allocator: Arc<Mutex<DescriptorAllocator>>,
+    pub descriptor_layout_cache: Arc<Mutex<DescriptorLayoutCache>>,
     window: std::rc::Weak<RefCell<winit::window::Window>>,
     window_width: u32,
     window_height: u32,
@@ -280,6 +285,9 @@ impl Graphics {
             offscreen_renderpass,
         )?;
 
+        let descriptor_layout_cache = DescriptorLayoutCache::new(Arc::downgrade(&device));
+        let descriptor_allocator = DescriptorAllocator::new(Arc::downgrade(&device));
+
         let sky_color: Vec4 = Vec4::new(0.5, 0.5, 0.5, 1.0);
         /*let checkpoint_fn = NvDeviceDiagnosticCheckpointsFn::load(|name| unsafe {
             std::mem::transmute(instance.get_device_proc_addr(device.handle(), name.as_ptr()))
@@ -311,7 +319,7 @@ impl Graphics {
             camera,
             resource_manager,
             descriptor_pool: Arc::new(Mutex::new(DescriptorPool::null())),
-            descriptor_sets: vec![],
+            descriptor_set: DescriptorSet::null(),
             pipeline: Arc::new(ShardedLock::new(ManuallyDrop::new(pipeline))),
             frame_buffers: vec![],
             sample_count,
@@ -329,6 +337,8 @@ impl Graphics {
             window_width,
             window_height,
             //checkpoint_fn,
+            descriptor_allocator: Arc::new(Mutex::new(descriptor_allocator)),
+            descriptor_layout_cache: Arc::new(Mutex::new(descriptor_layout_cache)),
         })
     }
 
@@ -571,9 +581,10 @@ impl Graphics {
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
-        self.create_descriptor_set_layout()?;
+        //self.create_descriptor_set_layout()?;
         self.create_primary_ssbo()?;
-        self.allocate_descriptor_set()?;
+        //self.allocate_descriptor_set()?;
+        self.allocate_descriptors();
         self.create_graphics_pipeline(ShaderType::BasicShader)?;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
         self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
@@ -721,7 +732,12 @@ impl Graphics {
         Ok(())
     }
 
-    pub fn render(&self, scene_type: SceneType) -> anyhow::Result<()> {
+    pub fn render(
+        &self,
+        renderables: &[Arc<
+            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+        >],
+    ) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
         }
@@ -937,10 +953,11 @@ impl Graphics {
             let allocate_info = DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(*self.descriptor_pool.lock())
                 .set_layouts(set_layout.as_slice());
-            self.descriptor_sets = self
+            let sets = self
                 .logical_device
                 .allocate_descriptor_sets(&allocate_info)
                 .expect("Failed to allocate descriptor sets.");
+            self.descriptor_set = sets[0];
 
             log::info!("Descriptor sets successfully allocated.");
 
@@ -965,7 +982,7 @@ impl Graphics {
                     .buffer_info(vp_buffer_info.as_slice())
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER)
                     .dst_binding(0)
-                    .dst_set(self.descriptor_sets[0])
+                    .dst_set(self.descriptor_set)
                     .build(),
             );
             write_descriptors.push(
@@ -974,7 +991,7 @@ impl Graphics {
                     .buffer_info(dl_buffer_info.as_slice())
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER)
                     .dst_binding(1)
-                    .dst_set(self.descriptor_sets[0])
+                    .dst_set(self.descriptor_set)
                     .build(),
             );
 
@@ -994,7 +1011,7 @@ impl Graphics {
                     .buffer_info(ssbo_buffer_info.as_slice())
                     .descriptor_type(DescriptorType::STORAGE_BUFFER)
                     .dst_binding(2)
-                    .dst_set(self.descriptor_sets[0])
+                    .dst_set(self.descriptor_set)
                     .build(),
             );
 
@@ -1016,7 +1033,7 @@ impl Graphics {
                     .image_info(texture_info.as_slice())
                     .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_binding(3)
-                    .dst_set(self.descriptor_sets[0])
+                    .dst_set(self.descriptor_set)
                     .build(),
             );
 
@@ -1025,6 +1042,96 @@ impl Graphics {
             log::info!("Descriptor successfully updated.");
             Ok(())
         }
+    }
+
+    fn allocate_descriptors(&mut self) -> anyhow::Result<()> {
+        let mut cache = self.descriptor_layout_cache.lock();
+        let mut allocator = self.descriptor_allocator.lock();
+
+        let vp_buffer = &self.uniform_buffers.view_projection;
+        let vp_buffer_info = vec![DescriptorBufferInfo::builder()
+            .buffer(vp_buffer.buffer)
+            .offset(0)
+            .range(vp_buffer.buffer_size)
+            .build()];
+
+        let dl_buffer = &self.uniform_buffers.directional_light;
+        let dl_buffer_info = vec![DescriptorBufferInfo::builder()
+            .buffer(dl_buffer.buffer)
+            .offset(0)
+            .range(dl_buffer.buffer_size)
+            .build()];
+
+        let ssbo_buffer = self
+            .uniform_buffers
+            .primary_ssbo
+            .as_ref()
+            .expect("Primary SSBO buffer doesn't exist.");
+        let ssbo_buffer_info = vec![DescriptorBufferInfo::builder()
+            .range(ssbo_buffer.buffer_size)
+            .offset(0)
+            .buffer(ssbo_buffer.buffer)
+            .build()];
+
+        let mut texture_info = vec![];
+        {
+            let resource = self
+                .resource_manager
+                .upgrade()
+                .expect("Failed to upgrade resource manager handle.");
+            let resource_lock = resource.read();
+            for texture in resource_lock.textures.iter() {
+                let texture_lock = texture
+                    .read()
+                    .expect("Failed to lock texture for creating the descriptor set.");
+                let image_info = DescriptorImageInfo::builder()
+                    .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(texture_lock.image_view)
+                    .sampler(texture_lock.sampler)
+                    .build();
+                texture_info.push(image_info);
+            }
+        }
+
+        if let Some((descriptor_set, descriptor_set_layout)) =
+            DescriptorBuilder::builder(&mut *cache, &mut *allocator)
+                .bind_buffer(
+                    0,
+                    None,
+                    &vp_buffer_info,
+                    DescriptorType::UNIFORM_BUFFER,
+                    ShaderStageFlags::VERTEX,
+                )
+                .bind_buffer(
+                    1,
+                    None,
+                    &dl_buffer_info,
+                    DescriptorType::UNIFORM_BUFFER,
+                    ShaderStageFlags::FRAGMENT,
+                )
+                .bind_buffer(
+                    2,
+                    None,
+                    &ssbo_buffer_info,
+                    DescriptorType::STORAGE_BUFFER,
+                    ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
+                )
+                .bind_image(
+                    3,
+                    Some(texture_info.len() as u32),
+                    &texture_info,
+                    DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    ShaderStageFlags::FRAGMENT,
+                )
+                .build()
+        {
+            self.descriptor_set = descriptor_set;
+            self.descriptor_set_layout = descriptor_set_layout;
+        } else {
+            panic!("Failed to allocate descriptor set and descriptor set layout.");
+        }
+
+        Ok(())
     }
 
     fn begin_draw(
@@ -1616,7 +1723,7 @@ impl Graphics {
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
                 let pipeline_clone = self.pipeline.clone();
-                let descriptor_set = self.descriptor_sets[0];
+                let descriptor_set = self.descriptor_set;
                 model.lock().render(
                     ptr_clone,
                     push_constant,

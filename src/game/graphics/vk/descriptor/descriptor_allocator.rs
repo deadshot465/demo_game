@@ -1,3 +1,4 @@
+// Based on vblanco's implementation: https://vkguide.dev/docs/extra-chapter/abstracting_descriptors/
 use ash::version::DeviceV1_0;
 use ash::vk::{
     DescriptorPool, DescriptorPoolCreateFlags, DescriptorPoolCreateInfo, DescriptorPoolResetFlags,
@@ -43,16 +44,13 @@ impl DescriptorAllocator {
         }
     }
 
-    pub fn allocate(
-        &mut self,
-        descriptor_set: &mut DescriptorSet,
-        layout: DescriptorSetLayout,
-    ) -> bool {
+    pub fn allocate(&mut self, layout: DescriptorSetLayout) -> Option<DescriptorSet> {
         let device = self
             .logical_device
             .upgrade()
             .expect("Failed to upgrade device handle.");
 
+        // Initialize the current pool handle if it's null.
         if self.current_pool == DescriptorPool::null() {
             let pool = self.grab_pool(&device);
             self.current_pool = pool;
@@ -64,34 +62,32 @@ impl DescriptorAllocator {
             .descriptor_pool(self.current_pool)
             .set_layouts(&layouts[..]);
         unsafe {
+            // Try to allocate the descriptor set.
             let result = device.allocate_descriptor_sets(&allocate_info);
             let mut reallocate = false;
             match result {
                 Ok(set) => {
-                    *descriptor_set = set[0];
-                    return true;
+                    return Some(set[0]);
                 }
                 Err(e) => match e {
                     ash::vk::Result::ERROR_FRAGMENTED_POOL
                     | ash::vk::Result::ERROR_OUT_OF_POOL_MEMORY => reallocate = true,
-                    _ => return false,
+                    _ => return None,
                 },
             }
 
             if reallocate {
+                // Allocate a new pool and retry.
                 let pool = self.grab_pool(&device);
                 self.current_pool = pool;
                 self.used_pools.push(self.current_pool);
                 return match device.allocate_descriptor_sets(&allocate_info) {
-                    Ok(set) => {
-                        *descriptor_set = set[0];
-                        true
-                    }
-                    Err(_) => false,
+                    Ok(set) => Some(set[0]),
+                    Err(_) => None,
                 };
             }
         }
-        false
+        None
     }
 
     pub fn reset_pool(&mut self) {
@@ -113,11 +109,14 @@ impl DescriptorAllocator {
     }
 
     fn grab_pool(&mut self, device: &ash::Device) -> DescriptorPool {
+        // There are reusable pools available.
         if !self.free_pools.is_empty() {
+            // Grab the pool from the back of the vector and remove it from the vector.
             self.free_pools
                 .pop()
                 .expect("Failed to pop the last pool from descriptor allocator.")
         } else {
+            // No pools available, create a new one.
             Self::create_pool(
                 device,
                 &self.descriptor_sizes,
@@ -137,7 +136,7 @@ impl DescriptorAllocator {
         for (descriptor_type, size) in pool_sizes.sizes.iter() {
             sizes.push(
                 DescriptorPoolSize::builder()
-                    .descriptor_count(*size as u32 * count)
+                    .descriptor_count((*size * count as f32) as u32)
                     .ty(*descriptor_type)
                     .build(),
             )

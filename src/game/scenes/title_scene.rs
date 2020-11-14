@@ -1,6 +1,6 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::{SceneType, ShaderType};
-use crate::game::shared::structs::PrimitiveType;
+use crate::game::shared::structs::{PrimitiveType, WaitableTasks};
 use crate::game::structs::Model;
 use crate::game::traits::{Disposable, GraphicsBase, Scene};
 use crate::game::ResourceManager;
@@ -8,6 +8,8 @@ use ash::vk::CommandBuffer;
 use crossbeam::channel::*;
 use glam::f32::{Vec3A, Vec4};
 use parking_lot::RwLock;
+use slotmap::{DefaultKey, SlotMap};
+use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
@@ -26,8 +28,9 @@ where
     scene_name: String,
     model_count: Arc<AtomicUsize>,
     ssbo_count: AtomicUsize,
-    model_tasks: Vec<Receiver<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
+    waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
     scene_type: SceneType,
+    entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -45,6 +48,7 @@ where
             >,
         >,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
+        entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
     ) -> Self {
         TitleScene {
             graphics,
@@ -52,8 +56,9 @@ where
             scene_name: String::from("TITLE_SCENE"),
             model_count: Arc::new(AtomicUsize::new(0)),
             ssbo_count: AtomicUsize::new(0),
-            model_tasks: vec![],
+            waitable_tasks: WaitableTasks::new(),
             scene_type: SceneType::Title,
+            entities,
         }
     }
 }
@@ -157,43 +162,14 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
                 ssbo_index,
                 true,
             )?;
-            self.model_tasks.push(task);
+            self.waitable_tasks.model_tasks.push(task);
         }
         drop(resource_manager);
         Ok(())
     }
 
-    fn add_skinned_model(
-        &mut self,
-        _file_name: &'static str,
-        _position: Vec3A,
-        _scale: Vec3A,
-        _rotation: Vec3A,
-        _color: Vec4,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn add_geometric_primitive(
-        &mut self,
-        _primitive_type: PrimitiveType,
-        _texture_name: Option<&'static str>,
-        _position: Vec3A,
-        _scale: Vec3A,
-        _rotation: Vec3A,
-        _color: Vec4,
-        _shader_type: Option<ShaderType>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
-        let model_tasks = &mut self.model_tasks;
-        let mut models = vec![];
-        for task in model_tasks.iter_mut() {
-            let model = task.recv()?;
-            models.push(model);
-        }
+        let completed_tasks = self.waitable_tasks.wait_for_all_tasks()?;
         let rm = self.resource_manager.upgrade();
         if rm.is_none() {
             return Err(anyhow::anyhow!(
@@ -202,12 +178,12 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         }
         let rm = rm.unwrap();
         let mut lock = rm.write();
-        for model in models.into_iter() {
+        for model in completed_tasks.models.into_iter() {
             lock.add_model(self.scene_type, model);
         }
         drop(lock);
         drop(rm);
-        self.model_tasks.clear();
+        self.waitable_tasks.clear();
         Ok(())
     }
 

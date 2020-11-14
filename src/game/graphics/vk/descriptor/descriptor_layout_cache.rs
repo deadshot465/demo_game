@@ -69,8 +69,11 @@ impl DescriptorLayoutCache {
         let mut last_binding = -1_i32;
         let bindings =
             unsafe { std::slice::from_raw_parts(info.p_bindings, info.binding_count as usize) };
+        // Copy from the direct info struct into our own one.
         for i in 0..info.binding_count {
             layout_info.bindings.push(bindings[i as usize]);
+
+            // Check that the bindings are in strict increasing order.
             if bindings[i as usize].binding > last_binding as u32 {
                 last_binding = bindings[i as usize].binding as i32;
             } else {
@@ -78,15 +81,18 @@ impl DescriptorLayoutCache {
             }
         }
 
+        // Sort the bindings if they are not in order.
         if !sorted {
             layout_info
                 .bindings
                 .sort_unstable_by(|a, b| a.binding.cmp(&b.binding));
         }
 
+        // Try to grab from cache.
         if let Some(layout) = self.layout_cache.get(&layout_info) {
             *layout
         } else {
+            // Create a new one (not found)
             let device = self
                 .logical_device
                 .upgrade()
@@ -96,6 +102,7 @@ impl DescriptorLayoutCache {
                     .create_descriptor_set_layout(info, None)
                     .expect("Failed to create descriptor set layout.")
             };
+            // Add to cache.
             self.layout_cache.insert(layout_info, layout);
             layout
         }
