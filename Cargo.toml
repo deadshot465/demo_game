@@ -18,7 +18,7 @@ dashmap = ">=4.0.0-rc6"
 dotenv = ">=0.15.0"
 downcast-rs = ">=1.2.0"
 env_logger = ">=0.7.1"
-glam = ">=0.9.4"
+glam = { version = ">=0.10.0", features = ["bytemuck", "serde"] }
 gltf = { version = ">=0.15.2", features = ["extras", "names", "import", "utils"] }
 image = ">=0.23.9"
 log = ">=0.4.11"

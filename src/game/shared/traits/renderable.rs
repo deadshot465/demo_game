@@ -1,10 +1,10 @@
 use crate::game::graphics::vk::{Pipeline, ThreadPool};
-use crate::game::shared::structs::{ModelMetaData, PushConstant};
+use crate::game::shared::structs::{ModelMetaData, PositionInfo, PushConstant};
 use crate::game::shared::traits::Disposable;
 use crate::game::traits::GraphicsBase;
 use ash::vk::{CommandBufferInheritanceInfo, DescriptorSet};
 use crossbeam::sync::ShardedLock;
-use glam::{Mat4, Vec3A};
+use glam::Mat4;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
 use std::sync::Arc;
@@ -32,19 +32,18 @@ where
 
     fn get_ssbo_index(&self) -> usize;
     fn get_model_metadata(&self) -> ModelMetaData;
-    fn get_position(&self) -> Vec3A;
-    fn get_scale(&self) -> Vec3A;
-    fn get_rotation(&self) -> Vec3A;
+    fn get_position_info(&self) -> PositionInfo;
 
     fn get_world_matrix(&self) -> Mat4 {
+        let PositionInfo {
+            position,
+            scale,
+            rotation,
+        } = self.get_position_info();
         let world = Mat4::identity();
-        let scale = Mat4::from_scale(glam::Vec3::from(self.get_scale()));
-        let translation = Mat4::from_translation(glam::Vec3::from(self.get_position()));
-        let rotate = Mat4::from_rotation_ypr(
-            self.get_rotation().y(),
-            self.get_rotation().x(),
-            self.get_rotation().z(),
-        );
+        let scale = Mat4::from_scale(glam::Vec3::from(scale));
+        let translation = Mat4::from_translation(glam::Vec3::from(position));
+        let rotate = Mat4::from_rotation_ypr(rotation.y(), rotation.x(), rotation.z());
         world * translation * rotate * scale
     }
 
@@ -52,10 +51,12 @@ where
         Ok(())
     }
 
+    fn dispose_ssbo(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandType>;
-    fn set_position(&mut self, position: Vec3A);
-    fn set_scale(&mut self, scale: Vec3A);
-    fn set_rotation(&mut self, rotation: Vec3A);
+    fn set_position_info(&mut self, position_info: PositionInfo);
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData);
     fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>);
     fn set_ssbo_index(&mut self, ssbo_index: usize);

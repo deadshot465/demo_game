@@ -909,33 +909,16 @@ impl Drawer {
         let mut fonts = HashMap::new();
         let mut atlas = FontAtlas::new(allocator);
         atlas.begin();
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(14.0);
-        let font_14 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(14, font_14);
 
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(18.0);
-        let font_18 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(18, font_18);
+        for i in (12..48).step_by(4) {
+            font_config.set_ttf_data_owned_by_atlas(false);
+            font_config.set_size(i as f32);
+            let font = atlas
+                .add_font_with_config(&font_config)
+                .expect("Failed to load font into Nuklear runtime.");
+            fonts.insert(i, font);
+        }
 
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(20.0);
-        let font_20 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(20, font_20);
-
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(22.0);
-        let font_22 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(22, font_22);
         (atlas, fonts)
     }
 

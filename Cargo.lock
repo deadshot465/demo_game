@@ -614,9 +614,14 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.9.5"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8637c7ec4fd0776c51eeab3e0d5d1aa7e440ece3fc2ee7d674e13c957287bfc1"
+checksum = "668e725370f2b2243a5f43c6e4be6be3d501fb2441b81f7ee604ef766b5ab91b"
+dependencies = [
+ "bytemuck",
+ "serde",
+ "version_check",
+]
 
 [[package]]
 name = "gltf"
@@ -1383,6 +1388,9 @@ name = "serde"
 version = "1.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b88fa983de7720629c9387e9f517353ed404164b1e482c970a90c1a4aaf7dc1a"
+dependencies = [
+ "serde_derive",
+]
 
 [[package]]
 name = "serde_derive"

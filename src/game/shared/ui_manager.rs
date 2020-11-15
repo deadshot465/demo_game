@@ -3,8 +3,8 @@ use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::Drawer;
 use ash::vk::{CommandBuffer, Framebuffer, Semaphore, Viewport};
 use nuklear::{
-    AntiAliasing, Context, ConvertConfig, Flags, FontAtlas, FontID, LayoutFormat, PanelFlags,
-    TextAlignment,
+    AntiAliasing, ButtonBehavior, Context, ConvertConfig, Flags, FontAtlas, FontID, LayoutFormat,
+    PanelFlags, TextAlignment,
 };
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
@@ -14,7 +14,7 @@ const MAX_VERTEX_MEMORY: usize = 512 * 1024;
 const MAX_INDEX_MEMORY: usize = 128 * 1024;
 const MAX_COMMANDS_MEMORY: usize = 64 * 1024;
 const RATIO_W: [f32; 2] = [0.15, 0.85];
-const RATIO_WC: [f32; 3] = [0.15, 0.50, 0.35];
+const RATIO_WC: [f32; 3] = [0.15, 0.7, 0.15];
 const MOUSE_SENSITIVITY: f64 = 22.0;
 
 struct Media {
@@ -24,6 +24,11 @@ struct Media {
     font_22: FontID,
     font_atlas: FontAtlas,
     font_tex: nuklear::Handle,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ButtonState {
+    pub game_started: bool,
 }
 
 pub struct UIManager<GraphicsType, BufferType, CommandType, TextureType>
@@ -42,6 +47,7 @@ where
     convert_config: ConvertConfig,
     drawer: ManuallyDrop<Drawer>,
     is_initialized: bool,
+    button_state: ButtonState,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -122,30 +128,30 @@ where
         self.context.input_unicode(c);
     }
 
-    pub fn prerender(&mut self) {
+    pub fn prerender(&mut self) -> ButtonState {
         if !self.is_initialized {
-            return;
+            return self.button_state;
         }
         let ctx = &mut self.context;
         let drawer = &mut self.drawer;
-        drawer.set_font_size(ctx, 20);
-        let flags =
-            PanelFlags::Border as Flags | PanelFlags::Movable as Flags | PanelFlags::Title as Flags;
+        drawer.set_font_size(ctx, 24);
+        let flags = PanelFlags::Border as Flags;
         ctx.begin(
             nuklear::nk_string!("Basic User Interface"),
             nuklear::Rect {
-                x: 50.0,
-                y: 50.0,
+                x: 0.0,
+                y: 0.0,
                 w: 300.0,
-                h: 300.0,
+                h: 900.0,
             },
             flags,
         );
-        Self::set_ui_header(drawer, ctx, "Basic Image");
-        Self::set_ui_widget(drawer, ctx, 100.0, true);
-        ctx.image(nuklear::Image::with_id(0));
-        drawer.set_font_size(ctx, 14);
+        Self::set_ui_header(drawer, ctx, "Game Menu", TextAlignment::Centered);
+        Self::set_ui_widget(drawer, ctx, 50.0, true);
+        self.button_state.game_started = ctx.button_text("Start Game");
+        drawer.set_font_size(ctx, 24);
         ctx.end();
+        self.button_state
     }
 
     pub fn set_disposing(&mut self) {
@@ -164,14 +170,19 @@ where
         self.drawer.wait_idle();
     }
 
-    fn set_ui_header(drawer: &mut Drawer, ctx: &mut Context, title: &str) {
-        drawer.set_font_size(ctx, 18);
-        ctx.layout_row_dynamic(20.0, 1);
-        ctx.text(title, TextAlignment::Left as Flags);
+    fn set_ui_header(
+        drawer: &mut Drawer,
+        ctx: &mut Context,
+        title: &str,
+        text_alignment: TextAlignment,
+    ) {
+        drawer.set_font_size(ctx, 36);
+        ctx.layout_row_dynamic(50.0, 1);
+        ctx.text(title, text_alignment as Flags);
     }
 
     fn set_ui_widget(drawer: &mut Drawer, ctx: &mut Context, height: f32, centered: bool) {
-        drawer.set_font_size(ctx, 22);
+        drawer.set_font_size(ctx, 20);
         ctx.layout_row(
             LayoutFormat::Dynamic,
             height,
@@ -207,7 +218,7 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
             )
         };
 
-        let ctx = drawer.create_context(14);
+        let ctx = drawer.create_context(16);
 
         let mut convert_config = ConvertConfig::default();
         convert_config.set_null(drawer.draw_null_texture.clone());
@@ -228,6 +239,9 @@ impl UIManager<Graphics, Buffer, CommandBuffer, Image> {
             convert_config,
             drawer: ManuallyDrop::new(drawer),
             is_initialized: true,
+            button_state: ButtonState {
+                game_started: false,
+            },
         }
     }
 

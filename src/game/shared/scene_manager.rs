@@ -61,11 +61,13 @@ impl SceneManager {
         Ok(())
     }
 
-    pub fn register_scene<T>(&mut self, scene: T)
+    pub fn register_scene<T>(&mut self, scene: T) -> usize
     where
         T: Scene + 'static,
     {
+        let index = self.scenes.len();
         self.scenes.push(RefCell::new(Box::new(scene)));
+        index
     }
 
     pub fn set_current_scene_by_index(&mut self, index: usize) {

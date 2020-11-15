@@ -1,6 +1,8 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{InstanceData, Model, ModelMetaData, PushConstant};
+use crate::game::shared::structs::{
+    InstanceData, Model, ModelMetaData, PositionInfo, PushConstant,
+};
 use crate::game::structs::Vertex;
 use crate::game::traits::{Disposable, GraphicsBase, Mappable, Renderable};
 use ash::version::DeviceV1_0;
@@ -14,6 +16,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
+use slotmap::DefaultKey;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51,6 +54,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
         model_index: Arc<AtomicUsize>,
         ssbo_index: usize,
         instance_data: Vec<InstanceData>,
+        entity: DefaultKey,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading instanced model: {}...", file_name);
         let graphics_arc = graphics
@@ -68,6 +72,7 @@ impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {
                 model_index.clone(),
                 ssbo_index,
                 true,
+                entity,
             )
             .expect("Failed to load instanced model data.")
             .recv()
@@ -350,32 +355,16 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.get_model_metadata()
     }
 
-    fn get_position(&self) -> Vec3A {
-        self.model.get_position()
-    }
-
-    fn get_scale(&self) -> Vec3A {
-        self.model.get_scale()
-    }
-
-    fn get_rotation(&self) -> Vec3A {
-        self.model.get_rotation()
+    fn get_position_info(&self) -> PositionInfo {
+        self.model.position_info
     }
 
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
         self.model.get_command_buffers(frame_index)
     }
 
-    fn set_position(&mut self, position: Vec3A) {
-        self.model.set_position(position)
-    }
-
-    fn set_scale(&mut self, scale: Vec3A) {
-        self.model.set_scale(scale)
-    }
-
-    fn set_rotation(&mut self, rotation: Vec3A) {
-        self.model.set_rotation(rotation)
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.model.position_info = position_info;
     }
 
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {

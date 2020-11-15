@@ -1,15 +1,15 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
-use crate::game::shared::enums::{SceneType, ShaderType};
-use crate::game::shared::structs::{PrimitiveType, WaitableTasks};
-use crate::game::structs::Model;
+use crate::game::shared::enums::SceneType;
+use crate::game::shared::structs::WaitableTasks;
+use crate::game::structs::{Counts, Model, PositionInfo};
 use crate::game::traits::{Disposable, GraphicsBase, Renderable, Scene};
 use crate::game::ResourceManager;
 use ash::vk::CommandBuffer;
-use crossbeam::channel::*;
 use glam::f32::{Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
 use slotmap::{DefaultKey, SlotMap};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
@@ -26,11 +26,11 @@ where
         RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     >,
     scene_name: String,
-    model_count: Arc<AtomicUsize>,
-    ssbo_count: AtomicUsize,
+    counts: Counts,
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
     scene_type: SceneType,
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
+    current_entities: HashMap<String, DefaultKey>,
     render_components: Vec<
         Arc<Mutex<Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send>>>,
     >,
@@ -57,13 +57,26 @@ where
             graphics,
             resource_manager,
             scene_name: String::from("TITLE_SCENE"),
-            model_count: Arc::new(AtomicUsize::new(0)),
-            ssbo_count: AtomicUsize::new(0),
+            counts: Counts::new(),
             waitable_tasks: WaitableTasks::new(),
             scene_type: SceneType::Title,
             entities,
             render_components: vec![],
+            current_entities: HashMap::new(),
         }
+    }
+
+    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
+        let entities = self
+            .entities
+            .upgrade()
+            .expect("Failed to upgrade entities handle.");
+        self.counts.entity_count += 1;
+        let mut entities_lock = entities.borrow_mut();
+        let entity = entities_lock.insert(self.counts.entity_count);
+        self.current_entities
+            .insert(entity_name.to_string(), entity);
+        entity
     }
 }
 
@@ -81,13 +94,23 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn load_content(&mut self) -> anyhow::Result<()> {
+        let title_tank = self.add_entity("TitleTank");
         self.add_model(
             "./models/merkava_tank/scene.gltf",
             Vec3A::new(1.5, 0.0, 1.5),
             Vec3A::new(0.01, 0.01, 0.01),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
+            title_tank,
         )?;
+        /*self.add_model(
+            "./models/tank/tank.gltf",
+            Vec3A::new(1.5, 0.0, 1.5),
+            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+            title_tank,
+        )?;*/
         Ok(())
     }
 
@@ -120,8 +143,9 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
+        entity: DefaultKey,
     ) -> anyhow::Result<()> {
-        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -139,18 +163,20 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            model.set_position(position);
-            model.set_scale(scale);
             let x: f32 = rotation.x();
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
-            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
+            model.set_position_info(PositionInfo {
+                position,
+                scale,
+                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            });
             let mut metadata = model.get_model_metadata();
             metadata.world_matrix = model.get_world_matrix();
             metadata.object_color = color;
             model.set_model_metadata(metadata);
             model.set_ssbo_index(ssbo_index);
-            model.update_model_indices(self.model_count.clone());
+            model.update_model_indices(self.counts.model_count.clone());
             let mut lock = resource_manager.write();
             lock.add_clone(self.scene_type, model);
             drop(lock);
@@ -162,9 +188,10 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
                 scale,
                 rotation,
                 color,
-                self.model_count.clone(),
+                self.counts.model_count.clone(),
                 ssbo_index,
                 true,
+                entity,
             )?;
             self.waitable_tasks.model_tasks.push(task);
         }
@@ -183,7 +210,8 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         let rm = rm.unwrap();
         let mut lock = rm.write();
         for model in completed_tasks.models.into_iter() {
-            lock.add_model(self.scene_type, model);
+            self.render_components
+                .push(lock.add_model(self.scene_type, model));
         }
         drop(lock);
         drop(rm);
@@ -192,7 +220,7 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn get_model_count(&self) -> Arc<AtomicUsize> {
-        self.model_count.clone()
+        self.counts.model_count.clone()
     }
 
     fn get_scene_type(&self) -> SceneType {
@@ -200,12 +228,9 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn create_ssbo(&self) -> anyhow::Result<()> {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager handle.");
-        let resource_lock = resource_manager.read();
-        resource_lock.create_ssbo(self.scene_type)?;
+        for renderable in self.render_components.iter() {
+            renderable.lock().create_ssbo()?;
+        }
         Ok(())
     }
 

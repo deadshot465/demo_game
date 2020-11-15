@@ -584,7 +584,7 @@ impl Graphics {
         //self.create_descriptor_set_layout()?;
         self.create_primary_ssbo()?;
         //self.allocate_descriptor_set()?;
-        self.allocate_descriptors();
+        self.allocate_descriptors()?;
         self.create_graphics_pipeline(ShaderType::BasicShader)?;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
         self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
@@ -1711,18 +1711,9 @@ impl Graphics {
             Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
         >],
     ) -> anyhow::Result<Vec<CommandBuffer>> {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager.");
         {
             let push_constant = self.push_constant;
             let ptr = inheritance_info;
-            /*let resource_lock = resource_manager.read();
-            let current_model_queue = resource_lock
-                .model_queue
-                .get(scene_type)
-                .expect("Failed to get model queue of the current scene.");*/
             for model in renderables.iter() {
                 let ptr_clone = ptr.clone();
                 let device_clone = self.logical_device.clone();
@@ -1742,19 +1733,11 @@ impl Graphics {
             }
         }
         self.thread_pool.wait()?;
-        let resource_lock = resource_manager.read();
         let command_buffers = renderables
             .iter()
             .map(|r| r.lock().get_command_buffers(frame_index))
             .flatten()
             .collect::<Vec<_>>();
-        /*let command_buffers = resource_lock
-        .command_buffers
-        .get(scene_type)
-        .expect("Failed to get command buffers of the current scene")
-        .get(&frame_index)
-        .cloned()
-        .unwrap();*/
         Ok(command_buffers)
     }
 }

@@ -1,6 +1,8 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Model, ModelMetaData, Primitive, PushConstant, Vertex};
+use crate::game::shared::structs::{
+    Mesh, Model, ModelMetaData, PositionInfo, Primitive, PushConstant, Vertex,
+};
 use crate::game::shared::traits::{Disposable, GraphicsBase, Renderable};
 use crate::game::shared::util::get_random_string;
 use crate::game::shared::util::height_generator::HeightGenerator;
@@ -13,6 +15,7 @@ use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
+use slotmap::DefaultKey;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
@@ -54,6 +57,7 @@ where
         size_ratio_x: f32,
         size_ratio_z: f32,
         vertex_count_ratio: f32,
+        entity: DefaultKey,
     ) -> Self {
         let pos_x = std::env::var("POS_X").unwrap().parse::<f32>().unwrap();
         let pos_z = std::env::var("POS_Z").unwrap().parse::<f32>().unwrap();
@@ -72,6 +76,7 @@ where
             size_ratio_x,
             size_ratio_z,
             vertex_count_ratio,
+            entity,
         );
         Terrain {
             x,
@@ -92,6 +97,7 @@ where
         size_ratio_x: f32,
         size_ratio_z: f32,
         vertex_count_ratio: f32,
+        entity: DefaultKey,
     ) -> Model<GraphicsType, BufferType, CommandType, TextureType> {
         let vertex_count = (Self::VERTEX_COUNT as f32 * vertex_count_ratio) as u32;
         let count = vertex_count * vertex_count;
@@ -159,9 +165,11 @@ where
             model_index,
         };
         Model {
-            position,
-            scale: Vec3A::one(),
-            rotation: Vec3A::zero(),
+            position_info: PositionInfo {
+                position,
+                scale: Vec3A::one(),
+                rotation: Vec3A::zero(),
+            },
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
                 object_color: Vec4::one(),
@@ -173,6 +181,7 @@ where
             model_name: get_random_string(7),
             graphics,
             ssbo_index,
+            entity,
         }
     }
 
@@ -197,6 +206,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         size_ratio_x: f32,
         size_ratio_z: f32,
         vertex_count_ratio: f32,
+        entity: DefaultKey,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Generating terrain...Model index: {}", model_index);
         let graphics_arc = graphics
@@ -245,6 +255,7 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 size_ratio_x,
                 size_ratio_z,
                 vertex_count_ratio,
+                entity,
             );
             generated_terrain.model.model_metadata.world_matrix =
                 generated_terrain.get_world_matrix();
@@ -355,32 +366,16 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.model_metadata
     }
 
-    fn get_position(&self) -> Vec3A {
-        self.model.position
-    }
-
-    fn get_scale(&self) -> Vec3A {
-        self.model.scale
-    }
-
-    fn get_rotation(&self) -> Vec3A {
-        self.model.rotation
+    fn get_position_info(&self) -> PositionInfo {
+        self.model.position_info
     }
 
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
         self.model.get_command_buffers(frame_index)
     }
 
-    fn set_position(&mut self, position: Vec3A) {
-        self.model.set_position(position);
-    }
-
-    fn set_scale(&mut self, scale: Vec3A) {
-        self.model.set_scale(scale);
-    }
-
-    fn set_rotation(&mut self, rotation: Vec3A) {
-        self.model.set_rotation(rotation);
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.model.position_info = position_info;
     }
 
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {

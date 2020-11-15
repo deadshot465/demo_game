@@ -80,10 +80,7 @@ fn main() -> anyhow::Result<()> {
                             frame_count = 0;
                             last_second = time::Instant::now();
                         }
-                        if let Some(ui_manager) = game.ui_manager.as_ref() {
-                            let mut borrowed = ui_manager.borrow_mut();
-                            borrowed.start_input();
-                        }
+                        game.start_input();
                     }
                     Event::WindowEvent { event, .. } => match event {
                         WindowEvent::CloseRequested => {
@@ -93,9 +90,7 @@ fn main() -> anyhow::Result<()> {
                             *control_flow = ControlFlow::Exit;
                         }
                         WindowEvent::ReceivedCharacter(c) => {
-                            if let Some(ui) = game.ui_manager.as_ref() {
-                                ui.borrow_mut().input_unicode(c);
-                            }
+                            game.input_unicode(c);
                         }
                         WindowEvent::KeyboardInput {
                             input:
@@ -122,9 +117,7 @@ fn main() -> anyhow::Result<()> {
                                     CameraType::Watch(glam::Vec3A::zero()),
                                     virtual_key_code,
                                 );
-                                if let Some(ui) = game.ui_manager.as_ref() {
-                                    ui.borrow_mut().input_key(virtual_key_code, state);
-                                }
+                                game.input_key(virtual_key_code, state);
                             }
                         },
                         WindowEvent::CursorMoved {
@@ -133,20 +126,13 @@ fn main() -> anyhow::Result<()> {
                         } => {
                             mouse_x = x;
                             mouse_y = y;
-                            if let Some(ui) = game.ui_manager.as_ref() {
-                                ui.borrow_mut().input_motion(x, y);
-                            }
+                            game.input_motion(x, y);
                         }
                         WindowEvent::MouseInput { state, button, .. } => {
-                            if let Some(ui) = game.ui_manager.as_ref() {
-                                ui.borrow_mut()
-                                    .input_button(button, mouse_x, mouse_y, state);
-                            }
+                            game.input_button(button, mouse_x, mouse_y, state);
                         }
                         WindowEvent::MouseWheel { delta, .. } => {
-                            if let Some(ui) = game.ui_manager.as_ref() {
-                                ui.borrow_mut().input_scroll(delta);
-                            }
+                            game.input_scroll(delta);
                         }
                         WindowEvent::Resized(winit::dpi::PhysicalSize { width, height }) => {
                             game.graphics
@@ -154,25 +140,15 @@ fn main() -> anyhow::Result<()> {
                                 .recreate_swapchain(width, height)
                                 .expect("Failed to recreate swapchain.");
                             if width > 0 && height > 0 {
-                                let resource_lock = game.resource_manager.read();
-                                for (_, model_queue) in resource_lock.model_queue.iter() {
-                                    for model in model_queue.iter() {
-                                        model
-                                            .lock()
-                                            .create_ssbo()
-                                            .expect("Failed to create SSBO for skinned models.");
-                                    }
-                                }
+                                game.scene_manager
+                                    .create_ssbo()
+                                    .expect("Failed to create SSBO for skinned models.");
                             }
                         }
                         _ => (),
                     },
                     Event::MainEventsCleared => {
-                        if let Some(ui_manager) = game.ui_manager.as_ref() {
-                            let mut borrowed = ui_manager.borrow_mut();
-                            borrowed.end_input();
-                        }
-
+                        game.end_input();
                         game.update(delta_time).expect("Failed to update the game.");
                         game.render(delta_time).expect("Failed to render the game.");
                     }

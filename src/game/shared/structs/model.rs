@@ -17,12 +17,15 @@ use std::sync::{
 
 use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, ModelMetaData, Primitive, PushConstant, Vertex};
+use crate::game::shared::structs::{
+    Mesh, ModelMetaData, PositionInfo, Primitive, PushConstant, Vertex,
+};
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::Renderable;
 use crate::game::traits::GraphicsBase;
 use crate::game::util::read_raw_data;
 use ash::Device;
+use slotmap::DefaultKey;
 use std::collections::HashMap;
 
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
@@ -32,15 +35,14 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
-    pub position: Vec3A,
-    pub scale: Vec3A,
-    pub rotation: Vec3A,
+    pub position_info: PositionInfo,
     pub model_metadata: ModelMetaData,
     pub meshes: Vec<Arc<Mutex<Mesh<BufferType, CommandType, TextureType>>>>,
     pub is_disposed: bool,
     pub model_name: String,
     pub graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
     pub ssbo_index: usize,
+    pub entity: DefaultKey,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -58,12 +60,11 @@ where
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-        position: Vec3A,
-        scale: Vec3A,
-        rotation: Vec3A,
+        position_info: PositionInfo,
         color: Vec4,
         texture_index_offset: usize,
         ssbo_index: usize,
+        entity: DefaultKey,
     ) -> Self {
         let meshes = Self::process_model(
             &document,
@@ -77,14 +78,8 @@ where
             .map(|m| Arc::new(Mutex::new(m)))
             .collect::<Vec<_>>();
 
-        let x: f32 = rotation.x();
-        let y: f32 = rotation.y();
-        let z: f32 = rotation.z();
-
         Model {
-            position,
-            scale,
-            rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            position_info,
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
                 object_color: color,
@@ -96,6 +91,7 @@ where
             is_disposed: false,
             model_name: file_name.to_string(),
             ssbo_index,
+            entity,
         }
     }
 
@@ -285,6 +281,7 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         model_index: Arc<AtomicUsize>,
         ssbo_index: usize,
         create_buffers: bool,
+        entity: DefaultKey,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Loading model {}...", file_name);
         let graphics_arc = graphics
@@ -304,6 +301,9 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
             let (textures, texture_index_offset) =
                 Graphics::create_gltf_textures(images, graphics_arc.clone(), command_pool.clone())
                     .expect("Failed to create glTF textures.");
+            let x: f32 = rotation.x();
+            let y: f32 = rotation.y();
+            let z: f32 = rotation.z();
             let mut loaded_model = Self::create_model(
                 file_name,
                 model_index,
@@ -311,12 +311,15 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
                 buffers,
                 textures,
                 graphics,
-                position,
-                scale,
-                rotation,
+                PositionInfo {
+                    position,
+                    scale,
+                    rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+                },
                 color,
                 texture_index_offset,
                 ssbo_index,
+                entity,
             );
             loaded_model.model_metadata.world_matrix = loaded_model.get_world_matrix();
             {
@@ -476,15 +479,14 @@ where
             }
         }
         Model {
-            position: self.position,
-            scale: self.scale,
-            rotation: self.rotation,
+            position_info: self.position_info,
             model_metadata: self.model_metadata,
             meshes: self.meshes.clone(),
             is_disposed: true,
             model_name: self.model_name.clone(),
             graphics: self.graphics.clone(),
             ssbo_index: 0,
+            entity: self.entity,
         }
     }
 }
@@ -618,16 +620,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model_metadata
     }
 
-    fn get_position(&self) -> Vec3A {
-        self.position
-    }
-
-    fn get_scale(&self) -> Vec3A {
-        self.scale
-    }
-
-    fn get_rotation(&self) -> Vec3A {
-        self.rotation
+    fn get_position_info(&self) -> PositionInfo {
+        self.position_info
     }
 
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
@@ -645,16 +639,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         buffers
     }
 
-    fn set_position(&mut self, position: Vec3A) {
-        self.position = position;
-    }
-
-    fn set_scale(&mut self, scale: Vec3A) {
-        self.scale = scale;
-    }
-
-    fn set_rotation(&mut self, rotation: Vec3A) {
-        self.rotation = rotation;
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.position_info = position_info;
     }
 
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {

@@ -1,5 +1,4 @@
 use ash::vk::CommandBuffer;
-use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
@@ -13,8 +12,8 @@ use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::SceneType;
 use crate::game::shared::structs::{
-    Counts, GeometricPrimitive, InstanceData, InstancedModel, Model, PrimitiveType, SkinnedModel,
-    Terrain, WaitableTasks,
+    Counts, GeometricPrimitive, InstanceData, InstancedModel, Model, PositionInfo, PrimitiveType,
+    SkinnedModel, Terrain, WaitableTasks,
 };
 use crate::game::shared::traits::{GraphicsBase, Renderable, Scene};
 use crate::game::shared::util::HeightGenerator;
@@ -76,19 +75,27 @@ where
         }
     }
 
-    fn add_entity(&mut self) -> DefaultKey {
+    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
         let entities = self
             .entities
             .upgrade()
             .expect("Failed to upgrade entities handle.");
         self.counts.entity_count += 1;
         let mut entities_lock = entities.borrow_mut();
-        entities_lock.insert(self.counts.entity_count)
+        let entity = entities_lock.insert(self.counts.entity_count);
+        self.current_entities
+            .insert(entity_name.to_string(), entity);
+        entity
     }
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
+    pub fn generate_terrain(
+        &mut self,
+        grid_x: i32,
+        grid_z: i32,
+        entity: DefaultKey,
+    ) -> anyhow::Result<()> {
         let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
         let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let mut height_generator = self
@@ -109,6 +116,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             ratio,
             ratio,
             ratio,
+            entity,
         )?;
         self.waitable_tasks.terrain_tasks.push(terrain);
         Ok(())
@@ -122,6 +130,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
         instance_count: usize,
+        entity: DefaultKey,
     ) -> anyhow::Result<()> {
         let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let mut instance_data = vec![];
@@ -148,6 +157,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             self.counts.model_count.clone(),
             ssbo_index,
             instance_data,
+            entity,
         )?;
         self.waitable_tasks.instanced_model_tasks.push(task);
         Ok(())
@@ -179,12 +189,14 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            model.set_position(position);
-            model.set_scale(scale);
             let x: f32 = rotation.x();
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
-            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
+            model.set_position_info(PositionInfo {
+                position,
+                scale,
+                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            });
             let mut metadata = model.get_model_metadata();
             metadata.world_matrix = model.get_world_matrix();
             metadata.object_color = color;
@@ -220,6 +232,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
         shader_type: Option<ShaderType>,
+        entity: DefaultKey,
     ) -> anyhow::Result<()> {
         let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
         let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
@@ -234,6 +247,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             rotation,
             color,
             shader_type,
+            entity,
         )?;
         self.waitable_tasks.geometric_primitive_tasks.push(task);
         Ok(())
@@ -275,19 +289,23 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         ).await?;*/
         /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
         Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
+        let mr_incredible = self.add_entity("Mr.Incredible");
         self.add_model(
             "./models/mr.incredible/Mr.Incredible.glb",
             Vec3A::new(-5.0, 0.0, 5.0),
             Vec3A::new(1.0, 1.0, 1.0),
             Vec3A::new(0.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
+            mr_incredible,
         )?;
+        let bison = self.add_entity("Bison");
         self.add_model(
             "./models/bison/output.gltf",
             Vec3A::new(0.0, 0.0, 5.0),
             Vec3A::new(400.0, 400.0, 400.0),
             Vec3A::new(0.0, 90.0, 90.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
+            bison,
         )?;
         self.add_skinned_model(
             "./models/cesiumMan/CesiumMan.glb",
@@ -313,6 +331,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .parse::<usize>()
             .unwrap();
         if instance_count > 0 {
+            let dragon = self.add_entity("Dragon");
             self.add_instanced_model(
                 "models/stanford_dragon/stanford-dragon.glb",
                 Vec3A::new(0.0, 5.0, 0.0),
@@ -320,6 +339,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 Vec3A::zero(),
                 Vec4::new(0.72, 0.43, 0.47, 1.0),
                 instance_count,
+                dragon,
             )?;
         }
         //self.generate_terrain(0, 0)?;
@@ -352,6 +372,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         scale: Vec3A,
         rotation: Vec3A,
         color: Vec4,
+        entity: DefaultKey,
     ) -> anyhow::Result<()> {
         let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
@@ -371,12 +392,14 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            model.set_position(position);
-            model.set_scale(scale);
             let x: f32 = rotation.x();
             let y: f32 = rotation.y();
             let z: f32 = rotation.z();
-            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
+            model.set_position_info(PositionInfo {
+                position,
+                scale,
+                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            });
             let mut metadata = model.get_model_metadata();
             metadata.world_matrix = model.get_world_matrix();
             metadata.object_color = color;
@@ -397,6 +420,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 self.counts.model_count.clone(),
                 ssbo_index,
                 true,
+                entity,
             )?;
             self.waitable_tasks.model_tasks.push(task);
         }
@@ -450,12 +474,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     fn create_ssbo(&self) -> anyhow::Result<()> {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager handle.");
-        let resource_lock = resource_manager.read();
-        resource_lock.create_ssbo(self.scene_type)?;
+        for renderable in self.render_components.iter() {
+            renderable.lock().create_ssbo()?;
+        }
         Ok(())
     }
 

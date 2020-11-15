@@ -26,6 +26,7 @@ use crate::game::scenes::title_scene::TitleScene;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::traits::Disposable;
 use crate::game::{Camera, GameScene, ResourceManager, SceneManager};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, VirtualKeyCode};
 
 pub struct Game<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -35,14 +36,14 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     pub window: Rc<RefCell<winit::window::Window>>,
-    pub resource_manager: Arc<
-        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
-    >,
     pub camera: Rc<RefCell<Camera>>,
     pub graphics: Arc<RwLock<ManuallyDrop<GraphicsType>>>,
     pub scene_manager: SceneManager,
     pub ui_manager: Option<
         Rc<RefCell<ManuallyDrop<UIManager<GraphicsType, BufferType, CommandType, TextureType>>>>,
+    >,
+    resource_manager: Arc<
+        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     >,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
 }
@@ -80,21 +81,59 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         })
     }
 
+    pub fn end_input(&self) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            ui.borrow_mut().end_input();
+        }
+    }
+
     pub fn initialize(&mut self) -> bool {
-        /*let title_scene = TitleScene::new(
+        let title_scene = TitleScene::new(
             Arc::downgrade(&self.resource_manager),
             Arc::downgrade(&self.graphics),
             Rc::downgrade(&self.entities),
-        );*/
+        );
         let game_scene = GameScene::new(
             Arc::downgrade(&self.resource_manager),
             Arc::downgrade(&self.graphics),
             Rc::downgrade(&self.entities),
         );
-        self.scene_manager.register_scene(game_scene);
-        self.scene_manager.set_current_scene_by_index(0);
+        let title_scene_index = self.scene_manager.register_scene(title_scene);
+        let _game_scene_index = self.scene_manager.register_scene(game_scene);
+        self.scene_manager
+            .set_current_scene_by_index(title_scene_index);
         self.scene_manager.initialize();
         true
+    }
+
+    pub fn input_button(&self, button: MouseButton, x: f64, y: f64, element_state: ElementState) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            ui.borrow_mut().input_button(button, x, y, element_state);
+        }
+    }
+
+    pub fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            ui.borrow_mut().input_key(key, element_state);
+        }
+    }
+
+    pub fn input_motion(&self, x: f64, y: f64) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            ui.borrow_mut().input_motion(x, y);
+        }
+    }
+
+    pub fn input_scroll(&self, mouse_scroll_delta: MouseScrollDelta) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            ui.borrow_mut().input_scroll(mouse_scroll_delta);
+        }
+    }
+
+    pub fn input_unicode(&self, c: char) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            ui.borrow_mut().input_unicode(c);
+        }
     }
 
     pub fn load_content(&mut self) -> anyhow::Result<()> {
@@ -123,6 +162,13 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_manager.get_command_buffers();
 
         Ok(())
+    }
+
+    pub fn start_input(&self) {
+        if let Some(ui) = self.ui_manager.as_ref() {
+            let mut borrowed = ui.borrow_mut();
+            borrowed.start_input();
+        }
     }
 
     pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {

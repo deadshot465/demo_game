@@ -1,6 +1,6 @@
 use ash::vk::{
-    BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorSetAllocateInfo,
-    DescriptorType, MemoryPropertyFlags, ShaderStageFlags, WriteDescriptorSet,
+    BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorType, MemoryPropertyFlags,
+    ShaderStageFlags,
 };
 use glam::Mat4;
 use parking_lot::RwLock;
@@ -10,7 +10,6 @@ use std::sync::Arc;
 use crate::game::graphics::vk::{Buffer, DescriptorBuilder, Graphics};
 use crate::game::shared::traits::Disposable;
 use crate::game::traits::Mappable;
-use ash::version::DeviceV1_0;
 
 #[derive(Clone)]
 pub struct SSBO {

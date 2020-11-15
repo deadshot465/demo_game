@@ -15,8 +15,8 @@ use std::sync::{Arc, Weak};
 use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
 use crate::game::shared::structs::{
-    generate_joint_transforms, Animation, Channel, ChannelOutputs, ModelMetaData, SkinnedMesh,
-    SkinnedPrimitive, SkinnedVertex, Vertex, SSBO,
+    generate_joint_transforms, Animation, Channel, ChannelOutputs, ModelMetaData, PositionInfo,
+    SkinnedMesh, SkinnedPrimitive, SkinnedVertex, Vertex, SSBO,
 };
 use crate::game::shared::traits::Renderable;
 use crate::game::structs::{Joint, PushConstant};
@@ -33,9 +33,7 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
-    pub position: Vec3A,
-    pub scale: Vec3A,
-    pub rotation: Vec3A,
+    pub position_info: PositionInfo,
     pub model_metadata: ModelMetaData,
     pub skinned_meshes: Vec<Arc<Mutex<SkinnedMesh<BufferType, CommandType, TextureType>>>>,
     pub is_disposed: bool,
@@ -61,9 +59,7 @@ where
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<Arc<ShardedLock<TextureType>>>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-        position: Vec3A,
-        scale: Vec3A,
-        rotation: Vec3A,
+        position_info: PositionInfo,
         color: Vec4,
         texture_index_offset: usize,
     ) -> Self {
@@ -83,9 +79,6 @@ where
             log::info!("Animation: {}", &name);
         }
         SkinnedModel {
-            position,
-            scale,
-            rotation,
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
                 object_color: color,
@@ -98,6 +91,7 @@ where
             ssbo_index,
             animations,
             graphics,
+            position_info,
         }
     }
 
@@ -453,6 +447,9 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let (textures, texture_index_offset) =
                 Graphics::create_gltf_textures(images, graphics_arc.clone(), command_pool.clone())
                     .expect("Failed to create glTF textures.");
+            let x: f32 = rotation.x();
+            let y: f32 = rotation.y();
+            let z: f32 = rotation.z();
             let mut loaded_model = Self::create_model(
                 file_name,
                 model_index,
@@ -461,9 +458,11 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
                 buffers,
                 textures,
                 graphics,
-                position,
-                scale,
-                rotation,
+                PositionInfo {
+                    position,
+                    scale,
+                    rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+                },
                 color,
                 texture_index_offset,
             );
@@ -632,9 +631,7 @@ where
             }
         }
         SkinnedModel {
-            position: self.position,
-            scale: self.scale,
-            rotation: self.rotation,
+            position_info: self.position_info,
             model_metadata: self.model_metadata,
             skinned_meshes: self.skinned_meshes.clone(),
             is_disposed: true,
@@ -813,16 +810,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model_metadata
     }
 
-    fn get_position(&self) -> Vec3A {
-        self.position
-    }
-
-    fn get_scale(&self) -> Vec3A {
-        self.scale
-    }
-
-    fn get_rotation(&self) -> Vec3A {
-        self.rotation
+    fn get_position_info(&self) -> PositionInfo {
+        self.position_info
     }
 
     fn create_ssbo(&mut self) -> anyhow::Result<()> {
@@ -877,16 +866,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         buffers
     }
 
-    fn set_position(&mut self, position: Vec3A) {
-        self.position = position;
-    }
-
-    fn set_scale(&mut self, scale: Vec3A) {
-        self.scale = scale;
-    }
-
-    fn set_rotation(&mut self, rotation: Vec3A) {
-        self.rotation = rotation;
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.position_info = position_info;
     }
 
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
