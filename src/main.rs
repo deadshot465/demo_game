@@ -1,9 +1,8 @@
 #[cfg(target_os = "windows")]
 use demo_game_rs::game::graphics::dx12 as DX12;
 use demo_game_rs::game::graphics::vk as VK;
-use demo_game_rs::game::shared::camera::CameraType;
 //use demo_game_rs::game::shared::structs::PushConstant;
-use demo_game_rs::game::Game;
+use demo_game_rs::game::{Game, NetworkSystem};
 use env_logger::Builder;
 use log::LevelFilter;
 use std::time;
@@ -14,7 +13,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(target_os = "windows")]
 use wio::com::ComPtr;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     //println!("{}", std::mem::size_of::<PushConstant>());
     //println!("{}", std::mem::size_of::<usize>());
     //return Ok(());
@@ -37,15 +37,11 @@ fn main() -> anyhow::Result<()> {
     let api = dotenv::var("API").unwrap();
     log::info!("Using API: {}", &api);
     let event_loop = EventLoop::new();
-    let mut _rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .expect("Failed to build tokio runtime.");
     let mut last_second = time::Instant::now();
     let mut current_time = time::Instant::now();
     let mut frame_count = 0_u32;
     let mut delta_time = 0.0_f64;
+    let network_system = NetworkSystem::new().await?;
     match api.as_str() {
         "VULKAN" => {
             let mut game = std::mem::ManuallyDrop::new(Game::<
@@ -54,7 +50,11 @@ fn main() -> anyhow::Result<()> {
                 ash::vk::CommandBuffer,
                 VK::Image,
             >::new(
-                "Demo game", 1280.0, 720.0, &event_loop
+                "Demo game",
+                1280.0,
+                720.0,
+                &event_loop,
+                network_system,
             )?);
             if game.initialize() {
                 game.load_content()?;
@@ -62,9 +62,10 @@ fn main() -> anyhow::Result<()> {
             log::info!("Game content loaded.");
             let mut mouse_x = 0.0;
             let mut mouse_y = 0.0;
+            let rt = tokio::runtime::Handle::current();
             event_loop.run(move |event, _target, control_flow| {
                 let game = &mut game;
-                let _rt = &mut _rt;
+                let rt = &rt;
                 match event {
                     Event::NewEvents(_) => {
                         delta_time = current_time.elapsed().as_secs_f64();
@@ -108,7 +109,7 @@ fn main() -> anyhow::Result<()> {
                                 *control_flow = ControlFlow::Exit;
                             }
                             _ => {
-                                let mut camera = game.camera.borrow_mut();
+                                /*let mut camera = game.camera.borrow_mut();
                                 println!(
                                     "Position: {}, Target: {}",
                                     camera.position, camera.target
@@ -116,7 +117,7 @@ fn main() -> anyhow::Result<()> {
                                 camera.update(
                                     CameraType::Watch(glam::Vec3A::zero()),
                                     virtual_key_code,
-                                );
+                                );*/
                                 game.input_key(virtual_key_code, state);
                             }
                         },
@@ -149,7 +150,11 @@ fn main() -> anyhow::Result<()> {
                     },
                     Event::MainEventsCleared => {
                         game.end_input();
-                        game.update(delta_time).expect("Failed to update the game.");
+                        rt.block_on(async {
+                            game.update(delta_time)
+                                .await
+                                .expect("Failed to update the game.")
+                        });
                         game.render(delta_time).expect("Failed to render the game.");
                     }
                     _ => (),
@@ -159,15 +164,18 @@ fn main() -> anyhow::Result<()> {
         "DX12" => {
             #[cfg(target_os = "windows")]
             unsafe {
-                let mut game =
-                    std::mem::ManuallyDrop::new(Game::<
-                        DX12::Graphics,
-                        DX12::Resource,
-                        ComPtr<ID3D12GraphicsCommandList>,
-                        DX12::Resource,
-                    >::new(
-                        "Demo game", 1280.0, 720.0, &event_loop
-                    ));
+                let mut game = std::mem::ManuallyDrop::new(Game::<
+                    DX12::Graphics,
+                    DX12::Resource,
+                    ComPtr<ID3D12GraphicsCommandList>,
+                    DX12::Resource,
+                >::new(
+                    "Demo game",
+                    1280.0,
+                    720.0,
+                    &event_loop,
+                    network_system,
+                ));
                 if game.initialize() {
                     game.load_content();
                 }

@@ -39,13 +39,14 @@ where
     pub camera: Rc<RefCell<Camera>>,
     pub graphics: Arc<RwLock<ManuallyDrop<GraphicsType>>>,
     pub scene_manager: SceneManager,
-    pub ui_manager: Option<
-        Rc<RefCell<ManuallyDrop<UIManager<GraphicsType, BufferType, CommandType, TextureType>>>>,
+    pub ui_system: Option<
+        Rc<RefCell<ManuallyDrop<UISystem<GraphicsType, BufferType, CommandType, TextureType>>>>,
     >,
     resource_manager: Arc<
         RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
     >,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
+    network_system: NetworkSystem,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -54,6 +55,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         width: f64,
         height: f64,
         event_loop: &EventLoop<()>,
+        network_system: NetworkSystem,
     ) -> anyhow::Result<Self> {
         let window = Rc::new(RefCell::new(
             WindowBuilder::new()
@@ -76,13 +78,14 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             camera,
             graphics: Arc::new(RwLock::new(ManuallyDrop::new(graphics))),
             scene_manager: SceneManager::new(),
-            ui_manager: None,
+            ui_system: None,
             entities: Rc::new(RefCell::new(SlotMap::new())),
+            network_system,
         })
     }
 
     pub fn end_input(&self) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().end_input();
         }
     }
@@ -107,31 +110,31 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn input_button(&self, button: MouseButton, x: f64, y: f64, element_state: ElementState) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().input_button(button, x, y, element_state);
         }
     }
 
     pub fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().input_key(key, element_state);
         }
     }
 
     pub fn input_motion(&self, x: f64, y: f64) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().input_motion(x, y);
         }
     }
 
     pub fn input_scroll(&self, mouse_scroll_delta: MouseScrollDelta) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().input_scroll(mouse_scroll_delta);
         }
     }
 
     pub fn input_unicode(&self, c: char) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().input_unicode(c);
         }
     }
@@ -139,22 +142,23 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     pub fn load_content(&mut self) -> anyhow::Result<()> {
         self.scene_manager.load_content()?;
         self.scene_manager.wait_for_all_tasks()?;
-        if self.ui_manager.is_none() {
+        if self.ui_system.is_none() {
             let graphics_lock = self.graphics.read();
-            let ui_manager = Rc::new(RefCell::new(ManuallyDrop::new(UIManager::new(
+            let ui_manager = Rc::new(RefCell::new(ManuallyDrop::new(UISystem::new(
                 &*graphics_lock,
             ))));
             drop(graphics_lock);
             let mut graphics_lock = self.graphics.write();
             graphics_lock.ui_manager = Some(Rc::downgrade(&ui_manager));
-            self.ui_manager = Some(ui_manager);
+            self.ui_system = Some(ui_manager);
         }
 
         {
             let mut graphics_lock = self.graphics.write();
             let is_initialized = graphics_lock.is_initialized();
             if !is_initialized {
-                graphics_lock.initialize()?;
+                graphics_lock.initialize_scene_resource(false)?;
+                graphics_lock.initialize_pipelines()?;
             }
         }
 
@@ -165,22 +169,22 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn start_input(&self) {
-        if let Some(ui) = self.ui_manager.as_ref() {
+        if let Some(ui) = self.ui_system.as_ref() {
             let mut borrowed = ui.borrow_mut();
             borrowed.start_input();
         }
     }
 
-    pub fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if let Some(ui_system) = self.ui_system.as_ref() {
+            let mut borrowed = ui_system.borrow_mut();
+            borrowed.draw_title_ui(&mut self.network_system).await?;
+        }
         self.scene_manager.update(delta_time)?;
         Ok(())
     }
 
     pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        if let Some(ui_manager) = self.ui_manager.as_ref() {
-            let mut borrowed = ui_manager.borrow_mut();
-            borrowed.prerender();
-        }
         self.scene_manager.render(delta_time)?;
         Ok(())
     }
@@ -188,7 +192,13 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
 
 #[cfg(target_os = "windows")]
 impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX12::Resource> {
-    pub unsafe fn new(title: &str, width: f64, height: f64, event_loop: &EventLoop<()>) -> Self {
+    pub unsafe fn new(
+        title: &str,
+        width: f64,
+        height: f64,
+        event_loop: &EventLoop<()>,
+        network_system: NetworkSystem,
+    ) -> Self {
         let window = WindowBuilder::new()
             .with_title(title)
             .with_inner_size(winit::dpi::LogicalSize::new(width, height))
@@ -204,8 +214,9 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             camera,
             graphics: Arc::new(RwLock::new(ManuallyDrop::new(graphics))),
             scene_manager: SceneManager::new(),
-            ui_manager: None,
+            ui_system: None,
             entities: Rc::new(RefCell::new(SlotMap::new())),
+            network_system,
         }
     }
 
@@ -238,7 +249,7 @@ where
         }
         unsafe {
             {
-                if let Some(ui_manager) = self.ui_manager.as_ref() {
+                if let Some(ui_manager) = self.ui_system.as_ref() {
                     let mut borrowed = ui_manager.borrow_mut();
                     ManuallyDrop::drop(&mut *borrowed);
                 }

@@ -34,3 +34,14 @@ for x, y in file_names.items():
 shutil.copyfile('./.env', './target/release/.env')
 shutil.rmtree('./target/release/models')
 shutil.copytree('./models', './target/release/models')
+
+# Copy resource to debug and release folder
+shutil.rmtree('./target/debug/resource')
+shutil.copytree('./resource', './target/debug/resource')
+shutil.rmtree('./target/release/resource')
+shutil.copytree('./resource', './target/release/resource')
+
+shutil.rmtree('./target/debug/textures')
+shutil.copytree('./textures', './target/debug/textures')
+shutil.rmtree('./target/release/textures')
+shutil.copytree('./textures', './target/release/textures')

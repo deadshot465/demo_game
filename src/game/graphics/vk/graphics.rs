@@ -27,7 +27,7 @@ use crate::game::shared::traits::{GraphicsBase, Renderable};
 use crate::game::shared::util::interpolate_alpha;
 use crate::game::traits::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
-use crate::game::{Camera, ResourceManager, UIManager};
+use crate::game::{Camera, ResourceManager, UISystem};
 use ash::prelude::VkResult;
 
 const SSBO_DATA_COUNT: usize = 50;
@@ -40,7 +40,7 @@ type ResourceManagerHandle = Weak<
     RwLock<ManuallyDrop<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
 type UIManagerHandle = std::rc::Weak<
-    RefCell<ManuallyDrop<UIManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
+    RefCell<ManuallyDrop<UISystem<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
 
 struct PrimarySSBOData {
@@ -580,11 +580,9 @@ impl Graphics {
         self.thread_pool.get_idle_command_pool()
     }
 
-    pub fn initialize(&mut self) -> anyhow::Result<()> {
+    pub fn initialize_pipelines(&mut self) -> anyhow::Result<()> {
         //self.create_descriptor_set_layout()?;
-        self.create_primary_ssbo()?;
         //self.allocate_descriptor_set()?;
-        self.allocate_descriptors()?;
         self.create_graphics_pipeline(ShaderType::BasicShader)?;
         self.create_graphics_pipeline(ShaderType::BasicShaderWithoutTexture)?;
         self.create_graphics_pipeline(ShaderType::AnimatedModel)?;
@@ -609,6 +607,37 @@ impl Graphics {
             self.logical_device.as_ref(),
         );
         self.is_initialized = true;
+        Ok(())
+    }
+
+    pub fn initialize_scene_resource(
+        &mut self,
+        recreate_uniform_buffer: bool,
+    ) -> anyhow::Result<()> {
+        if recreate_uniform_buffer {
+            let view_projection = Initializer::create_view_projection(
+                &*self.camera.borrow(),
+                Arc::downgrade(&self.logical_device),
+                Arc::downgrade(&self.allocator),
+            )?;
+            let light_x = std::env::var("LIGHT_X").unwrap().parse::<f32>().unwrap();
+            let light_z = std::env::var("LIGHT_Z").unwrap().parse::<f32>().unwrap();
+            let directional_light = Directional::new(
+                Vec4::new(1.0, 1.0, 1.0, 1.0),
+                Vec3A::new(light_x, 20000.0, light_z),
+                0.1,
+                0.5,
+            );
+            let directional_light = Initializer::create_directional_light(
+                &directional_light,
+                Arc::downgrade(&self.logical_device),
+                Arc::downgrade(&self.allocator),
+            )?;
+            self.uniform_buffers =
+                ManuallyDrop::new(UniformBuffers::new(view_projection, directional_light));
+        }
+        self.create_primary_ssbo()?;
+        self.allocate_descriptors()?;
         Ok(())
     }
 
@@ -665,26 +694,6 @@ impl Graphics {
             self.sample_count,
             Arc::downgrade(&self.allocator),
         ));
-        let view_projection = Initializer::create_view_projection(
-            &*self.camera.borrow(),
-            Arc::downgrade(&self.logical_device),
-            Arc::downgrade(&self.allocator),
-        )?;
-        let light_x = std::env::var("LIGHT_X").unwrap().parse::<f32>().unwrap();
-        let light_z = std::env::var("LIGHT_Z").unwrap().parse::<f32>().unwrap();
-        let directional_light = Directional::new(
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-            Vec3A::new(light_x, 20000.0, light_z),
-            0.1,
-            0.5,
-        );
-        let directional_light = Initializer::create_directional_light(
-            &directional_light,
-            Arc::downgrade(&self.logical_device),
-            Arc::downgrade(&self.allocator),
-        )?;
-        self.uniform_buffers =
-            ManuallyDrop::new(UniformBuffers::new(view_projection, directional_light));
         self.pipeline = Arc::new(ShardedLock::new(ManuallyDrop::new(super::Pipeline::new(
             self.logical_device.clone(),
         ))));
@@ -723,7 +732,8 @@ impl Graphics {
             *self.graphics_queue.lock(),
             offscreen_renderpass,
         )?);
-        self.initialize()?;
+        self.initialize_scene_resource(true)?;
+        self.initialize_pipelines()?;
         if let Some(ui) = self.ui_manager.as_ref() {
             let ui_manager = ui.upgrade().expect("Failed to upgrade UI handle.");
             let mut borrowed = ui_manager.borrow_mut();
