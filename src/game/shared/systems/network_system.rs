@@ -9,9 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync;
 
-const LOGIN_NAME: &str = "bot";
-const LOGIN_PASS: &str = "kf0TmiW2ABxfm89QLxyAlXCa1opDzt";
-
 static USERNAME_REGEX: OnceCell<Regex> = OnceCell::new();
 static EMAIL_REGEX: OnceCell<Regex> = OnceCell::new();
 
@@ -136,8 +133,8 @@ impl NetworkSystem {
         client: &mut JwtTokenServiceClient<tonic::transport::Channel>,
     ) -> anyhow::Result<Authentication> {
         let request = tonic::Request::new(AccessRequest {
-            user_name: LOGIN_NAME.to_string(),
-            password: LOGIN_PASS.to_string(),
+            user_name: dotenv::var("LOGIN_NAME")?,
+            password: dotenv::var("LOGIN_PASS")?,
         });
 
         let response = client.access(request).await?;
