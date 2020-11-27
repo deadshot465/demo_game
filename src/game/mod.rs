@@ -10,6 +10,7 @@ use ash::vk::CommandBuffer;
 use parking_lot::RwLock;
 use slotmap::{DefaultKey, SlotMap};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -23,9 +24,11 @@ use wio::com::ComPtr;
 use crate::game::graphics::dx12 as DX12;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::scenes::title_scene::TitleScene;
+use crate::game::shared::enums::SceneType;
 use crate::game::shared::traits::GraphicsBase;
 use crate::game::traits::Disposable;
 use crate::game::{Camera, GameScene, ResourceManager, SceneManager};
+use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, VirtualKeyCode};
 
 pub struct Game<GraphicsType, BufferType, CommandType, TextureType>
@@ -47,6 +50,8 @@ where
     >,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
     network_system: NetworkSystem,
+    scenes: HashMap<SceneType, usize>,
+    current_scene: SceneType,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -81,6 +86,8 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             ui_system: None,
             entities: Rc::new(RefCell::new(SlotMap::new())),
             network_system,
+            scenes: HashMap::new(),
+            current_scene: SceneType::TITLE,
         })
     }
 
@@ -102,10 +109,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             Rc::downgrade(&self.entities),
         );
         let title_scene_index = self.scene_manager.register_scene(title_scene);
-        let _game_scene_index = self.scene_manager.register_scene(game_scene);
-        self.scene_manager
-            .set_current_scene_by_index(title_scene_index);
-        self.scene_manager.initialize();
+        let game_scene_index = self.scene_manager.register_scene(game_scene);
+        self.scene_manager.switch_scene(title_scene_index);
+        self.scenes.insert(SceneType::TITLE, title_scene_index);
+        self.scenes.insert(SceneType::GAME, game_scene_index);
         true
     }
 
@@ -154,17 +161,27 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         }
 
         {
+            let PhysicalSize { width, height } = self.window.borrow().inner_size();
             let mut graphics_lock = self.graphics.write();
             let is_initialized = graphics_lock.is_initialized();
             if !is_initialized {
                 graphics_lock.initialize_scene_resource(false)?;
                 graphics_lock.initialize_pipelines()?;
+            } else {
+                //graphics_lock.destroy_scene_resource();
+                //graphics_lock.initialize_scene_resource(true)?;
+                graphics_lock.recreate_swapchain(width, height)?;
             }
         }
 
         self.scene_manager.create_ssbo()?;
         self.scene_manager.get_command_buffers();
 
+        Ok(())
+    }
+
+    pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        self.scene_manager.render(delta_time)?;
         Ok(())
     }
 
@@ -176,17 +193,31 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        let old_scene = self.current_scene;
+        let mut new_scene = self.current_scene;
         if let Some(ui_system) = self.ui_system.as_ref() {
             let mut borrowed = ui_system.borrow_mut();
-            borrowed.draw_title_ui(&mut self.network_system).await?;
+            let player = borrowed.draw_title_ui(&mut self.network_system).await?;
+            if let Some(p) = player {
+                println!("Successfully logged in as {}.", &p.email);
+                new_scene = SceneType::GAME;
+            }
+        }
+        if old_scene != new_scene {
+            self.switch_scene(new_scene)?;
         }
         self.scene_manager.update(delta_time)?;
         Ok(())
     }
 
-    pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        self.scene_manager.render(delta_time)?;
-        Ok(())
+    fn switch_scene(&mut self, scene_type: SceneType) -> anyhow::Result<()> {
+        self.current_scene = scene_type;
+        let scene_index = self
+            .scenes
+            .get(&scene_type)
+            .expect("Failed to get scene index.");
+        self.scene_manager.switch_scene(*scene_index);
+        self.load_content()
     }
 }
 
@@ -217,6 +248,8 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             ui_system: None,
             entities: Rc::new(RefCell::new(SlotMap::new())),
             network_system,
+            scenes: HashMap::new(),
+            current_scene: SceneType::TITLE,
         }
     }
 

@@ -1,0 +1,31 @@
+﻿syntax = "proto3";
+
+option csharp_namespace = "TetsukiZone.Protos";
+
+package jwt_token_service;
+
+service JwtTokenService {
+  // Access the server and acquire a JWT token.
+  rpc Access(AccessRequest) returns (AccessReply);
+}
+
+message AccessRequest {
+  string user_name = 1;
+  string password = 2;
+}
+
+message AccessReply {
+  message User {
+    enum UserType {
+      Admin = 0;
+      Bot = 1;
+    }
+    UserType type = 1;
+    string user_name = 2;
+    string user_role = 3;
+    string password = 4;
+  }
+  string token = 1;
+  User user_details = 2;
+  string expiry = 3;
+}

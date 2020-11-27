@@ -1,6 +1,7 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::traits::{Disposable, GraphicsBase};
 use crate::game::{Drawer, NetworkSystem};
+use crate::protos::grpc_service::game_state::Player;
 use ash::vk::{CommandBuffer, Framebuffer, Semaphore, Viewport};
 use nuklear::{
     AntiAliasing, Context, ConvertConfig, EditType, Flags, FontAtlas, FontID, LayoutFormat,
@@ -26,27 +27,8 @@ struct Media {
     font_tex: nuklear::Handle,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct ButtonState {
-    pub game_started: bool,
-}
-
-impl Default for ButtonState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ButtonState {
-    pub fn new() -> Self {
-        ButtonState {
-            game_started: false,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-pub struct TitleSceneInputs {
+pub struct RegistrationInputs {
     pub username_input: [u8; 64],
     pub username_length: i32,
     pub nickname_input: [u8; 64],
@@ -57,9 +39,9 @@ pub struct TitleSceneInputs {
     pub password_length: i32,
 }
 
-impl TitleSceneInputs {
+impl RegistrationInputs {
     pub fn new() -> Self {
-        TitleSceneInputs {
+        RegistrationInputs {
             username_input: [0; 64],
             username_length: 0,
             nickname_input: [0; 64],
@@ -70,6 +52,46 @@ impl TitleSceneInputs {
             password_length: 0,
         }
     }
+
+    pub fn clear(&mut self) {
+        self.username_length = 0;
+        self.nickname_length = 0;
+        self.email_length = 0;
+        self.password_length = 0;
+        self.username_input = [0; 64];
+        self.nickname_input = [0; 64];
+        self.email_input = [0; 64];
+        self.password_input = [0; 64];
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LoginInputs {
+    pub account_input: [u8; 64],
+    pub account_length: i32,
+    pub password_input: [u8; 64],
+    pub password_length: i32,
+    pub actual_password: [u8; 64],
+}
+
+impl LoginInputs {
+    pub fn new() -> Self {
+        LoginInputs {
+            account_input: [0; 64],
+            account_length: 0,
+            password_input: [0; 64],
+            password_length: 0,
+            actual_password: [0; 64],
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.account_input = [0; 64];
+        self.account_length = 0;
+        self.password_input = [0; 64];
+        self.password_length = 0;
+        self.actual_password = [0; 64];
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -77,7 +99,9 @@ pub struct UIState {
     pub show_login_box: bool,
     pub show_register_box: bool,
     pub show_login_form: bool,
-    pub title_scene_inputs: TitleSceneInputs,
+    pub registration_inputs: RegistrationInputs,
+    pub logged_in: bool,
+    pub login_inputs: LoginInputs,
 }
 
 impl Default for UIState {
@@ -92,7 +116,9 @@ impl UIState {
             show_login_box: false,
             show_register_box: false,
             show_login_form: false,
-            title_scene_inputs: TitleSceneInputs::new(),
+            registration_inputs: RegistrationInputs::new(),
+            login_inputs: LoginInputs::new(),
+            logged_in: false,
         }
     }
 }
@@ -113,7 +139,6 @@ where
     convert_config: ConvertConfig,
     drawer: ManuallyDrop<Drawer>,
     is_initialized: bool,
-    button_state: ButtonState,
     ui_state: UIState,
 }
 
@@ -132,9 +157,9 @@ where
     pub async fn draw_title_ui(
         &mut self,
         network_system: &mut NetworkSystem,
-    ) -> anyhow::Result<ButtonState> {
+    ) -> anyhow::Result<Option<Player>> {
         if !self.is_initialized {
-            return Ok(self.button_state);
+            return Ok(None);
         }
         let ctx = &mut self.context;
         let drawer = &mut self.drawer;
@@ -168,10 +193,20 @@ where
         }
 
         if self.ui_state.show_register_box {
-            self.draw_register_box(flags, network_system).await?;
+            let player = self.draw_register_box(flags, network_system).await?;
+            if player.is_some() {
+                return Ok(player);
+            }
         }
 
-        Ok(self.button_state)
+        if self.ui_state.show_login_form {
+            let player = self.draw_login_form(flags, network_system).await?;
+            if player.is_some() {
+                return Ok(player);
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn end_input(&mut self) {
@@ -302,12 +337,90 @@ where
         self.ui_state = ui_state;
     }
 
+    async fn draw_login_form(
+        &mut self,
+        flags: Flags,
+        network_system: &mut NetworkSystem,
+    ) -> anyhow::Result<Option<Player>> {
+        let mut ui_state = self.ui_state.clone();
+        let mut player: Option<Player> = None;
+        {
+            let ctx = &mut self.context;
+            let drawer = &mut self.drawer;
+            drawer.set_font_size(ctx, 28);
+            ctx.begin(
+                nuklear::nk_string!("LoginForm"),
+                nuklear::Rect {
+                    x: 350.0,
+                    y: 300.0,
+                    w: 900.0,
+                    h: 400.0,
+                },
+                flags,
+            );
+            drawer.set_font_size(ctx, 36);
+            ctx.layout_row_dynamic(50.0, 1);
+            ctx.text("Login", TextAlignment::Centered as Flags);
+            drawer.set_font_size(ctx, 16);
+            let ratio = [0.4, 0.6];
+            ctx.layout_row(LayoutFormat::Dynamic, 50.0, &ratio[..]);
+            ctx.text("Username/Email: ", TextAlignment::Right as Flags);
+            ctx.edit_string_custom_filter(
+                EditType::Field as Flags,
+                ui_state.login_inputs.account_input.as_mut(),
+                &mut ui_state.login_inputs.account_length,
+                Self::free_type_filter,
+            );
+            ctx.text("Password: ", TextAlignment::Right as Flags);
+            ctx.edit_string_custom_filter(
+                EditType::Field as Flags,
+                ui_state.login_inputs.password_input.as_mut(),
+                &mut ui_state.login_inputs.password_length,
+                Self::free_type_filter,
+            );
+            ui_state.login_inputs.actual_password = ui_state.login_inputs.password_input.clone();
+            /*for i in 0..ui_state.login_inputs.password_length {
+                ui_state.login_inputs.password_input[i as usize] = '\u{002A}' as u8;
+            }*/
+            ctx.layout_row_dynamic(50.0, 2);
+            if ctx.button_text("Login") {
+                let account = std::str::from_utf8(
+                    &ui_state.login_inputs.account_input
+                        [0..(ui_state.login_inputs.account_length as usize)],
+                )?;
+                let password = std::str::from_utf8(
+                    &ui_state.login_inputs.actual_password
+                        [0..(ui_state.login_inputs.password_length as usize)],
+                )?;
+                let encoded_pass = base64::encode(password.trim());
+                let p = network_system
+                    .login(Some((account.to_string(), encoded_pass)))
+                    .await;
+                ui_state.login_inputs.clear();
+                if let Some(p) = p {
+                    ui_state.show_login_form = false;
+                    ui_state.logged_in = true;
+                    player = Some(p);
+                }
+            }
+            if ctx.button_text("Cancel") {
+                ui_state.login_inputs.clear();
+                ui_state.show_login_form = false;
+            }
+            drawer.set_font_size(ctx, 24);
+            ctx.end();
+        }
+        self.ui_state = ui_state;
+        Ok(player)
+    }
+
     async fn draw_register_box(
         &mut self,
         flags: Flags,
         network_system: &mut NetworkSystem,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<Player>> {
         let mut ui_state = self.ui_state.clone();
+        let mut player: Option<Player> = None;
         {
             let ctx = &mut self.context;
             let drawer = &mut self.drawer;
@@ -332,61 +445,68 @@ where
             ctx.text("Username: ", TextAlignment::Right as Flags);
             ctx.edit_string_custom_filter(
                 EditType::Field as Flags,
-                ui_state.title_scene_inputs.username_input.as_mut(),
-                &mut ui_state.title_scene_inputs.username_length,
+                ui_state.registration_inputs.username_input.as_mut(),
+                &mut ui_state.registration_inputs.username_length,
                 Self::free_type_filter,
             );
             ctx.text("Nickname: ", TextAlignment::Right as Flags);
             ctx.edit_string_custom_filter(
                 EditType::Field as Flags,
-                ui_state.title_scene_inputs.nickname_input.as_mut(),
-                &mut ui_state.title_scene_inputs.nickname_length,
+                ui_state.registration_inputs.nickname_input.as_mut(),
+                &mut ui_state.registration_inputs.nickname_length,
                 Self::free_type_filter,
             );
             ctx.text("Email: ", TextAlignment::Right as Flags);
             ctx.edit_string_custom_filter(
                 EditType::Field as Flags,
-                ui_state.title_scene_inputs.email_input.as_mut(),
-                &mut ui_state.title_scene_inputs.email_length,
+                ui_state.registration_inputs.email_input.as_mut(),
+                &mut ui_state.registration_inputs.email_length,
                 Self::email_filter,
             );
             ctx.text("Password: ", TextAlignment::Right as Flags);
             ctx.edit_string_custom_filter(
                 EditType::Field as Flags,
-                ui_state.title_scene_inputs.password_input.as_mut(),
-                &mut ui_state.title_scene_inputs.password_length,
+                ui_state.registration_inputs.password_input.as_mut(),
+                &mut ui_state.registration_inputs.password_length,
                 Self::free_type_filter,
             );
             ctx.layout_row_dynamic(50.0, 2);
             if ctx.button_text("Register") {
                 let username = std::str::from_utf8(
-                    &self.ui_state.title_scene_inputs.username_input
-                        [0..(self.ui_state.title_scene_inputs.username_length as usize)],
+                    &ui_state.registration_inputs.username_input
+                        [0..(ui_state.registration_inputs.username_length as usize)],
                 )?;
                 let nickname = std::str::from_utf8(
-                    &self.ui_state.title_scene_inputs.nickname_input
-                        [0..(self.ui_state.title_scene_inputs.nickname_length as usize)],
+                    &ui_state.registration_inputs.nickname_input
+                        [0..(ui_state.registration_inputs.nickname_length as usize)],
                 )?;
                 let email = std::str::from_utf8(
-                    &self.ui_state.title_scene_inputs.email_input
-                        [0..(self.ui_state.title_scene_inputs.email_length as usize)],
+                    &ui_state.registration_inputs.email_input
+                        [0..(ui_state.registration_inputs.email_length as usize)],
                 )?;
                 let password = std::str::from_utf8(
-                    &self.ui_state.title_scene_inputs.password_input
-                        [0..(self.ui_state.title_scene_inputs.password_length as usize)],
+                    &ui_state.registration_inputs.password_input
+                        [0..(ui_state.registration_inputs.password_length as usize)],
                 )?;
-                let result = network_system
+                let (result, p) = network_system
                     .register(username, nickname, email, password)
                     .await;
+                ui_state.registration_inputs.clear();
+                if result {
+                    ui_state.show_register_box = false;
+                    ui_state.logged_in = true;
+                    player = p;
+                }
             }
             if ctx.button_text("Cancel") {
+                ui_state.registration_inputs.clear();
                 ui_state.show_register_box = false;
             }
             drawer.set_font_size(ctx, 24);
             ctx.end();
         }
         self.ui_state = ui_state;
-        Ok(())
+        Ok(player)
     }
 
     fn free_type_filter(_: &TextEdit, c: char) -> bool {
@@ -470,7 +590,6 @@ impl UISystem<Graphics, Buffer, CommandBuffer, Image> {
             convert_config,
             drawer: ManuallyDrop::new(drawer),
             is_initialized: true,
-            button_state: ButtonState::new(),
             ui_state: UIState::new(),
         }
     }

@@ -43,7 +43,7 @@ where
         let world = Mat4::identity();
         let scale = Mat4::from_scale(glam::Vec3::from(scale));
         let translation = Mat4::from_translation(glam::Vec3::from(position));
-        let rotate = Mat4::from_rotation_ypr(rotation.y(), rotation.x(), rotation.z());
+        let rotate = Mat4::from_rotation_ypr(rotation.y, rotation.x, rotation.z);
         world * translation * rotate * scale
     }
 

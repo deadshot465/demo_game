@@ -120,5 +120,6 @@ impl Drop for DescriptorLayoutCache {
                 device.destroy_descriptor_set_layout(*layout, None);
             }
         }
+        self.layout_cache.clear();
     }
 }

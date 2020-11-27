@@ -200,9 +200,9 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
                     .expect("Failed to create texture for geometric primitive."),
                 ),
             };
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
             let mut generated_mesh = Self::create_primitive(
                 primitive_type,
                 model_index,

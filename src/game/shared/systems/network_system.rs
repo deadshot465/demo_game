@@ -1,4 +1,8 @@
-use crate::game::shared::structs::Player;
+use crate::protos::grpc_service::game_state::Player;
+use crate::protos::grpc_service::grpc_service_client::GrpcServiceClient;
+use crate::protos::grpc_service::{LoginRequest, RegisterRequest};
+use crate::protos::jwt_token_service::jwt_token_service_client::JwtTokenServiceClient;
+use crate::protos::jwt_token_service::AccessRequest;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -33,13 +37,15 @@ pub struct NetworkSystem {
     pub is_player_login: bool,
     authentication: Authentication,
     logged_user: Option<Player>,
-    client: reqwest::Client,
+    jwt_client: JwtTokenServiceClient<tonic::transport::Channel>,
+    grpc_client: GrpcServiceClient<tonic::transport::Channel>,
 }
 
 impl NetworkSystem {
     pub async fn new() -> anyhow::Result<Self> {
-        let client = reqwest::Client::new();
-        let authentication = Self::authenticate(&client).await?;
+        let mut jwt_client = JwtTokenServiceClient::connect("http://64.227.99.31:26361").await?;
+        let grpc_client = GrpcServiceClient::connect("http://64.227.99.31:26361").await?;
+        let authentication = Self::authenticate(&mut jwt_client).await?;
 
         USERNAME_REGEX
             .set(Regex::new(r".").expect("Failed to initialize regular expression."))
@@ -53,37 +59,35 @@ impl NetworkSystem {
 
         Ok(NetworkSystem {
             authentication,
-            client,
             is_player_login: false,
             logged_user: None,
+            jwt_client,
+            grpc_client,
         })
     }
 
     pub async fn login(&mut self, login_data: Option<(String, String)>) -> Option<Player> {
         if let Some((account, password)) = login_data {
-            let mut request_data = HashMap::new();
-            request_data.insert("Account", account.trim());
-            request_data.insert("Password", password.trim());
-            let token = self.authentication.token.clone();
-            let resp = self
-                .client
-                .post("https://tetsukizone.com/api/player/login")
-                .bearer_auth(&token)
-                .json(&request_data)
-                .header("Content-Type", "application/json")
-                .send()
+            let request = tonic::Request::new(LoginRequest {
+                account,
+                password,
+                jwt_token: self.authentication.token.clone(),
+            });
+            let response = self
+                .grpc_client
+                .login(request)
                 .await
-                .expect("Failed to login player.");
-            let status = resp.status();
-            if !status.is_success() {
-                None
-            } else {
-                let player: Player = resp
-                    .json()
-                    .await
-                    .expect("Failed to convert response to JSON.");
+                .expect("Failed to get login reply.");
+            let mut response = response.into_inner();
+            if response.status {
+                let player = response
+                    .player
+                    .take()
+                    .expect("Failed to get player from response.");
                 self.logged_user = Some(player);
                 self.logged_user.clone()
+            } else {
+                None
             }
         } else {
             None
@@ -100,54 +104,57 @@ impl NetworkSystem {
         if !Self::verify(username, nickname, email, password) {
             (false, None)
         } else {
-            let handle = tokio::runtime::Handle::current();
-            let client = self.client.clone();
-            let username = username.to_string();
-            let nickname = nickname.to_string();
-            let email = email.to_string();
-            let password = password.to_string();
-            let token = self.authentication.token.clone();
-            let result = handle.block_on(async {
-                let client = client;
-                let mut request_data = HashMap::new();
-                request_data.insert("UserName", username.trim());
-                request_data.insert("Nickname", nickname.trim());
-                request_data.insert("Email", email.trim());
-                let encoded_pass = base64::encode(password.trim());
-                request_data.insert("UserName", &encoded_pass);
-                let resp = client
-                    .post("https://tetsukizone.com/api/player/register")
-                    .json(&request_data)
-                    .bearer_auth(token)
-                    .header("Content-Type", "application/json")
-                    .send()
-                    .await
-                    .expect("Failed to register against the server.");
-                if resp.status().is_success() {
-                    Some((username, encoded_pass))
-                } else {
-                    None
-                }
+            let encoded_pass = base64::encode(password.trim());
+            let request = tonic::Request::new(RegisterRequest {
+                user_name: username.trim().to_string(),
+                nickname: nickname.trim().to_string(),
+                email: email.trim().to_string(),
+                password: encoded_pass.clone(),
+                jwt_token: self.authentication.token.clone(),
             });
-            if let Some(player) = self.login(result).await {
-                (true, Some(player))
+
+            let response = self
+                .grpc_client
+                .register(request)
+                .await
+                .expect("Failed to register against the server.");
+
+            let response = response.into_inner();
+            if response.status {
+                if let Some(player) = self.login(Some((username.to_string(), encoded_pass))).await {
+                    (true, Some(player))
+                } else {
+                    (false, None)
+                }
             } else {
                 (false, None)
             }
         }
     }
 
-    async fn authenticate(client: &reqwest::Client) -> anyhow::Result<Authentication> {
-        let mut login_data = HashMap::new();
-        login_data.insert("UserName", LOGIN_NAME);
-        login_data.insert("Password", LOGIN_PASS);
-        let response = client
-            .post("https://tetsukizone.com/api/login")
-            .json(&login_data)
-            .send()
-            .await?;
-        let resp: Authentication = response.json().await?;
-        Ok(resp)
+    async fn authenticate(
+        client: &mut JwtTokenServiceClient<tonic::transport::Channel>,
+    ) -> anyhow::Result<Authentication> {
+        let request = tonic::Request::new(AccessRequest {
+            user_name: LOGIN_NAME.to_string(),
+            password: LOGIN_PASS.to_string(),
+        });
+
+        let response = client.access(request).await?;
+        let mut response = response.into_inner();
+        let user_details = response
+            .user_details
+            .take()
+            .expect("Failed to get user detail from gRPC response.");
+        Ok(Authentication {
+            token: response.token,
+            user_details: Some(UserDetails {
+                user_name: user_details.user_name,
+                user_role: user_details.user_role,
+                user_type: user_details.r#type as u8,
+            }),
+            expiry: Some(response.expiry),
+        })
     }
 
     fn verify(username: &str, nickname: &str, email: &str, password: &str) -> bool {

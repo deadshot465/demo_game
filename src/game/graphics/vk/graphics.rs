@@ -113,8 +113,8 @@ pub struct Graphics {
     pub ui_manager: Option<UIManagerHandle>,
     pub depth_format: Format,
     pub sample_count: SampleCountFlags,
-    pub descriptor_allocator: Arc<Mutex<DescriptorAllocator>>,
-    pub descriptor_layout_cache: Arc<Mutex<DescriptorLayoutCache>>,
+    pub descriptor_allocator: Arc<Mutex<ManuallyDrop<DescriptorAllocator>>>,
+    pub descriptor_layout_cache: Arc<Mutex<ManuallyDrop<DescriptorLayoutCache>>>,
     window: std::rc::Weak<RefCell<winit::window::Window>>,
     window_width: u32,
     window_height: u32,
@@ -337,8 +337,10 @@ impl Graphics {
             window_width,
             window_height,
             //checkpoint_fn,
-            descriptor_allocator: Arc::new(Mutex::new(descriptor_allocator)),
-            descriptor_layout_cache: Arc::new(Mutex::new(descriptor_layout_cache)),
+            descriptor_allocator: Arc::new(Mutex::new(ManuallyDrop::new(descriptor_allocator))),
+            descriptor_layout_cache: Arc::new(Mutex::new(ManuallyDrop::new(
+                descriptor_layout_cache,
+            ))),
         })
     }
 
@@ -552,6 +554,16 @@ impl Graphics {
                 .allocate_command_buffers(&allocate_info)
                 .expect("Failed to allocate secondary command buffer.");
             buffer[0]
+        }
+    }
+
+    pub fn destroy_scene_resource(&mut self) {
+        unsafe {
+            /*self.logical_device
+                .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
+            self.logical_device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);*/
+            ManuallyDrop::drop(&mut self.uniform_buffers);
         }
     }
 
@@ -913,7 +925,7 @@ impl Graphics {
         Ok(())
     }
 
-    fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
+    /*fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
             .upgrade()
@@ -1052,7 +1064,7 @@ impl Graphics {
             log::info!("Descriptor successfully updated.");
             Ok(())
         }
-    }
+    }*/
 
     fn allocate_descriptors(&mut self) -> anyhow::Result<()> {
         let mut cache = self.descriptor_layout_cache.lock();
@@ -1321,7 +1333,7 @@ impl Graphics {
         Ok(())
     }
 
-    fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
+    /*fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
         let resource_manager = self.resource_manager.upgrade().expect(
             "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
         );
@@ -1376,7 +1388,7 @@ impl Graphics {
             self.descriptor_set_layout = descriptor_set_layout;
             Ok(())
         }
-    }
+    }*/
 
     fn create_frame_buffers(
         frame_width: u32,
@@ -1666,16 +1678,6 @@ impl Graphics {
         Ok(())
     }
 
-    fn destroy_scene_resource(&mut self) {
-        unsafe {
-            self.logical_device
-                .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
-            self.logical_device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            ManuallyDrop::drop(&mut self.uniform_buffers);
-        }
-    }
-
     unsafe fn dispose(&mut self) -> anyhow::Result<()> {
         for buffer in self.frame_buffers.iter() {
             self.logical_device.destroy_framebuffer(*buffer, None);
@@ -1684,7 +1686,6 @@ impl Graphics {
             for framebuffer in buffer.framebuffer.iter() {
                 self.logical_device.destroy_framebuffer(*framebuffer, None);
             }
-            ManuallyDrop::drop(buffer);
         }
         ManuallyDrop::drop(&mut self.offscreen_pass);
 
@@ -1804,8 +1805,8 @@ impl Drop for Graphics {
             }
             self.logical_device
                 .destroy_descriptor_set_layout(self.ssbo_descriptor_set_layout, None);
-            /*self.logical_device
-            .destroy_descriptor_set_layout(self.descriptor_set_layout, None);*/
+            ManuallyDrop::drop(&mut *self.descriptor_layout_cache.lock());
+            ManuallyDrop::drop(&mut *self.descriptor_allocator.lock());
             self.allocator
                 .write()
                 .expect("Failed to lock the memory allocator.")

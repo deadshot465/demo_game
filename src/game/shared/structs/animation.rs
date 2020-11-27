@@ -106,29 +106,25 @@ pub fn generate_joint_transforms(
                             let p1 = rotations[index_next * 3 + 1];
                             // previous output tangent
                             let m0 = Quat::from_xyzw(
-                                rotations[index_prev * 3 + 2].x() * range,
-                                rotations[index_prev * 3 + 2].y() * range,
-                                rotations[index_prev * 3 + 2].z() * range,
-                                rotations[index_prev * 3 + 2].w() * range,
+                                rotations[index_prev * 3 + 2].x * range,
+                                rotations[index_prev * 3 + 2].y * range,
+                                rotations[index_prev * 3 + 2].z * range,
+                                rotations[index_prev * 3 + 2].w * range,
                             );
                             // next output tangent
                             let m1 = Quat::from_xyzw(
-                                rotations[index_next * 3].x() * range,
-                                rotations[index_next * 3].y() * range,
-                                rotations[index_next * 3].z() * range,
-                                rotations[index_next * 3].w() * range,
+                                rotations[index_next * 3].x * range,
+                                rotations[index_next * 3].y * range,
+                                rotations[index_next * 3].z * range,
+                                rotations[index_next * 3].w * range,
                             );
-                            let p0_vector: glam::Vec4 =
-                                glam::Vec4::new(p0.x(), p0.y(), p0.z(), p0.w());
-                            let p1_vector: glam::Vec4 =
-                                glam::Vec4::new(p1.x(), p1.y(), p1.z(), p1.w());
-                            let m0_vector: glam::Vec4 =
-                                glam::Vec4::new(m0.x(), m0.y(), m0.z(), m0.w());
-                            let m1_vector: glam::Vec4 =
-                                glam::Vec4::new(m1.x(), m1.y(), m1.z(), m1.w());
+                            let p0_vector: glam::Vec4 = glam::Vec4::new(p0.x, p0.y, p0.z, p0.w);
+                            let p1_vector: glam::Vec4 = glam::Vec4::new(p1.x, p1.y, p1.z, p1.w);
+                            let m0_vector: glam::Vec4 = glam::Vec4::new(m0.x, m0.y, m0.z, m0.w);
+                            let m1_vector: glam::Vec4 = glam::Vec4::new(m1.x, m1.y, m1.z, m1.w);
                             let result: glam::Vec4 =
                                 interpolate!(p0_vector, p1_vector, m0_vector, m1_vector, time);
-                            Quat::from_xyzw(result.x(), result.y(), result.z(), result.w())
+                            Quat::from_xyzw(result.x, result.y, result.z, result.w)
                         }
                     };
                     rotation = rotation.normalize();

@@ -59,7 +59,7 @@ where
             scene_name: String::from("TITLE_SCENE"),
             counts: Counts::new(),
             waitable_tasks: WaitableTasks::new(),
-            scene_type: SceneType::Title,
+            scene_type: SceneType::TITLE,
             entities,
             render_components: vec![],
             current_entities: HashMap::new(),
@@ -163,9 +163,9 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
             model.set_position_info(PositionInfo {
                 position,
                 scale,

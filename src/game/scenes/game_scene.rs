@@ -68,7 +68,7 @@ where
             counts: Counts::new(),
             height_generator: Arc::new(ShardedLock::new(HeightGenerator::new())),
             waitable_tasks: WaitableTasks::new(),
-            scene_type: SceneType::Game,
+            scene_type: SceneType::GAME,
             entities,
             current_entities: HashMap::new(),
             render_components: Vec::new(),
@@ -189,9 +189,9 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
             model.set_position_info(PositionInfo {
                 position,
                 scale,
@@ -392,9 +392,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
             model.set_position_info(PositionInfo {
                 position,
                 scale,

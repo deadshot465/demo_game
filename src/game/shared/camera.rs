@@ -80,12 +80,12 @@ impl Camera {
     }
 
     fn move_camera(&mut self, key: VirtualKeyCode) {
-        let x: f32 = self.position.x();
-        let y: f32 = self.position.y();
-        let z: f32 = self.position.z();
-        let tx: f32 = self.target.x();
-        let ty: f32 = self.target.y();
-        let tz: f32 = self.target.z();
+        let x: f32 = self.position.x;
+        let y: f32 = self.position.y;
+        let z: f32 = self.position.z;
+        let tx: f32 = self.target.x;
+        let ty: f32 = self.target.y;
+        let tz: f32 = self.target.z;
         match key {
             VirtualKeyCode::A => self.position = Vec3A::new(x - 0.1, y, z),
             VirtualKeyCode::J => self.target = Vec3A::new(tx - 0.1, ty, tz),
@@ -109,35 +109,31 @@ impl Camera {
     }
 
     fn directional(&mut self, player_pos: Vec3A) {
-        self.position = Vec3A::new(
-            player_pos.x() + 8.0,
-            player_pos.y() + 5.0,
-            player_pos.z() - 8.0,
-        );
+        self.position = Vec3A::new(player_pos.x + 8.0, player_pos.y + 5.0, player_pos.z - 8.0);
         self.target = player_pos;
     }
 
     fn chase(&mut self, player_pos: Vec3A) {
-        let mut dx: f32 = player_pos.x() - self.position.x();
-        let mut dz: f32 = player_pos.z() - self.position.z();
+        let mut dx: f32 = player_pos.x - self.position.x;
+        let mut dz: f32 = player_pos.z - self.position.z;
         let distance = (dx * dx + dz * dz).sqrt();
 
         if distance < MIN_DISTANCE {
             dx /= distance;
             dz /= distance;
             self.position = Vec3A::new(
-                player_pos.x() - MIN_DISTANCE * dx,
-                self.position.y(),
-                player_pos.z() - MIN_DISTANCE * dz,
+                player_pos.x - MIN_DISTANCE * dx,
+                self.position.y,
+                player_pos.z - MIN_DISTANCE * dz,
             );
         }
         if distance > MAX_DISTANCE {
             dx /= distance;
             dz /= distance;
             self.position = Vec3A::new(
-                player_pos.x() - MAX_DISTANCE * dx,
-                self.position.y(),
-                player_pos.z() - MAX_DISTANCE * dz,
+                player_pos.x - MAX_DISTANCE * dx,
+                self.position.y,
+                player_pos.z - MAX_DISTANCE * dz,
             );
         }
         self.target = player_pos;
@@ -147,9 +143,9 @@ impl Camera {
         let dx = player_angle.sin();
         let dz = player_angle.cos();
         self.position = Vec3A::new(
-            player_pos.x() - DISTANCE * dx,
-            self.position.y(),
-            player_pos.z() - DISTANCE * dz,
+            player_pos.x - DISTANCE * dx,
+            self.position.y,
+            player_pos.z - DISTANCE * dz,
         );
         self.target = player_pos;
     }
@@ -157,11 +153,7 @@ impl Camera {
     fn fps(&mut self, player_pos: Vec3A, player_angle: f32) {
         let dx = player_angle.sin();
         let dz = player_angle.cos();
-        self.position = Vec3A::new(player_pos.x(), player_pos.y() + HEIGHT, player_pos.z());
-        self.target = Vec3A::new(
-            self.position.x() + dx,
-            self.position.y(),
-            self.position.z() + dz,
-        );
+        self.position = Vec3A::new(player_pos.x, player_pos.y + HEIGHT, player_pos.z);
+        self.target = Vec3A::new(self.position.x + dx, self.position.y, self.position.z + dz);
     }
 }

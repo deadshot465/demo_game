@@ -13,8 +13,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[cfg(target_os = "windows")]
 use wio::com::ComPtr;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     //println!("{}", std::mem::size_of::<PushConstant>());
     //println!("{}", std::mem::size_of::<usize>());
     //return Ok(());
@@ -36,12 +35,20 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let api = dotenv::var("API").unwrap();
     log::info!("Using API: {}", &api);
+    let mut rt = tokio::runtime::Builder::new()
+        .threaded_scheduler()
+        .enable_all()
+        .build()?;
     let event_loop = EventLoop::new();
     let mut last_second = time::Instant::now();
     let mut current_time = time::Instant::now();
     let mut frame_count = 0_u32;
     let mut delta_time = 0.0_f64;
-    let network_system = NetworkSystem::new().await?;
+    let network_system = rt.block_on(async {
+        NetworkSystem::new()
+            .await
+            .expect("Failed to initialize network system.")
+    });
     match api.as_str() {
         "VULKAN" => {
             let mut game = std::mem::ManuallyDrop::new(Game::<
@@ -62,10 +69,9 @@ async fn main() -> anyhow::Result<()> {
             log::info!("Game content loaded.");
             let mut mouse_x = 0.0;
             let mut mouse_y = 0.0;
-            let rt = tokio::runtime::Handle::current();
             event_loop.run(move |event, _target, control_flow| {
                 let game = &mut game;
-                let rt = &rt;
+                let rt = &mut rt;
                 match event {
                     Event::NewEvents(_) => {
                         delta_time = current_time.elapsed().as_secs_f64();
@@ -153,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
                         rt.block_on(async {
                             game.update(delta_time)
                                 .await
-                                .expect("Failed to update the game.")
+                                .expect("Failed to update the game.");
                         });
                         game.render(delta_time).expect("Failed to render the game.");
                     }

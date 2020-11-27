@@ -447,9 +447,9 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let (textures, texture_index_offset) =
                 Graphics::create_gltf_textures(images, graphics_arc.clone(), command_pool.clone())
                     .expect("Failed to create glTF textures.");
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
             let mut loaded_model = Self::create_model(
                 file_name,
                 model_index,
