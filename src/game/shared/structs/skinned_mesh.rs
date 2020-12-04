@@ -1,6 +1,5 @@
 use crossbeam::sync::ShardedLock;
 use glam::Mat4;
-use parking_lot::Mutex;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
@@ -8,7 +7,8 @@ use crate::game::graphics::vk::{Buffer, Image};
 use crate::game::shared::enums::{SamplerResource, ShaderType};
 use crate::game::shared::structs::{Joint, SkinnedVertex, SSBO};
 use crate::game::traits::Disposable;
-use ash::vk::{CommandBuffer, CommandPool};
+use crate::game::CommandData;
+use ash::vk::CommandBuffer;
 
 #[derive(Clone, Debug)]
 pub struct SkinnedPrimitive<BufferType, CommandType, TextureType>
@@ -24,8 +24,7 @@ where
     pub texture: Option<Arc<ShardedLock<TextureType>>>,
     pub texture_index: usize,
     pub is_disposed: bool,
-    pub command_data:
-        std::collections::HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+    pub command_data: CommandData<CommandType>,
     pub sampler_resource: Option<SamplerResource>,
     pub shader_type: ShaderType,
 }

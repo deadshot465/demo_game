@@ -2,11 +2,12 @@ use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::SceneType;
 use crate::game::shared::structs::WaitableTasks;
 use crate::game::structs::{Counts, Model, PositionInfo};
-use crate::game::traits::{Disposable, GraphicsBase, Renderable, Scene};
-use crate::game::ResourceManager;
+use crate::game::traits::{Disposable, GraphicsBase, Scene};
+use crate::game::{LockableRenderable, ResourceManagerWeak};
 use ash::vk::CommandBuffer;
+use async_trait::async_trait;
 use glam::f32::{Vec3A, Vec4};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use slotmap::{DefaultKey, SlotMap};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -22,18 +23,14 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-    resource_manager: Weak<
-        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
-    >,
+    resource_manager: ResourceManagerWeak<GraphicsType, BufferType, CommandType, TextureType>,
     scene_name: String,
     counts: Counts,
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
     scene_type: SceneType,
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
     current_entities: HashMap<String, DefaultKey>,
-    render_components: Vec<
-        Arc<Mutex<Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send>>>,
-    >,
+    render_components: Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -45,11 +42,7 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     pub fn new(
-        resource_manager: Weak<
-            RwLock<
-                ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
-            >,
-        >,
+        resource_manager: ResourceManagerWeak<GraphicsType, BufferType, CommandType, TextureType>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
     ) -> Self {
@@ -65,23 +58,11 @@ where
             current_entities: HashMap::new(),
         }
     }
-
-    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
-        let entities = self
-            .entities
-            .upgrade()
-            .expect("Failed to upgrade entities handle.");
-        self.counts.entity_count += 1;
-        let mut entities_lock = entities.borrow_mut();
-        let entity = entities_lock.insert(self.counts.entity_count);
-        self.current_entities
-            .insert(entity_name.to_string(), entity);
-        entity
-    }
 }
 
 impl TitleScene<Graphics, Buffer, CommandBuffer, Image> {}
 
+#[async_trait]
 impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {}
 
@@ -93,7 +74,7 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    fn load_content(&mut self) -> anyhow::Result<()> {
+    async fn load_content(&mut self) -> anyhow::Result<()> {
         let title_tank = self.add_entity("TitleTank");
         self.add_model(
             "./models/merkava_tank/scene.gltf",
@@ -114,7 +95,7 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let graphics = self
             .graphics
             .upgrade()
@@ -134,6 +115,19 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
             let _ = graphics_lock.render(&self.render_components);
         }
         Ok(())
+    }
+
+    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
+        let entities = self
+            .entities
+            .upgrade()
+            .expect("Failed to upgrade entities handle.");
+        self.counts.entity_count += 1;
+        let mut entities_lock = entities.borrow_mut();
+        let entity = entities_lock.insert(self.counts.entity_count);
+        self.current_entities
+            .insert(entity_name.to_string(), entity);
+        entity
     }
 
     fn add_model(
@@ -242,4 +236,24 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         let mut resource_lock = resource_manager.write();
         resource_lock.get_all_command_buffers(self.scene_type);
     }
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
+    for TitleScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync
+    for TitleScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
 }

@@ -5,9 +5,10 @@ use crate::game::shared::traits::Renderable;
 use crate::game::shared::util::get_random_string;
 use crate::game::structs::{Model, ModelMetaData};
 use crate::game::traits::{Disposable, GraphicsBase};
+use crate::game::CommandData;
 use ash::vk::{
-    CommandBuffer, CommandBufferInheritanceInfo, CommandPool, DescriptorSet, Rect2D,
-    SamplerAddressMode, Viewport,
+    CommandBuffer, CommandBufferInheritanceInfo, DescriptorSet, Rect2D, SamplerAddressMode,
+    Viewport,
 };
 use ash::Device;
 use crossbeam::channel::*;
@@ -50,7 +51,7 @@ where
         ssbo_index: usize,
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+        command_data: CommandData<CommandType>,
         position_info: PositionInfo,
         color: Vec4,
         shader_type: Option<ShaderType>,
@@ -83,7 +84,7 @@ where
 
     fn create_rect(
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
-        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+        command_data: CommandData<CommandType>,
         shader_type: Option<ShaderType>,
         model_index: usize,
     ) -> Mesh<BufferType, CommandType, TextureType> {

@@ -64,7 +64,9 @@ fn main() -> anyhow::Result<()> {
                 network_system,
             )?);
             if game.initialize() {
-                game.load_content()?;
+                rt.block_on(async {
+                    game.load_content().await.expect("Failed to load content.");
+                });
             }
             log::info!("Game content loaded.");
             let mut mouse_x = 0.0;

@@ -1,14 +1,14 @@
 use crossbeam::sync::ShardedLock;
-use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
-use crate::game::graphics;
 use crate::game::shared::enums::ShaderType;
 use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
+use crate::game::{graphics, CommandData};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Primitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
@@ -28,8 +28,7 @@ where
     pub index_buffer: Option<ManuallyDrop<BufferType>>,
     pub texture: Vec<Arc<ShardedLock<TextureType>>>,
     pub is_disposed: bool,
-    pub command_data:
-        std::collections::HashMap<usize, (Option<Arc<Mutex<ash::vk::CommandPool>>>, CommandType)>,
+    pub command_data: CommandData<CommandType>,
     pub shader_type: ShaderType,
     pub model_index: usize,
 }

@@ -26,8 +26,10 @@ use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::scenes::title_scene::TitleScene;
 use crate::game::shared::enums::SceneType;
 use crate::game::shared::traits::GraphicsBase;
+use crate::game::shared::util::get_random_string;
 use crate::game::traits::Disposable;
 use crate::game::{Camera, GameScene, ResourceManager, SceneManager};
+use rand::prelude::IteratorRandom;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, VirtualKeyCode};
 
@@ -42,16 +44,13 @@ where
     pub camera: Rc<RefCell<Camera>>,
     pub graphics: Arc<RwLock<ManuallyDrop<GraphicsType>>>,
     pub scene_manager: SceneManager,
-    pub ui_system: Option<
-        Rc<RefCell<ManuallyDrop<UISystem<GraphicsType, BufferType, CommandType, TextureType>>>>,
-    >,
-    resource_manager: Arc<
-        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
-    >,
+    pub ui_system: UISystemHandle<GraphicsType, BufferType, CommandType, TextureType>,
+    resource_manager: ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType>,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
-    network_system: NetworkSystem,
+    network_system: Arc<tokio::sync::RwLock<NetworkSystem>>,
     scenes: HashMap<SceneType, usize>,
     current_scene: SceneType,
+    room_state_receiver: Option<crossbeam::channel::Receiver<bool>>,
 }
 
 impl Game<Graphics, Buffer, CommandBuffer, Image> {
@@ -85,9 +84,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             scene_manager: SceneManager::new(),
             ui_system: None,
             entities: Rc::new(RefCell::new(SlotMap::new())),
-            network_system,
+            network_system: Arc::new(tokio::sync::RwLock::new(network_system)),
             scenes: HashMap::new(),
             current_scene: SceneType::TITLE,
+            room_state_receiver: None,
         })
     }
 
@@ -107,6 +107,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             Arc::downgrade(&self.resource_manager),
             Arc::downgrade(&self.graphics),
             Rc::downgrade(&self.entities),
+            Arc::downgrade(&self.network_system),
         );
         let title_scene_index = self.scene_manager.register_scene(title_scene);
         let game_scene_index = self.scene_manager.register_scene(game_scene);
@@ -146,8 +147,8 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    pub fn load_content(&mut self) -> anyhow::Result<()> {
-        self.scene_manager.load_content()?;
+    pub async fn load_content(&mut self) -> anyhow::Result<()> {
+        self.scene_manager.load_content().await?;
         self.scene_manager.wait_for_all_tasks()?;
         if self.ui_system.is_none() {
             let graphics_lock = self.graphics.read();
@@ -168,8 +169,6 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
                 graphics_lock.initialize_scene_resource(false)?;
                 graphics_lock.initialize_pipelines()?;
             } else {
-                //graphics_lock.destroy_scene_resource();
-                //graphics_lock.initialize_scene_resource(true)?;
                 graphics_lock.recreate_swapchain(width, height)?;
             }
         }
@@ -197,27 +196,116 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         let mut new_scene = self.current_scene;
         if let Some(ui_system) = self.ui_system.as_ref() {
             let mut borrowed = ui_system.borrow_mut();
-            let player = borrowed.draw_title_ui(&mut self.network_system).await?;
-            if let Some(p) = player {
-                println!("Successfully logged in as {}.", &p.email);
-                new_scene = SceneType::GAME;
+            match old_scene {
+                SceneType::TITLE => {
+                    let player = borrowed.draw_title_ui(self.network_system.clone()).await?;
+                    if let Some(p) = player {
+                        log::info!("Successfully logged in as {}.", &p.email);
+                        new_scene = SceneType::GAME;
+                    }
+                }
+                SceneType::GAME => borrowed.draw_game_ui(self.network_system.clone()).await?,
+                _ => (),
             }
         }
-        if old_scene != new_scene {
-            self.switch_scene(new_scene)?;
+
+        let load_game = if let Some(recv) = self.room_state_receiver.as_ref() {
+            recv.try_recv().is_ok()
+        } else {
+            false
+        };
+        if load_game {
+            let is_owner = {
+                let ns = self.network_system.read().await;
+                if let Some(player) = ns.logged_user.as_ref() {
+                    if let Some(state) = player.state.as_ref() {
+                        state.is_owner
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            {
+                let mut ns = self.network_system.write().await;
+                let entity = self.scene_manager.add_entity("GameTerrain");
+                if is_owner {
+                    let primitive = self.scene_manager.generate_terrain(0, 0, None, entity)?;
+                    println!("Vertices count: {}", primitive.vertices.len());
+                    ns.start_game(primitive).await?;
+                } else {
+                    let primitive = self.scene_manager.generate_terrain(
+                        0,
+                        0,
+                        Some(ns.get_terrain().await?),
+                        entity,
+                    )?;
+                    println!("Vertices count: {}", primitive.vertices.len());
+                }
+            }
+            self.load_content().await?;
         }
-        self.scene_manager.update(delta_time)?;
+
+        if old_scene != new_scene {
+            let receiver = match new_scene {
+                SceneType::GAME => {
+                    let mut network_system = self.network_system.write().await;
+                    let rooms = network_system.get_rooms().await?;
+                    if rooms.is_empty() {
+                        let room_id = get_random_string(7);
+                        Some(
+                            network_system
+                                .register_player(room_id, "Test Room".into(), true)
+                                .await?,
+                        )
+                    } else {
+                        let available_rooms = rooms
+                            .iter()
+                            .filter(|r| !r.started && r.current_players < r.max_players)
+                            .collect::<Vec<_>>();
+                        let randomly_selected_room = {
+                            let mut rng = rand::thread_rng();
+                            available_rooms.iter().choose(&mut rng)
+                        };
+
+                        let room = randomly_selected_room.expect("Failed to get available room.");
+
+                        Some(
+                            network_system
+                                .register_player(
+                                    room.room_id.clone(),
+                                    room.room_name.clone(),
+                                    false,
+                                )
+                                .await?,
+                        )
+                    }
+                }
+                _ => None,
+            };
+
+            self.room_state_receiver = receiver;
+            self.switch_scene(new_scene).await?;
+        }
+
+        self.scene_manager.update(delta_time).await?;
         Ok(())
     }
 
-    fn switch_scene(&mut self, scene_type: SceneType) -> anyhow::Result<()> {
+    async fn switch_scene(&mut self, scene_type: SceneType) -> anyhow::Result<()> {
         self.current_scene = scene_type;
         let scene_index = self
             .scenes
             .get(&scene_type)
             .expect("Failed to get scene index.");
         self.scene_manager.switch_scene(*scene_index);
-        self.load_content()
+        if scene_type != SceneType::GAME {
+            self.load_content().await
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -247,9 +335,10 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             scene_manager: SceneManager::new(),
             ui_system: None,
             entities: Rc::new(RefCell::new(SlotMap::new())),
-            network_system,
+            network_system: Arc::new(tokio::sync::RwLock::new(network_system)),
             scenes: HashMap::new(),
             current_scene: SceneType::TITLE,
+            room_state_receiver: None,
         }
     }
 

@@ -9,6 +9,8 @@ use nuklear::{
 };
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use winit::event::{ElementState, MouseScrollDelta, VirtualKeyCode};
 
 const MAX_VERTEX_MEMORY: usize = 512 * 1024;
@@ -37,6 +39,12 @@ pub struct RegistrationInputs {
     pub email_length: i32,
     pub password_input: [u8; 64],
     pub password_length: i32,
+}
+
+impl Default for RegistrationInputs {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RegistrationInputs {
@@ -72,6 +80,12 @@ pub struct LoginInputs {
     pub password_input: [u8; 64],
     pub password_length: i32,
     pub actual_password: [u8; 64],
+}
+
+impl Default for LoginInputs {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LoginInputs {
@@ -154,9 +168,67 @@ where
         self.context.clear();
     }
 
+    pub async fn draw_game_ui(
+        &mut self,
+        network_system: Arc<RwLock<NetworkSystem>>,
+    ) -> anyhow::Result<()> {
+        if !self.is_initialized {
+            return Ok(());
+        }
+
+        let ctx = &mut self.context;
+        let drawer = &mut self.drawer;
+        drawer.set_font_size(ctx, 28);
+        let flags = PanelFlags::Border as Flags | PanelFlags::NoScrollbar as Flags;
+
+        let ns = network_system.read().await;
+        let mut room_state = ns.room_state.lock().await;
+        let room_started = room_state.started;
+        if !room_started {
+            ctx.begin(
+                nuklear::nk_string!("WaitBox"),
+                nuklear::Rect {
+                    x: 600.0,
+                    y: 300.0,
+                    w: 400.0,
+                    h: 400.0,
+                },
+                flags,
+            );
+            drawer.set_font_size(ctx, 36);
+            ctx.layout_row_dynamic(50.0, 1);
+            ctx.text("Wait", TextAlignment::Centered as Flags);
+            drawer.set_font_size(ctx, 16);
+            ctx.layout_row_dynamic(50.0, 1);
+            ctx.text("Wait for opponents...", TextAlignment::Centered as Flags);
+            ctx.layout_row_dynamic(50.0, 1);
+            let current_players = format!("Current players: {}", room_state.current_players);
+            ctx.text(&current_players, TextAlignment::Centered as Flags);
+            if let Some(player) = ns.logged_user.as_ref() {
+                if let Some(state) = player.state.as_ref() {
+                    let is_owner = state.is_owner;
+                    let is_player_sufficient = room_state.current_players >= 2;
+                    if is_owner && is_player_sufficient {
+                        let ratio = [0.25, 0.5, 0.25];
+                        ctx.layout_row(LayoutFormat::Dynamic, 50.0, &ratio);
+                        ctx.spacing(1);
+                        if ctx.button_text("Start") {
+                            room_state.started = true;
+                        }
+                        ctx.spacing(1);
+                    }
+                }
+            }
+            drawer.set_font_size(ctx, 24);
+            ctx.end();
+        }
+
+        Ok(())
+    }
+
     pub async fn draw_title_ui(
         &mut self,
-        network_system: &mut NetworkSystem,
+        network_system: Arc<RwLock<NetworkSystem>>,
     ) -> anyhow::Result<Option<Player>> {
         if !self.is_initialized {
             return Ok(None);
@@ -165,8 +237,9 @@ where
         let drawer = &mut self.drawer;
         drawer.set_font_size(ctx, 24);
         let flags = PanelFlags::Border as Flags | PanelFlags::NoScrollbar as Flags;
+
         ctx.begin(
-            nuklear::nk_string!("Basic User Interface"),
+            nuklear::nk_string!("User Interface"),
             nuklear::Rect {
                 x: 0.0,
                 y: 0.0,
@@ -177,11 +250,12 @@ where
         );
         Self::set_ui_header(drawer, ctx, "Game Menu", TextAlignment::Centered);
         Self::set_ui_widget(drawer, ctx, 50.0, true);
+
         if ctx.button_text("Start")
             && !self.ui_state.show_login_box
             && !self.ui_state.show_register_box
             && !self.ui_state.show_login_form
-            && !network_system.is_player_login
+            && !network_system.read().await.is_player_login
         {
             self.ui_state.show_login_box = true;
         }
@@ -193,7 +267,9 @@ where
         }
 
         if self.ui_state.show_register_box {
-            let player = self.draw_register_box(flags, network_system).await?;
+            let player = self
+                .draw_register_box(flags, network_system.clone())
+                .await?;
             if player.is_some() {
                 return Ok(player);
             }
@@ -340,7 +416,7 @@ where
     async fn draw_login_form(
         &mut self,
         flags: Flags,
-        network_system: &mut NetworkSystem,
+        network_system: Arc<RwLock<NetworkSystem>>,
     ) -> anyhow::Result<Option<Player>> {
         let mut ui_state = self.ui_state.clone();
         let mut player: Option<Player> = None;
@@ -378,7 +454,7 @@ where
                 &mut ui_state.login_inputs.password_length,
                 Self::free_type_filter,
             );
-            ui_state.login_inputs.actual_password = ui_state.login_inputs.password_input.clone();
+            ui_state.login_inputs.actual_password = ui_state.login_inputs.password_input;
             /*for i in 0..ui_state.login_inputs.password_length {
                 ui_state.login_inputs.password_input[i as usize] = '\u{002A}' as u8;
             }*/
@@ -393,7 +469,8 @@ where
                         [0..(ui_state.login_inputs.password_length as usize)],
                 )?;
                 let encoded_pass = base64::encode(password.trim());
-                let p = network_system
+                let mut network_system_lock = network_system.write().await;
+                let p = network_system_lock
                     .login(Some((account.to_string(), encoded_pass)))
                     .await;
                 ui_state.login_inputs.clear();
@@ -417,7 +494,7 @@ where
     async fn draw_register_box(
         &mut self,
         flags: Flags,
-        network_system: &mut NetworkSystem,
+        network_system: Arc<RwLock<NetworkSystem>>,
     ) -> anyhow::Result<Option<Player>> {
         let mut ui_state = self.ui_state.clone();
         let mut player: Option<Player> = None;
@@ -488,7 +565,8 @@ where
                     &ui_state.registration_inputs.password_input
                         [0..(ui_state.registration_inputs.password_length as usize)],
                 )?;
-                let (result, p) = network_system
+                let mut network_system_lock = network_system.write().await;
+                let (result, p) = network_system_lock
                     .register(username, nickname, email, password)
                     .await;
                 ui_state.registration_inputs.clear();
@@ -509,16 +587,16 @@ where
         Ok(player)
     }
 
-    fn free_type_filter(_: &TextEdit, c: char) -> bool {
-        c >= '\u{0020}'
-    }
-
     fn email_filter(_: &TextEdit, c: char) -> bool {
         c == '\u{002E}'
             || (c >= '\u{0030}' && c <= '\u{0039}')
             || (c >= '\u{0040}' && c <= '\u{005A}')
             || c == '\u{005F}'
             || (c >= '\u{0061}' && c <= '\u{007A}')
+    }
+
+    fn free_type_filter(_: &TextEdit, c: char) -> bool {
+        c >= '\u{0020}'
     }
 
     fn set_ui_header(

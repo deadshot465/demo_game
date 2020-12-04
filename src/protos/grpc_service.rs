@@ -123,27 +123,43 @@ pub mod game_state {
     pub struct RegisterPlayerRequest {
         #[prost(string, tag = "1")]
         pub room_id: std::string::String,
-        #[prost(message, optional, tag = "2")]
+        #[prost(string, tag = "2")]
+        pub room_name: std::string::String,
+        #[prost(message, optional, tag = "3")]
         pub player: ::std::option::Option<Player>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct RoomState {
         #[prost(string, tag = "1")]
         pub room_id: std::string::String,
-        #[prost(int32, tag = "2")]
-        pub current_players: i32,
+        #[prost(string, tag = "2")]
+        pub room_name: std::string::String,
         #[prost(int32, tag = "3")]
+        pub current_players: i32,
+        #[prost(int32, tag = "4")]
         pub max_players: i32,
-        #[prost(bool, tag = "4")]
+        #[prost(bool, tag = "5")]
         pub started: bool,
-        #[prost(message, repeated, tag = "5")]
+        #[prost(message, repeated, tag = "6")]
         pub players: ::std::vec::Vec<Player>,
+        #[prost(string, tag = "7")]
+        pub message: std::string::String,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct StartGameRequest {
         #[prost(message, optional, tag = "1")]
         pub room_state: ::std::option::Option<RoomState>,
         #[prost(bytes, tag = "2")]
+        pub terrain_vertices: std::vec::Vec<u8>,
+    }
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct GetTerrainRequest {
+        #[prost(string, tag = "1")]
+        pub room_id: std::string::String,
+    }
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct GetTerrainReply {
+        #[prost(bytes, tag = "1")]
         pub terrain_vertices: std::vec::Vec<u8>,
     }
 }
@@ -282,7 +298,7 @@ pub mod grpc_service_client {
                 .await
         }
         #[doc = " Start a game in a room."]
-        pub async fn start_room(
+        pub async fn start_game(
             &mut self,
             request: impl tonic::IntoRequest<super::game_state::StartGameRequest>,
         ) -> Result<tonic::Response<super::Empty>, tonic::Status> {
@@ -293,7 +309,22 @@ pub mod grpc_service_client {
                 )
             })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/grpc_service.GrpcService/StartRoom");
+            let path = http::uri::PathAndQuery::from_static("/grpc_service.GrpcService/StartGame");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        #[doc = " Get terrain of a game room."]
+        pub async fn get_terrain(
+            &mut self,
+            request: impl tonic::IntoRequest<super::game_state::GetTerrainRequest>,
+        ) -> Result<tonic::Response<super::game_state::GetTerrainReply>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/grpc_service.GrpcService/GetTerrain");
             self.inner.unary(request.into_request(), path, codec).await
         }
         #[doc = " Progress the game."]
@@ -380,10 +411,15 @@ pub mod grpc_service_server {
             request: tonic::Request<super::game_state::RegisterPlayerRequest>,
         ) -> Result<tonic::Response<Self::RegisterPlayerStream>, tonic::Status>;
         #[doc = " Start a game in a room."]
-        async fn start_room(
+        async fn start_game(
             &self,
             request: tonic::Request<super::game_state::StartGameRequest>,
         ) -> Result<tonic::Response<super::Empty>, tonic::Status>;
+        #[doc = " Get terrain of a game room."]
+        async fn get_terrain(
+            &self,
+            request: tonic::Request<super::game_state::GetTerrainRequest>,
+        ) -> Result<tonic::Response<super::game_state::GetTerrainReply>, tonic::Status>;
         #[doc = "Server streaming response type for the ProgressGame method."]
         type ProgressGameStream: Stream<Item = Result<super::game_state::RoomState, tonic::Status>>
             + Send
@@ -615,12 +651,12 @@ pub mod grpc_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/grpc_service.GrpcService/StartRoom" => {
+                "/grpc_service.GrpcService/StartGame" => {
                     #[allow(non_camel_case_types)]
-                    struct StartRoomSvc<T: GrpcService>(pub Arc<T>);
+                    struct StartGameSvc<T: GrpcService>(pub Arc<T>);
                     impl<T: GrpcService>
                         tonic::server::UnaryService<super::game_state::StartGameRequest>
-                        for StartRoomSvc<T>
+                        for StartGameSvc<T>
                     {
                         type Response = super::Empty;
                         type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
@@ -629,7 +665,7 @@ pub mod grpc_service_server {
                             request: tonic::Request<super::game_state::StartGameRequest>,
                         ) -> Self::Future {
                             let inner = self.0.clone();
-                            let fut = async move { (*inner).start_room(request).await };
+                            let fut = async move { (*inner).start_game(request).await };
                             Box::pin(fut)
                         }
                     }
@@ -637,7 +673,41 @@ pub mod grpc_service_server {
                     let fut = async move {
                         let interceptor = inner.1.clone();
                         let inner = inner.0;
-                        let method = StartRoomSvc(inner);
+                        let method = StartGameSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = if let Some(interceptor) = interceptor {
+                            tonic::server::Grpc::with_interceptor(codec, interceptor)
+                        } else {
+                            tonic::server::Grpc::new(codec)
+                        };
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/grpc_service.GrpcService/GetTerrain" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTerrainSvc<T: GrpcService>(pub Arc<T>);
+                    impl<T: GrpcService>
+                        tonic::server::UnaryService<super::game_state::GetTerrainRequest>
+                        for GetTerrainSvc<T>
+                    {
+                        type Response = super::game_state::GetTerrainReply;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::game_state::GetTerrainRequest>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).get_terrain(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let interceptor = inner.1.clone();
+                        let inner = inner.0;
+                        let method = GetTerrainSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = if let Some(interceptor) = interceptor {
                             tonic::server::Grpc::with_interceptor(codec, interceptor)

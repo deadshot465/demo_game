@@ -1,5 +1,6 @@
-use crate::game::shared::enums::SceneType;
+use crate::game::shared::structs::Primitive;
 use crate::game::shared::traits::Scene;
+use slotmap::DefaultKey;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -23,6 +24,17 @@ impl SceneManager {
         }
     }
 
+    pub fn add_entity(&self, entity_name: &str) -> DefaultKey {
+        let current_index = self.current_index;
+        let entity = self
+            .scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow_mut()
+            .add_entity(entity_name);
+        entity
+    }
+
     pub fn create_ssbo(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
         self.scenes
@@ -31,6 +43,23 @@ impl SceneManager {
             .borrow()
             .create_ssbo()?;
         Ok(())
+    }
+
+    pub fn generate_terrain(
+        &self,
+        grid_x: i32,
+        grid_z: i32,
+        primitive: Option<Primitive>,
+        entity: DefaultKey,
+    ) -> anyhow::Result<Primitive> {
+        let current_index = self.current_index;
+        let primitive = self
+            .scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow_mut()
+            .generate_terrain(grid_x, grid_z, primitive, entity)?;
+        Ok(primitive)
     }
 
     pub fn get_command_buffers(&self) {
@@ -58,10 +87,10 @@ impl SceneManager {
         }
     }
 
-    pub fn load_content(&self) -> anyhow::Result<()> {
+    pub async fn load_content(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().load_content()?;
+            scene.borrow_mut().load_content().await?;
         }
         Ok(())
     }
@@ -109,10 +138,10 @@ impl SceneManager {
         self.initialize();
     }
 
-    pub fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+    pub async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().update(delta_time)?;
+            scene.borrow_mut().update(delta_time).await?;
         }
         Ok(())
     }

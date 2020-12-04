@@ -617,8 +617,8 @@ impl Drawer {
                 )
                 .expect("Failed to map memory for staging buffer.")
         };
-        let rgba_raw_data = img.to_rgba();
-        let bgra_raw_data = img.to_bgra();
+        let rgba_raw_data = img.to_rgba8();
+        let bgra_raw_data = img.to_bgra8();
         let raw_bytes = match color_format {
             Format::B8G8R8A8_UNORM => bgra_raw_data.as_ptr(),
             Format::R8G8B8A8_UNORM => rgba_raw_data.as_ptr(),
@@ -891,9 +891,9 @@ impl Drawer {
 
     fn create_shader_module(device: &ash::Device, file_name: &str) -> ShaderModule {
         let mut file = std::fs::File::open(file_name)
-            .expect(&format!("Failed to open shader file: {}", file_name));
+            .unwrap_or_else(|_| panic!("Failed to open shader file: {}", file_name));
         let byte_code = ash::util::read_spv(&mut file)
-            .expect(&format!("Failed to read shader byte code: {}", file_name));
+            .unwrap_or_else(|_| panic!("Failed to read shader byte code: {}", file_name));
         let shader_module_info = ShaderModuleCreateInfo::builder().code(byte_code.as_slice());
         unsafe {
             device

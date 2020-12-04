@@ -51,8 +51,7 @@ impl Initializer {
 
         let mut instance_info = InstanceCreateInfo::builder()
             .application_info(&app_info)
-            .enabled_extension_names(extension_ptrs.as_slice())
-            .enabled_layer_names(layers.as_slice());
+            .enabled_extension_names(extension_ptrs.as_slice());
 
         if debug {
             instance_info = instance_info.enabled_layer_names(layers.as_slice());
@@ -494,7 +493,6 @@ impl Initializer {
         let width = image.width();
         let height = image.height();
         let color_type = image.color();
-        let graphics_clone = graphics.clone();
         use crossbeam::channel::*;
         use image::ColorType;
         let (texture_send, texture_recv) = bounded(5);
@@ -509,7 +507,7 @@ impl Initializer {
                     ColorType::Bgr8 => ImageFormat::ColorType(ColorType::Bgra8),
                     _ => ImageFormat::ColorType(color_type),
                 },
-                graphics_clone,
+                graphics,
                 command_pool,
                 sampler_address_mode,
             );

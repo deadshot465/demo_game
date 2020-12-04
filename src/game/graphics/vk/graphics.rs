@@ -42,6 +42,8 @@ type ResourceManagerHandle = Weak<
 type UIManagerHandle = std::rc::Weak<
     RefCell<ManuallyDrop<UISystem<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
+type LockableRenderable =
+    Arc<Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>>;
 
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -144,7 +146,11 @@ impl Graphics {
         let window_handle = window_ptr.borrow();
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
         let entry = Entry::new()?;
-        let enabled_layers = vec![CString::new("VK_LAYER_KHRONOS_validation")?];
+        let enabled_layers = if debug {
+            vec![CString::new("VK_LAYER_KHRONOS_validation")?]
+        } else {
+            vec![]
+        };
         let instance =
             Initializer::create_instance(debug, &enabled_layers, &entry, &*window_handle)?;
         let surface_loader = Surface::new(&entry, &instance);
@@ -533,12 +539,7 @@ impl Graphics {
         command_pool: Arc<Mutex<CommandPool>>,
         sampler_address_mode: SamplerAddressMode,
     ) -> anyhow::Result<(Arc<ShardedLock<super::Image>>, usize)> {
-        Initializer::create_image_from_file(
-            file_name,
-            graphics.clone(),
-            command_pool,
-            sampler_address_mode,
-        )
+        Initializer::create_image_from_file(file_name, graphics, command_pool, sampler_address_mode)
     }
 
     pub fn create_secondary_command_buffer(
@@ -754,12 +755,7 @@ impl Graphics {
         Ok(())
     }
 
-    pub fn render(
-        &self,
-        renderables: &[Arc<
-            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
-        >],
-    ) -> anyhow::Result<()> {
+    pub fn render(&self, renderables: &[LockableRenderable]) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
         }
@@ -900,10 +896,11 @@ impl Graphics {
             .upgrade()
             .expect("Failed to upgrade resource manager handle.");
         let resource_lock = resource_arc.read();
+        let empty_queue = vec![];
         let current_model_queue = resource_lock
             .model_queue
             .get(&scene_type)
-            .expect("Failed to get model queue of the current scene.");
+            .unwrap_or(&empty_queue);
         for model in current_model_queue.iter() {
             let mut model_lock = model.lock();
             model_lock.update(delta_time);
@@ -1162,9 +1159,7 @@ impl Graphics {
         current_frame: &FrameData,
         frame_index: usize,
         viewports: &[Viewport],
-        renderables: &[Arc<
-            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
-        >],
+        renderables: &[LockableRenderable],
     ) -> anyhow::Result<()> {
         let clear_color = ClearColorValue {
             float32: self.sky_color.into(),
@@ -1317,10 +1312,12 @@ impl Graphics {
                 renderables,
             )?;
             all_command_buffers.append(&mut command_buffers);
-            self.logical_device.cmd_execute_commands(
-                current_frame.main_command_buffer,
-                all_command_buffers.as_slice(),
-            );
+            if !all_command_buffers.is_empty() {
+                self.logical_device.cmd_execute_commands(
+                    current_frame.main_command_buffer,
+                    all_command_buffers.as_slice(),
+                );
+            }
             self.logical_device
                 .cmd_end_render_pass(current_frame.main_command_buffer);
             let result = self
@@ -1582,7 +1579,7 @@ impl Graphics {
             );
 
             let refraction_msaa_image = Initializer::create_msaa_image(
-                device.clone(),
+                device,
                 color_format,
                 Extent2D {
                     width: REFRACTION_WIDTH,
@@ -1591,7 +1588,7 @@ impl Graphics {
                 command_pool,
                 graphics_queue,
                 sample_count,
-                allocator.clone(),
+                allocator,
             );
 
             let image_views = vec![
@@ -1718,9 +1715,7 @@ impl Graphics {
         viewport: Viewport,
         scissor: Rect2D,
         frame_index: usize,
-        renderables: &[Arc<
-            Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>,
-        >],
+        renderables: &[LockableRenderable],
     ) -> anyhow::Result<Vec<CommandBuffer>> {
         {
             let push_constant = self.push_constant;

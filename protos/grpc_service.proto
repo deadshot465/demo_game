@@ -25,7 +25,10 @@ service GrpcService {
   rpc RegisterPlayer(GameState.RegisterPlayerRequest) returns (stream GameState.RoomState);
 
   // Start a game in a room.
-  rpc StartRoom(GameState.StartGameRequest) returns (Empty);
+  rpc StartGame(GameState.StartGameRequest) returns (Empty);
+  
+  // Get terrain of a game room.
+  rpc GetTerrain(GameState.GetTerrainRequest) returns (GameState.GetTerrainReply);
 
   // Progress the game.
   rpc ProgressGame(stream GameState.RoomState) returns (stream GameState.RoomState);
@@ -113,19 +116,30 @@ message GameState {
 
   message RegisterPlayerRequest {
     string room_id = 1;
-    GameState.Player player = 2;
+    string room_name = 2;
+    GameState.Player player = 3;
   }
   
   message RoomState {
     string room_id = 1;
-    int32 current_players = 2;
-    int32 max_players = 3;
-    bool started = 4;
-    repeated GameState.Player players = 5;
+    string room_name = 2;
+    int32 current_players = 3;
+    int32 max_players = 4;
+    bool started = 5;
+    repeated GameState.Player players = 6;
+    string message = 7;
   }
 
   message StartGameRequest {
     GameState.RoomState room_state = 1;
     bytes terrain_vertices = 2;
+  }
+  
+  message GetTerrainRequest {
+    string room_id = 1;
+  }
+  
+  message GetTerrainReply {
+    bytes terrain_vertices = 1;
   }
 }

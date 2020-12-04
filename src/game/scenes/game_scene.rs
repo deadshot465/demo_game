@@ -1,7 +1,8 @@
 use ash::vk::CommandBuffer;
+use async_trait::async_trait;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use slotmap::{DefaultKey, SlotMap};
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
@@ -12,13 +13,13 @@ use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::SceneType;
 use crate::game::shared::structs::{
-    Counts, GeometricPrimitive, InstanceData, InstancedModel, Model, PositionInfo, PrimitiveType,
-    SkinnedModel, Terrain, WaitableTasks,
+    Counts, GeometricPrimitive, InstanceData, InstancedModel, Model, PositionInfo, Primitive,
+    PrimitiveType, SkinnedModel, Terrain, WaitableTasks,
 };
-use crate::game::shared::traits::{GraphicsBase, Renderable, Scene};
+use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
-use crate::game::ResourceManager;
+use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
 use std::collections::HashMap;
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
@@ -29,18 +30,15 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-    resource_manager: Weak<
-        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
-    >,
+    resource_manager: ResourceManagerWeak<GraphicsType, BufferType, CommandType, TextureType>,
+    network_system: Weak<tokio::sync::RwLock<NetworkSystem>>,
     scene_name: String,
     counts: Counts,
     height_generator: Arc<ShardedLock<HeightGenerator>>,
     scene_type: SceneType,
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
     current_entities: HashMap<String, DefaultKey>,
-    render_components: Vec<
-        Arc<Mutex<Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send>>>,
-    >,
+    render_components: Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
 }
 
@@ -53,13 +51,10 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     pub fn new(
-        resource_manager: Weak<
-            RwLock<
-                ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
-            >,
-        >,
+        resource_manager: ResourceManagerWeak<GraphicsType, BufferType, CommandType, TextureType>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
+        network_system: Weak<tokio::sync::RwLock<NetworkSystem>>,
     ) -> Self {
         GameScene {
             graphics,
@@ -72,56 +67,12 @@ where
             entities,
             current_entities: HashMap::new(),
             render_components: Vec::new(),
+            network_system,
         }
-    }
-
-    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
-        let entities = self
-            .entities
-            .upgrade()
-            .expect("Failed to upgrade entities handle.");
-        self.counts.entity_count += 1;
-        let mut entities_lock = entities.borrow_mut();
-        let entity = entities_lock.insert(self.counts.entity_count);
-        self.current_entities
-            .insert(entity_name.to_string(), entity);
-        entity
     }
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn generate_terrain(
-        &mut self,
-        grid_x: i32,
-        grid_z: i32,
-        entity: DefaultKey,
-    ) -> anyhow::Result<()> {
-        let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
-        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
-        let mut height_generator = self
-            .height_generator
-            .write()
-            .expect("Failed to lock height generator.");
-        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
-        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
-        drop(height_generator);
-        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
-        let terrain = Terrain::new(
-            grid_x,
-            grid_z,
-            model_index,
-            ssbo_index,
-            self.graphics.clone(),
-            self.height_generator.clone(),
-            ratio,
-            ratio,
-            ratio,
-            entity,
-        )?;
-        self.waitable_tasks.terrain_tasks.push(terrain);
-        Ok(())
-    }
-
     pub fn add_instanced_model(
         &mut self,
         file_name: &'static str,
@@ -254,6 +205,7 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 }
 
+#[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     fn initialize(&mut self) {}
 
@@ -265,21 +217,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    fn load_content(&mut self) -> anyhow::Result<()> {
-        /*self.add_skinned_model(
-            "./models/nathan/Nathan.glb",
-            Vec3A::new(-1.5, 0.0, -1.5),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
-        self.add_model(
-            "./models/ak/output.gltf",
-            Vec3A::new(2.5, 0.0, 2.5),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;*/
+    async fn load_content(&mut self) -> anyhow::Result<()> {
         /*self.add_model(
             "./models/tank/tank.gltf",
             Vec3A::new(0.0, 0.0, 0.0),
@@ -326,27 +264,11 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec4::new(0.0, 0.0, 1.0, 1.0),
             Some(ShaderType::Water),
         )?;*/
-        let instance_count = std::env::var("INSTANCE_COUNT")
-            .unwrap()
-            .parse::<usize>()
-            .unwrap();
-        if instance_count > 0 {
-            let dragon = self.add_entity("Dragon");
-            self.add_instanced_model(
-                "models/stanford_dragon/stanford-dragon.glb",
-                Vec3A::new(0.0, 5.0, 0.0),
-                Vec3A::one(),
-                Vec3A::zero(),
-                Vec4::new(0.72, 0.43, 0.47, 1.0),
-                instance_count,
-                dragon,
-            )?;
-        }
         //self.generate_terrain(0, 0)?;
         Ok(())
     }
 
-    fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+    async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
         let graphics = self.graphics.upgrade().unwrap();
         let mut graphics_lock = graphics.write();
         graphics_lock.update(delta_time, self.scene_type)?;
@@ -363,6 +285,19 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             let _ = graphics_lock.render(&self.render_components);
         }
         Ok(())
+    }
+
+    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
+        let entities = self
+            .entities
+            .upgrade()
+            .expect("Failed to upgrade entities handle.");
+        self.counts.entity_count += 1;
+        let mut entities_lock = entities.borrow_mut();
+        let entity = entities_lock.insert(self.counts.entity_count);
+        self.current_entities
+            .insert(entity_name.to_string(), entity);
+        entity
     }
 
     fn add_model(
@@ -428,6 +363,55 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    fn generate_terrain(
+        &mut self,
+        grid_x: i32,
+        grid_z: i32,
+        primitive: Option<Primitive>,
+        entity: DefaultKey,
+    ) -> anyhow::Result<Primitive> {
+        let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let mut height_generator = self
+            .height_generator
+            .write()
+            .expect("Failed to lock height generator.");
+        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
+        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
+        drop(height_generator);
+        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
+        let terrain = Terrain::new(
+            grid_x,
+            grid_z,
+            model_index,
+            ssbo_index,
+            self.graphics.clone(),
+            self.height_generator.clone(),
+            ratio,
+            ratio,
+            ratio,
+            primitive.clone(),
+            entity,
+        )?;
+        //self.waitable_tasks.terrain_tasks.push(terrain);
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
+        let result = terrain.recv()?;
+        let primitive = if let Some(p) = primitive {
+            p
+        } else {
+            result.model.meshes[0].lock().primitives[0].clone()
+        };
+        {
+            let mut write_lock = resource_manager.write();
+            self.render_components
+                .push(write_lock.add_model(self.scene_type, result));
+        }
+        Ok(primitive)
+    }
+
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
         let completed_tasks = self.waitable_tasks.wait_for_all_tasks()?;
         let rm = self.resource_manager.upgrade();
@@ -488,4 +472,24 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let mut resource_lock = resource_manager.write();
         resource_lock.get_all_command_buffers(self.scene_type);
     }
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
+    for GameScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync
+    for GameScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
 }

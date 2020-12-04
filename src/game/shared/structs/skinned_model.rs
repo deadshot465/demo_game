@@ -445,7 +445,7 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
             let (document, buffers, images) =
                 read_raw_data(file_name).expect("Failed to read raw data from glTF.");
             let (textures, texture_index_offset) =
-                Graphics::create_gltf_textures(images, graphics_arc.clone(), command_pool.clone())
+                Graphics::create_gltf_textures(images, graphics_arc.clone(), command_pool)
                     .expect("Failed to create glTF textures.");
             let x: f32 = rotation.x;
             let y: f32 = rotation.y;

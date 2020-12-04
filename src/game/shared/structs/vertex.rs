@@ -1,11 +1,13 @@
 use ash::vk::{
     Format, VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
 };
+use bytemuck::{Pod, Zeroable};
 use glam::{Vec2, Vec3A};
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct Vertex {
     pub position: Vec3A,
     pub normal: Vec3A,
@@ -73,3 +75,6 @@ impl Vertex {
         descs
     }
 }
+
+unsafe impl Zeroable for Vertex {}
+unsafe impl Pod for Vertex {}

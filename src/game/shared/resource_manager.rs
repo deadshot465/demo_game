@@ -10,16 +10,7 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::Renderable;
 use crate::game::shared::util::get_random_string;
 use crate::game::traits::GraphicsBase;
-
-type ModelQueue<GraphicsType, BufferType, CommandType, TextureType> = Vec<
-    Arc<
-        Mutex<
-            Box<
-                dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send + 'static,
-            >,
-        >,
-    >,
->;
+use crate::game::LockableRenderable;
 
 pub struct ResourceManager<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -30,8 +21,10 @@ where
 {
     pub textures: Vec<Arc<ShardedLock<TextureType>>>,
     pub command_buffers: HashMap<SceneType, HashMap<usize, Vec<CommandType>>>,
-    pub model_queue:
-        HashMap<SceneType, ModelQueue<GraphicsType, BufferType, CommandType, TextureType>>,
+    pub model_queue: HashMap<
+        SceneType,
+        Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
+    >,
     resource: Vec<Arc<Mutex<Box<dyn Disposable>>>>,
 }
 
@@ -196,12 +189,8 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
         &mut self,
         scene_type: SceneType,
         model: impl Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static,
-    ) -> Arc<Mutex<Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static>>>
-    {
-        let model_queue = self
-            .model_queue
-            .get_mut(&scene_type)
-            .expect("Failed to get model queue of the specified scene.");
+    ) -> LockableRenderable<Graphics, Buffer, CommandBuffer, Image> {
+        let model_queue = self.model_queue.entry(scene_type).or_insert_with(Vec::new);
         model_queue.push(Arc::new(Mutex::new(Box::new(model))));
         let reference = model_queue.last().cloned().unwrap();
         reference
@@ -211,8 +200,7 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
         &mut self,
         scene_type: SceneType,
         model: Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static>,
-    ) -> Arc<Mutex<Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send + 'static>>>
-    {
+    ) -> LockableRenderable<Graphics, Buffer, CommandBuffer, Image> {
         let model_queue = self
             .model_queue
             .get_mut(&scene_type)

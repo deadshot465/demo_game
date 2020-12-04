@@ -5,17 +5,18 @@ use crate::game::shared::structs::{
 };
 use crate::game::structs::Vertex;
 use crate::game::traits::{Disposable, GraphicsBase, Mappable, Renderable};
+use crate::game::CommandData;
 use ash::version::DeviceV1_0;
 use ash::vk::{
     BufferUsageFlags, CommandBuffer, CommandBufferBeginInfo, CommandBufferInheritanceInfo,
-    CommandBufferUsageFlags, CommandPool, DescriptorSet, IndexType, MemoryPropertyFlags,
-    PipelineBindPoint, Rect2D, ShaderStageFlags, Viewport,
+    CommandBufferUsageFlags, DescriptorSet, IndexType, MemoryPropertyFlags, PipelineBindPoint,
+    Rect2D, ShaderStageFlags, Viewport,
 };
 use ash::Device;
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use slotmap::DefaultKey;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::AtomicPtr;
@@ -39,8 +40,7 @@ where
     pub is_disposed: bool,
     pub ssbo_index: usize,
     pub model_index: usize,
-    pub command_data:
-        std::collections::HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+    pub command_data: CommandData<CommandType>,
 }
 
 impl InstancedModel<Graphics, Buffer, CommandBuffer, Image> {

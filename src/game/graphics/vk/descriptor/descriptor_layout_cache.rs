@@ -16,13 +16,11 @@ impl PartialEq for DescriptorLayoutInfo {
             // Compare each of the bindings is the same. Bindings are sorted so they will match.
             let iterator = self.bindings.iter().zip(other.bindings.iter());
             for (binding_self, binding_other) in iterator {
-                if binding_self.binding != binding_other.binding {
-                    return false;
-                } else if binding_self.descriptor_type != binding_other.descriptor_type {
-                    return false;
-                } else if binding_self.descriptor_count != binding_other.descriptor_count {
-                    return false;
-                } else if binding_self.stage_flags != binding_other.stage_flags {
+                if binding_self.binding != binding_other.binding
+                    || binding_self.descriptor_type != binding_other.descriptor_type
+                    || binding_self.descriptor_count != binding_other.descriptor_count
+                    || binding_self.stage_flags != binding_other.stage_flags
+                {
                     return false;
                 }
             }
