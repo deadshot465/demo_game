@@ -20,6 +20,31 @@ os.chdir('./shaders')
 for x, y in file_names.items():
     os.system('glslangValidator -V {} -o {}'.format(x, y))
 
+# Create the folder in case the folder doesn't exist
+if not os.path.exists('./target'):
+    os.makedirs('./target')
+if not os.path.exists('./target/debug'):
+    os.makedirs('./target/debug')
+if not os.path.exists('./target/debug/shaders'):
+    os.makedirs('./target/debug/shaders')
+if not os.path.exists('./target/debug/models'):
+    os.makedirs('./target/debug/models')
+if not os.path.exists('./target/debug/resource'):
+    os.makedirs('./target/debug/resource')
+if not os.path.exists('./target/debug/textures'):
+    os.makedirs('./target/debug/textures')
+
+if not os.path.exists('./target/release'):
+    os.makedirs('./target/release')
+if not os.path.exists('./target/release/shaders'):
+    os.makedirs('./target/release/shaders')
+if not os.path.exists('./target/release/models'):
+    os.makedirs('./target/release/models')
+if not os.path.exists('./target/release/resource'):
+    os.makedirs('./target/release/resource')
+if not os.path.exists('./target/release/textures'):
+    os.makedirs('./target/release/textures')
+
 # Copy shaders to debug folder
 os.chdir('../')
 for x, y in file_names.items():
