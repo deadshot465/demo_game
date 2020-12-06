@@ -560,10 +560,6 @@ impl Graphics {
 
     pub fn destroy_scene_resource(&mut self) {
         unsafe {
-            /*self.logical_device
-                .destroy_descriptor_pool(*self.descriptor_pool.lock(), None);
-            self.logical_device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);*/
             ManuallyDrop::drop(&mut self.uniform_buffers);
         }
     }
@@ -625,6 +621,7 @@ impl Graphics {
 
     pub fn initialize_scene_resource(
         &mut self,
+        scene_type: SceneType,
         recreate_uniform_buffer: bool,
     ) -> anyhow::Result<()> {
         if recreate_uniform_buffer {
@@ -649,12 +646,17 @@ impl Graphics {
             self.uniform_buffers =
                 ManuallyDrop::new(UniformBuffers::new(view_projection, directional_light));
         }
-        self.create_primary_ssbo()?;
+        self.create_primary_ssbo(scene_type)?;
         self.allocate_descriptors()?;
         Ok(())
     }
 
-    pub fn recreate_swapchain(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+    pub fn recreate_swapchain(
+        &mut self,
+        width: u32,
+        height: u32,
+        scene_type: SceneType,
+    ) -> anyhow::Result<()> {
         if self.is_initialized {
             unsafe {
                 self.wait_idle();
@@ -745,7 +747,7 @@ impl Graphics {
             *self.graphics_queue.lock(),
             offscreen_renderpass,
         )?);
-        self.initialize_scene_resource(true)?;
+        self.initialize_scene_resource(scene_type, true)?;
         self.initialize_pipelines()?;
         if let Some(ui) = self.ui_manager.as_ref() {
             let ui_manager = ui.upgrade().expect("Failed to upgrade UI handle.");
@@ -1625,7 +1627,7 @@ impl Graphics {
         }
     }
 
-    fn create_primary_ssbo(&mut self) -> anyhow::Result<()> {
+    fn create_primary_ssbo(&mut self, scene_type: SceneType) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
             .upgrade()
@@ -1641,16 +1643,18 @@ impl Graphics {
             reflectivities: [0.0; SSBO_DATA_COUNT],
             shine_dampers: [0.0; SSBO_DATA_COUNT],
         };
-        for (_, model_queue) in resource_lock.model_queue.iter() {
-            for model in model_queue.iter() {
-                let model_lock = model.lock();
-                let metadata = model_lock.get_model_metadata();
-                let ssbo_index = model_lock.get_ssbo_index();
-                model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
-                model_metadata.object_colors[ssbo_index] = metadata.object_color;
-                model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
-                model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
-            }
+        let model_queue = resource_lock
+            .model_queue
+            .get(&scene_type)
+            .expect("Failed to get model queue for the current scene.");
+        for model in model_queue.iter() {
+            let model_lock = model.lock();
+            let metadata = model_lock.get_model_metadata();
+            let ssbo_index = model_lock.get_ssbo_index();
+            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
+            model_metadata.object_colors[ssbo_index] = metadata.object_color;
+            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
         }
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);

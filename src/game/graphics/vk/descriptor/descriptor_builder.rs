@@ -6,6 +6,8 @@ use ash::vk::{
     WriteDescriptorSet,
 };
 
+/// 簡単に描述子セットを設定できるための描述子ビルダー。<br />
+/// An easy-to-use descriptor builder used to setup the descriptor set.
 pub struct DescriptorBuilder<'a> {
     layout_cache: &'a mut DescriptorLayoutCache,
     allocator: &'a mut DescriptorAllocator,
@@ -14,6 +16,10 @@ pub struct DescriptorBuilder<'a> {
 }
 
 impl<'a> DescriptorBuilder<'a> {
+    /// ビルダーパターンより描述子セットを作成する。<br />
+    /// これはビルダーのエントリーポイントです。<br />
+    /// Create/write a descriptor set based on builder pattern.<br />
+    /// This is the entry point of the builder.
     pub fn builder(
         layout_cache: &'a mut DescriptorLayoutCache,
         allocator: &'a mut DescriptorAllocator,
@@ -26,6 +32,10 @@ impl<'a> DescriptorBuilder<'a> {
         }
     }
 
+    /// バッファをバインドする。<br />
+    /// この関数は描述子セットにバッファに追加する。<br />
+    /// Bind to a buffer.<br />
+    /// This function will add a buffer to the descriptor set.
     pub fn bind_buffer(
         mut self,
         binding: u32,
@@ -52,6 +62,10 @@ impl<'a> DescriptorBuilder<'a> {
         self
     }
 
+    /// イメージをバインドする。<br />
+    /// この関数は描述子セットにイメージに追加する。<br />
+    /// Bind to an image.<br />
+    /// This function will add an image to the descriptor set.
     pub fn bind_image(
         mut self,
         binding: u32,
@@ -78,6 +92,8 @@ impl<'a> DescriptorBuilder<'a> {
         self
     }
 
+    /// ビルダーを終えて配置された描述子セットとそのセットのレイアウトを返す。<br />
+    /// Ends the builder and returns allocated descriptor set and its descriptor set layout.
     pub fn build(mut self) -> Option<(DescriptorSet, DescriptorSetLayout)> {
         // Build layout first.
         let layout_info =

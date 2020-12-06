@@ -112,7 +112,7 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let graphics_lock = graphics.read();
-            let _ = graphics_lock.render(&self.render_components);
+            graphics_lock.render(&self.render_components)?;
         }
         Ok(())
     }

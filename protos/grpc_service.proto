@@ -25,12 +25,13 @@ service GrpcService {
   rpc RegisterPlayer(GameState.RegisterPlayerRequest) returns (stream GameState.RoomState);
 
   // Start a game in a room.
-  rpc StartGame(GameState.StartGameRequest) returns (Empty);
+  rpc StartGame(GameState.StartGameRequest) returns (GameState.RoomState);
   
   // Get terrain of a game room.
   rpc GetTerrain(GameState.GetTerrainRequest) returns (GameState.GetTerrainReply);
 
   // Progress the game.
+  // Unused.
   rpc ProgressGame(stream GameState.RoomState) returns (stream GameState.RoomState);
 }
 
@@ -93,6 +94,12 @@ message GameState {
     string email = 10;
     GameState.PlayerState state = 11;
   }
+  
+  message WorldMatrix {
+    repeated float position = 1 [packed=true];
+    repeated float scale = 2 [packed=true];
+    repeated float rotation = 3 [packed=true];
+  }
 
   message EntityState {
     int32 current_hp = 1;
@@ -100,7 +107,7 @@ message GameState {
     int32 current_sp = 3;
     int32 max_sp = 4;
     bool is_alive = 5;
-    repeated float world_matrix = 6 [packed=true];
+    GameState.WorldMatrix world_matrix = 6;
   }
 
   message PlayerState {

@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Weak;
 
+/// 描述子レイアウトに関する情報。<br />
+/// この構造体は`HashMap`のキーとして使用されているので`PartialEq, Eq, Hash`を実装する。<br />
+/// Information about a descriptor set layout.<br />
+/// This struct is used as keys in a HashMap, so it implements `PartialEq, Eq` and `Hash`.
 struct DescriptorLayoutInfo {
     pub bindings: Vec<DescriptorSetLayoutBinding>,
 }
@@ -43,12 +47,20 @@ impl Hash for DescriptorLayoutInfo {
     }
 }
 
+/// 描述子レイアウトのキャッシュ。<br />
+/// レイアウトは既存であればそのままキャッシュを使う。<br />
+/// 既存ではないなら新しいレイアウトを作る。<br />
+/// Caches for descriptor layout.<br />
+/// If there are existing descriptor layouts, use caches.<br />
+/// If not, create new layouts.
 pub struct DescriptorLayoutCache {
     logical_device: Weak<ash::Device>,
     layout_cache: HashMap<DescriptorLayoutInfo, DescriptorSetLayout>,
 }
 
 impl DescriptorLayoutCache {
+    /// コンストラクター。<br />
+    /// Constructor.
     pub fn new(device: Weak<ash::Device>) -> Self {
         DescriptorLayoutCache {
             logical_device: device,
@@ -56,6 +68,8 @@ impl DescriptorLayoutCache {
         }
     }
 
+    /// 描述子レイアウトを作成する。<br />
+    /// Create a descriptor layout.
     pub fn create_descriptor_layout(
         &mut self,
         info: &DescriptorSetLayoutCreateInfo,

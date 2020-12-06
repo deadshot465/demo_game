@@ -20,6 +20,7 @@ use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
 use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
+use crate::protos::grpc_service::game_state::Player;
 use std::collections::HashMap;
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
@@ -218,17 +219,58 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
+        let network_system = self
+            .network_system
+            .upgrade()
+            .expect("Failed to upgrade network system handle.");
+        let mut room_state = None;
+        loop {
+            let ns_lock = network_system.read().await;
+            if let Some(recv) = ns_lock.progress_recv.as_ref() {
+                if let Ok(state) = recv.try_recv() {
+                    room_state = Some(state);
+                    break;
+                }
+            }
+        }
+
+        let room_state = room_state.expect("Failed to get room state from receiver.");
+        let players = room_state.players;
+        for (player_no, player) in players.iter().enumerate() {
+            if let Some(state) = player.state.as_ref() {
+                if let Some(entity_state) = state.state.as_ref() {
+                    if let Some(world_matrix) = entity_state.world_matrix.as_ref() {
+                        let position: Vec3A = Vec3A::new(
+                            world_matrix.position[0],
+                            world_matrix.position[1],
+                            world_matrix.position[2],
+                        );
+                        let scale: Vec3A = Vec3A::new(
+                            world_matrix.scale[0],
+                            world_matrix.scale[1],
+                            world_matrix.scale[2],
+                        );
+                        let rotation: Vec3A = Vec3A::new(
+                            world_matrix.rotation[0],
+                            world_matrix.rotation[1],
+                            world_matrix.rotation[2],
+                        );
+                        let entity = self.add_entity(&format!("Player {}", player_no + 1));
+                        self.add_model(
+                            "./models/tank/tank.gltf",
+                            position,
+                            scale,
+                            rotation,
+                            Vec4::one(),
+                            entity,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        //let mr_incredible = self.add_entity("Mr.Incredible");
         /*self.add_model(
-            "./models/tank/tank.gltf",
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(90.0, 0.0, 0.0),
-            Vec4::new(0.0, 0.0, 1.0, 1.0),
-        ).await?;*/
-        /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
-        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
-        let mr_incredible = self.add_entity("Mr.Incredible");
-        self.add_model(
             "./models/mr.incredible/Mr.Incredible.glb",
             Vec3A::new(-5.0, 0.0, 5.0),
             Vec3A::new(1.0, 1.0, 1.0),
@@ -251,7 +293,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Vec3A::new(2.0, 2.0, 2.0),
             Vec3A::new(0.0, 180.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
+        )?;*/
         //let water_pos = std::env::var("WATER_POS")?.parse::<f32>()?;
         //let water_height = std::env::var("WATER_HEIGHT")?.parse::<f32>()?;
         //let water_scale = std::env::var("WATER_SCALE")?.parse::<f32>()?;
@@ -282,7 +324,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade Weak of Graphics for rendering.");
         {
             let graphics_lock = graphics.read();
-            let _ = graphics_lock.render(&self.render_components);
+            graphics_lock.render(&self.render_components)?;
         }
         Ok(())
     }

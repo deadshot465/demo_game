@@ -57,6 +57,8 @@ pub struct NetworkSystem {
     /// The current logged in player. None if not yet logged in.
     pub logged_user: Option<Player>,
 
+    pub progress_recv: Option<crossbeam::channel::Receiver<RoomState>>,
+
     /// もらったトークンや検証データを保存するためのフィールド。<br />
     /// A field to store acquired JWT token and authentication data.
     authentication: Authentication,
@@ -108,6 +110,7 @@ impl NetworkSystem {
                 players: vec![],
                 message: String::new(),
             })),
+            progress_recv: None,
         })
     }
 
@@ -166,6 +169,48 @@ impl NetworkSystem {
         } else {
             None
         }
+    }
+
+    /// ゲームを推進する。<br />
+    /// Progress the game.
+    pub async fn progress_game(&mut self) -> anyhow::Result<()> {
+        let room_state = self.room_state.clone();
+        let request_stream = async_stream::stream! {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(35));
+            let room_state = room_state;
+            while let time = interval.tick().await {
+                let room_state = room_state.lock().await.clone();
+                yield room_state;
+            }
+        };
+
+        let response = self
+            .grpc_client
+            .progress_game(tonic::Request::new(request_stream))
+            .await?;
+        let mut inbound = response.into_inner();
+        let (send, recv) = crossbeam::channel::bounded(1000);
+        let room_state = self.room_state.clone();
+        tokio::spawn(async move {
+            let room_state = room_state;
+            let send = send;
+            while let Some(state) = inbound
+                .message()
+                .await
+                .expect("Failed to receive updated room state from server.")
+            {
+                let mut state_lock = room_state.lock().await;
+                *state_lock = state;
+                match send.send(state_lock.clone()) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("{}", e.to_string());
+                    }
+                }
+            }
+        });
+        self.progress_recv = Some(recv);
+        Ok(())
     }
 
     /// ユーザーが入力したデータに基づいてサーバーとデータベースに登録する。<br />
@@ -262,7 +307,12 @@ impl NetworkSystem {
             room_state: Some(self.room_state.lock().await.clone()),
             terrain_vertices: serialized_data,
         });
-        self.grpc_client.start_game(request).await?;
+        let new_room_state = self.grpc_client.start_game(request).await?;
+        let new_room_state = new_room_state.into_inner();
+        {
+            let mut room_state_lock = self.room_state.lock().await;
+            *room_state_lock = new_room_state;
+        }
         Ok(())
     }
 

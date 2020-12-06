@@ -45,11 +45,11 @@ where
     pub graphics: Arc<RwLock<ManuallyDrop<GraphicsType>>>,
     pub scene_manager: SceneManager,
     pub ui_system: UISystemHandle<GraphicsType, BufferType, CommandType, TextureType>,
+    pub current_scene: SceneType,
     resource_manager: ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType>,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
     network_system: Arc<tokio::sync::RwLock<NetworkSystem>>,
     scenes: HashMap<SceneType, usize>,
-    current_scene: SceneType,
     room_state_receiver: Option<crossbeam::channel::Receiver<bool>>,
 }
 
@@ -166,10 +166,10 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             let mut graphics_lock = self.graphics.write();
             let is_initialized = graphics_lock.is_initialized();
             if !is_initialized {
-                graphics_lock.initialize_scene_resource(false)?;
+                graphics_lock.initialize_scene_resource(self.current_scene, false)?;
                 graphics_lock.initialize_pipelines()?;
             } else {
-                graphics_lock.recreate_swapchain(width, height)?;
+                graphics_lock.recreate_swapchain(width, height, self.current_scene)?;
             }
         }
 
@@ -233,17 +233,16 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
                 let entity = self.scene_manager.add_entity("GameTerrain");
                 if is_owner {
                     let primitive = self.scene_manager.generate_terrain(0, 0, None, entity)?;
-                    println!("Vertices count: {}", primitive.vertices.len());
                     ns.start_game(primitive).await?;
                 } else {
-                    let primitive = self.scene_manager.generate_terrain(
+                    self.scene_manager.generate_terrain(
                         0,
                         0,
                         Some(ns.get_terrain().await?),
                         entity,
                     )?;
-                    println!("Vertices count: {}", primitive.vertices.len());
                 }
+                ns.progress_game().await?;
             }
             self.load_content().await?;
         }

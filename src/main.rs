@@ -144,9 +144,10 @@ fn main() -> anyhow::Result<()> {
                             game.input_scroll(delta);
                         }
                         WindowEvent::Resized(winit::dpi::PhysicalSize { width, height }) => {
+                            let current_scene = game.current_scene;
                             game.graphics
                                 .write()
-                                .recreate_swapchain(width, height)
+                                .recreate_swapchain(width, height, current_scene)
                                 .expect("Failed to recreate swapchain.");
                             if width > 0 && height > 0 {
                                 game.scene_manager

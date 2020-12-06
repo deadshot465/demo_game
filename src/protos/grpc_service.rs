@@ -89,6 +89,15 @@ pub mod game_state {
         pub state: ::std::option::Option<PlayerState>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct WorldMatrix {
+        #[prost(float, repeated, tag = "1")]
+        pub position: ::std::vec::Vec<f32>,
+        #[prost(float, repeated, tag = "2")]
+        pub scale: ::std::vec::Vec<f32>,
+        #[prost(float, repeated, tag = "3")]
+        pub rotation: ::std::vec::Vec<f32>,
+    }
+    #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct EntityState {
         #[prost(int32, tag = "1")]
         pub current_hp: i32,
@@ -100,8 +109,8 @@ pub mod game_state {
         pub max_sp: i32,
         #[prost(bool, tag = "5")]
         pub is_alive: bool,
-        #[prost(float, repeated, tag = "6")]
-        pub world_matrix: ::std::vec::Vec<f32>,
+        #[prost(message, optional, tag = "6")]
+        pub world_matrix: ::std::option::Option<WorldMatrix>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct PlayerState {
@@ -301,7 +310,7 @@ pub mod grpc_service_client {
         pub async fn start_game(
             &mut self,
             request: impl tonic::IntoRequest<super::game_state::StartGameRequest>,
-        ) -> Result<tonic::Response<super::Empty>, tonic::Status> {
+        ) -> Result<tonic::Response<super::game_state::RoomState>, tonic::Status> {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Unknown,
@@ -328,6 +337,7 @@ pub mod grpc_service_client {
             self.inner.unary(request.into_request(), path, codec).await
         }
         #[doc = " Progress the game."]
+        #[doc = " Unused."]
         pub async fn progress_game(
             &mut self,
             request: impl tonic::IntoStreamingRequest<Message = super::game_state::RoomState>,
@@ -414,7 +424,7 @@ pub mod grpc_service_server {
         async fn start_game(
             &self,
             request: tonic::Request<super::game_state::StartGameRequest>,
-        ) -> Result<tonic::Response<super::Empty>, tonic::Status>;
+        ) -> Result<tonic::Response<super::game_state::RoomState>, tonic::Status>;
         #[doc = " Get terrain of a game room."]
         async fn get_terrain(
             &self,
@@ -426,6 +436,7 @@ pub mod grpc_service_server {
             + Sync
             + 'static;
         #[doc = " Progress the game."]
+        #[doc = " Unused."]
         async fn progress_game(
             &self,
             request: tonic::Request<tonic::Streaming<super::game_state::RoomState>>,
@@ -658,7 +669,7 @@ pub mod grpc_service_server {
                         tonic::server::UnaryService<super::game_state::StartGameRequest>
                         for StartGameSvc<T>
                     {
-                        type Response = super::Empty;
+                        type Response = super::game_state::RoomState;
                         type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,

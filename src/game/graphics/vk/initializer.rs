@@ -108,9 +108,9 @@ impl Initializer {
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
         let mut extensions = vec![Swapchain::name()];
-        if debug {
+        /*if debug {
             extensions.push(ash::vk::NvDeviceDiagnosticCheckpointsFn::name());
-        }
+        }*/
         let extensions = extensions.iter().map(|e| e.as_ptr()).collect::<Vec<_>>();
         let features = PhysicalDeviceFeatures::builder()
             .tessellation_shader(physical_device.feature_support.tessellation_shader)
@@ -640,7 +640,7 @@ impl Initializer {
                 std::ffi::CString::new("VK_KHR_get_physical_device_properties2")
                     .expect("Failed to construct extension name.");
             let mut required_debug_extensions = vec![DebugUtils::name().to_owned()];
-            required_debug_extensions.push(nv_checkpoint_extension);
+            //required_debug_extensions.push(nv_checkpoint_extension);
             for extension in instance_extensions.iter() {
                 let extension_name = extension.extension_name.as_ptr();
                 unsafe {
@@ -665,6 +665,9 @@ impl Initializer {
     ) -> Bool32 {
         let message = CStr::from_ptr((*p_callback_data).p_message);
         if let Ok(msg) = message.to_str() {
+            if msg.starts_with("Device Extension") {
+                return FALSE;
+            }
             match severity {
                 DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::info!("{}", msg),
                 DebugUtilsMessageSeverityFlagsEXT::WARNING => log::warn!("{}", msg),

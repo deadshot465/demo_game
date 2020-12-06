@@ -7,19 +7,39 @@ use ash::vk::{
 };
 use std::sync::Weak;
 
+/// 各種類のプールとそのプールのサイズ。<br />
+/// Pool for each category and their respective sizes.
 struct PoolSizes {
     pub sizes: Vec<(DescriptorType, f32)>,
 }
 
+/// 描述子配置器。この配置器はプールを統一して管理する。<br />
+/// Descriptor allocator. This allocator will centralize and manage all descriptors.
 pub struct DescriptorAllocator {
+    /// デバイスのハンドル。<br />
+    /// Handle to the logical device.
     pub logical_device: Weak<ash::Device>,
+
+    /// 各種類のプールとそのプールのサイズ。<br />
+    /// Pool for each category and their respective sizes.
     descriptor_sizes: PoolSizes,
+
+    /// 既に使用されたプール。<br />
+    /// Pools that have been used/are being used.
     used_pools: Vec<DescriptorPool>,
+
+    /// 使用可能のプール。<br />
+    /// Pools that are available.
     free_pools: Vec<DescriptorPool>,
+
+    /// 現在のプール。<br />
+    /// The current pool.
     current_pool: DescriptorPool,
 }
 
 impl DescriptorAllocator {
+    /// 配置器を初期化し、予め大きいな描述子プールサイズを設定する。<br />
+    /// Initialize the descriptor allocator, and pre-allocate large descriptor pool sizes.
     pub fn new(device: Weak<ash::Device>) -> Self {
         DescriptorAllocator {
             descriptor_sizes: PoolSizes {
@@ -44,6 +64,8 @@ impl DescriptorAllocator {
         }
     }
 
+    /// レイアウトに従って描述子セットを配置する。<br />
+    /// Allocate descriptor set based on the provided descriptor set layout.
     pub fn allocate(&mut self, layout: DescriptorSetLayout) -> Option<DescriptorSet> {
         let device = self
             .logical_device
@@ -90,6 +112,8 @@ impl DescriptorAllocator {
         None
     }
 
+    /// 使用されたプールを全部リセットする。<br />
+    /// Reset all used descriptor pools.
     pub fn reset_pool(&mut self) {
         let device = self
             .logical_device
@@ -108,6 +132,10 @@ impl DescriptorAllocator {
         self.current_pool = DescriptorPool::null();
     }
 
+    /// 使用可能のプールからプールを取得する。<br />
+    /// 使用可能のプールがなければ新しいプールを配置する。<br />
+    /// Grab a pool from available pools.<br />
+    /// If there is none, allocate a new pool.
     fn grab_pool(&mut self, device: &ash::Device) -> DescriptorPool {
         // There are reusable pools available.
         if !self.free_pools.is_empty() {
@@ -126,6 +154,10 @@ impl DescriptorAllocator {
         }
     }
 
+    /// プールを作成する。<br />
+    /// この関数は`grab_pool`関数より呼び出される。<br />
+    /// Create a pool.<br />
+    /// This function is called by `grab_pool` function.
     fn create_pool(
         device: &ash::Device,
         pool_sizes: &PoolSizes,
