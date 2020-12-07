@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-//const SERVER_ENDPOINT: &str = "http://64.227.99.31:26361";
-const SERVER_ENDPOINT: &str = "http://localhost:26361";
+const SERVER_ENDPOINT: &str = "http://64.227.99.31:26361";
+//const SERVER_ENDPOINT: &str = "http://localhost:26361";
 
 /// ユーザーが入力した内容を検証する正規表現。<br />
 /// Regular expressions used to validate user inputs.
@@ -196,7 +196,7 @@ impl NetworkSystem {
             .progress_game(tonic::Request::new(request_stream))
             .await?;
         let mut inbound = response.into_inner();
-        let (send, recv) = crossbeam::channel::bounded(1000);
+        let (send, recv) = crossbeam::channel::unbounded();
         let room_state = self.room_state.clone();
         tokio::spawn(async move {
             let room_state = room_state;
