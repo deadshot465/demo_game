@@ -66,6 +66,12 @@ impl PhysicalDevice {
     pub fn new(instance: &Instance, surface_loader: &Surface, surface: SurfaceKHR) -> Self {
         let (device, queue_indices, properties) =
             PhysicalDevice::get_physical_device(instance, surface_loader, surface);
+        log::info!(
+            "Physical device: {:?}, Queue indices: {:?}, Properties: {:?}",
+            device,
+            &queue_indices,
+            properties
+        );
         unsafe {
             let features = instance.get_physical_device_features(device);
 
