@@ -51,8 +51,7 @@ impl Initializer {
 
         let mut instance_info = InstanceCreateInfo::builder()
             .application_info(&app_info)
-            .enabled_extension_names(extension_ptrs.as_slice())
-            .enabled_layer_names(layers.as_slice());
+            .enabled_extension_names(extension_ptrs.as_slice());
 
         if debug {
             instance_info = instance_info.enabled_layer_names(layers.as_slice());
@@ -108,10 +107,10 @@ impl Initializer {
             .iter()
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
-        let mut extensions = vec![Swapchain::name()];
-        if debug {
+        let extensions = vec![Swapchain::name()];
+        /*if debug {
             extensions.push(ash::vk::NvDeviceDiagnosticCheckpointsFn::name());
-        }
+        }*/
         let extensions = extensions.iter().map(|e| e.as_ptr()).collect::<Vec<_>>();
         let features = PhysicalDeviceFeatures::builder()
             .tessellation_shader(physical_device.feature_support.tessellation_shader)
@@ -494,7 +493,6 @@ impl Initializer {
         let width = image.width();
         let height = image.height();
         let color_type = image.color();
-        let graphics_clone = graphics.clone();
         use crossbeam::channel::*;
         use image::ColorType;
         let (texture_send, texture_recv) = bounded(5);
@@ -509,7 +507,7 @@ impl Initializer {
                     ColorType::Bgr8 => ImageFormat::ColorType(ColorType::Bgra8),
                     _ => ImageFormat::ColorType(color_type),
                 },
-                graphics_clone,
+                graphics,
                 command_pool,
                 sampler_address_mode,
             );
@@ -638,11 +636,11 @@ impl Initializer {
             .collect::<Vec<_>>();
         if debug {
             let instance_extensions = entry.enumerate_instance_extension_properties()?;
-            let nv_checkpoint_extension =
+            let _nv_checkpoint_extension =
                 std::ffi::CString::new("VK_KHR_get_physical_device_properties2")
                     .expect("Failed to construct extension name.");
-            let mut required_debug_extensions = vec![DebugUtils::name().to_owned()];
-            required_debug_extensions.push(nv_checkpoint_extension);
+            let required_debug_extensions = vec![DebugUtils::name().to_owned()];
+            //required_debug_extensions.push(nv_checkpoint_extension);
             for extension in instance_extensions.iter() {
                 let extension_name = extension.extension_name.as_ptr();
                 unsafe {
@@ -650,7 +648,7 @@ impl Initializer {
                     for required_extension in required_debug_extensions.iter() {
                         if required_extension.to_str()? == extension_name.to_str()? {
                             extensions.push(extension_name.clone());
-                            log::warn!("Instance extension enabled: {}", extension_name.to_str()?);
+                            log::info!("Instance extension enabled: {}", extension_name.to_str()?);
                         }
                     }
                 }
@@ -667,6 +665,9 @@ impl Initializer {
     ) -> Bool32 {
         let message = CStr::from_ptr((*p_callback_data).p_message);
         if let Ok(msg) = message.to_str() {
+            if msg.starts_with("Device Extension") {
+                return FALSE;
+            }
             match severity {
                 DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::info!("{}", msg),
                 DebugUtilsMessageSeverityFlagsEXT::WARNING => log::warn!("{}", msg),

@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+option csharp_namespace = "TetsukiZone.Protos";
+
+package grpc_service;
+
+service GrpcService {
+  // Register player to the database.
+  rpc Register (RegisterRequest) returns (RegisterReply);
+
+  // Login player to the chatroom and the server.
+  // Ideally once logged in, the gRPC connection will be kept alive until the client shuts down.
+  rpc Login (LoginRequest) returns (LoginReply);
+
+  // Get last 50 messages from the database.
+  rpc GetChatHistory(Empty) returns (IncomingMessages);
+
+  // Send a message to the server and broadcast the message to all connected clients.
+  rpc Chat(stream MessageRecord) returns (stream IncomingMessage);
+
+  // Get all available playrooms.
+  rpc GetRooms(Empty) returns (GameState.Rooms);
+
+  // Register player to the room.
+  rpc RegisterPlayer(GameState.RegisterPlayerRequest) returns (stream GameState.RoomState);
+
+  // Start a game in a room.
+  rpc StartGame(GameState.StartGameRequest) returns (GameState.RoomState);
+  
+  // Get terrain of a game room.
+  rpc GetTerrain(GameState.GetTerrainRequest) returns (GameState.GetTerrainReply);
+
+  // Progress the game.
+  // Unused.
+  rpc ProgressGame(stream GameState.ProgressGameRequest) returns (stream GameState.RoomState);
+}
+
+message RegisterRequest {
+  string user_name = 1;
+  string nickname = 2;
+  string email = 3;
+  string password = 4;
+  string jwt_token = 5;
+}
+
+message RegisterReply {
+  bool status = 1;
+  string message = 2;
+  GameState.Player player = 3;
+}
+
+message LoginRequest {
+  string account = 1;
+  string password = 2;
+  string jwt_token = 3;
+}
+
+message LoginReply {
+  bool status = 1;
+  string message = 2;
+  GameState.Player player = 3;
+}
+
+message MessageRecord {
+  string player_id = 1;
+  string message = 2;
+}
+
+message IncomingMessages {
+  repeated IncomingMessage messages = 1;
+}
+
+message IncomingMessage {
+  string author = 1;
+  string message = 2;
+}
+
+message Empty {
+
+}
+
+message GameState {
+  message Player {
+    string player_id = 1;
+    string user_name = 2;
+    string nickname = 3;
+    // Base64-encoded password
+    string password = 4;
+    string join_date = 5;
+    string last_login = 6;
+    int32 win_count = 7;
+    int32 lose_count = 8;
+    int32 credits = 9;
+    string email = 10;
+    GameState.PlayerState state = 11;
+  }
+  
+  message WorldMatrix {
+    repeated float position = 1 [packed=true];
+    repeated float scale = 2 [packed=true];
+    repeated float rotation = 3 [packed=true];
+  }
+
+  message EntityState {
+    int32 current_hp = 1;
+    int32 max_hp = 2;
+    int32 current_sp = 3;
+    int32 max_sp = 4;
+    bool is_alive = 5;
+    GameState.WorldMatrix world_matrix = 6;
+  }
+
+  message PlayerState {
+    bool is_in_game = 1;
+    string room_id = 2;
+    bool is_owner = 3;
+    GameState.EntityState state = 4;
+  }
+
+  message Rooms {
+    repeated GameState.RoomState rooms = 1;
+  }
+
+  message RegisterPlayerRequest {
+    string room_id = 1;
+    string room_name = 2;
+    GameState.Player player = 3;
+  }
+  
+  message RoomState {
+    string room_id = 1;
+    string room_name = 2;
+    int32 current_players = 3;
+    int32 max_players = 4;
+    bool started = 5;
+    repeated GameState.Player players = 6;
+    string message = 7;
+  }
+
+  message StartGameRequest {
+    GameState.RoomState room_state = 1;
+    bytes terrain_vertices = 2;
+  }
+  
+  message GetTerrainRequest {
+    string room_id = 1;
+  }
+  
+  message GetTerrainReply {
+    bytes terrain_vertices = 1;
+  }
+  
+  message ProgressGameRequest {
+    GameState.Player player = 1;
+    GameState.RoomState room_state = 2;
+  }
+}

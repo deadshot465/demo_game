@@ -1,19 +1,21 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Primitive, PushConstant, Vertex};
+use crate::game::shared::structs::{Mesh, PositionInfo, Primitive, PushConstant, Vertex};
 use crate::game::shared::traits::Renderable;
 use crate::game::shared::util::get_random_string;
 use crate::game::structs::{Model, ModelMetaData};
 use crate::game::traits::{Disposable, GraphicsBase};
+use crate::game::CommandData;
 use ash::vk::{
-    CommandBuffer, CommandBufferInheritanceInfo, CommandPool, DescriptorSet, Rect2D,
-    SamplerAddressMode, Viewport,
+    CommandBuffer, CommandBufferInheritanceInfo, DescriptorSet, Rect2D, SamplerAddressMode,
+    Viewport,
 };
 use ash::Device;
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
+use slotmap::DefaultKey;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
@@ -49,12 +51,11 @@ where
         ssbo_index: usize,
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
-        position: Vec3A,
-        scale: Vec3A,
-        rotation: Vec3A,
+        command_data: CommandData<CommandType>,
+        position_info: PositionInfo,
         color: Vec4,
         shader_type: Option<ShaderType>,
+        entity: DefaultKey,
     ) -> Self {
         let mesh = match primitive_type {
             PrimitiveType::Rect => {
@@ -64,9 +65,7 @@ where
         GeometricPrimitive {
             is_disposed: false,
             model: Some(Model {
-                position,
-                scale,
-                rotation,
+                position_info,
                 model_metadata: ModelMetaData {
                     world_matrix: Mat4::identity(),
                     object_color: color,
@@ -78,13 +77,14 @@ where
                 model_name: get_random_string(3),
                 graphics,
                 ssbo_index,
+                entity,
             }),
         }
     }
 
     fn create_rect(
         texture_data: Option<(Arc<ShardedLock<TextureType>>, usize)>,
-        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+        command_data: CommandData<CommandType>,
         shader_type: Option<ShaderType>,
         model_index: usize,
     ) -> Mesh<BufferType, CommandType, TextureType> {
@@ -157,6 +157,7 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
         shader_type: Option<ShaderType>,
+        entity: DefaultKey,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!(
             "Generating geometric primitive...Model index: {}",
@@ -200,6 +201,9 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
                     .expect("Failed to create texture for geometric primitive."),
                 ),
             };
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
             let mut generated_mesh = Self::create_primitive(
                 primitive_type,
                 model_index,
@@ -207,11 +211,14 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
                 texture_data,
                 graphics,
                 command_data,
-                position,
-                scale,
-                rotation,
+                PositionInfo {
+                    position,
+                    scale,
+                    rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+                },
                 color,
                 shader_type,
+                entity,
             );
             generated_mesh
                 .model
@@ -328,16 +335,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.as_ref().unwrap().model_metadata
     }
 
-    fn get_position(&self) -> Vec3A {
-        self.model.as_ref().unwrap().position
-    }
-
-    fn get_scale(&self) -> Vec3A {
-        self.model.as_ref().unwrap().scale
-    }
-
-    fn get_rotation(&self) -> Vec3A {
-        self.model.as_ref().unwrap().rotation
+    fn get_position_info(&self) -> PositionInfo {
+        self.model.as_ref().unwrap().position_info
     }
 
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
@@ -347,16 +346,8 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
             .get_command_buffers(frame_index)
     }
 
-    fn set_position(&mut self, position: Vec3A) {
-        self.model.as_mut().unwrap().set_position(position);
-    }
-
-    fn set_scale(&mut self, scale: Vec3A) {
-        self.model.as_mut().unwrap().set_scale(scale);
-    }
-
-    fn set_rotation(&mut self, rotation: Vec3A) {
-        self.model.as_mut().unwrap().set_rotation(rotation);
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.model.as_mut().unwrap().position_info = position_info;
     }
 
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
@@ -381,11 +372,6 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         Box::new(self.clone())
     }
 }
-
-/*impl CloneableRenderable<Graphics, Buffer, CommandBuffer, Image>
-    for GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image>
-{
-}*/
 
 impl<GraphicsType, BufferType, CommandType, TextureType> Drop
     for GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>

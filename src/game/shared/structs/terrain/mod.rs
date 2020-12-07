@@ -1,18 +1,22 @@
 use crate::game::graphics::vk::{Buffer, Graphics, Image, Pipeline, ThreadPool};
 use crate::game::shared::enums::ShaderType;
-use crate::game::shared::structs::{Mesh, Model, ModelMetaData, Primitive, PushConstant, Vertex};
+use crate::game::shared::structs::{
+    Mesh, Model, ModelMetaData, PositionInfo, Primitive, PushConstant, Vertex,
+};
 use crate::game::shared::traits::{Disposable, GraphicsBase, Renderable};
 use crate::game::shared::util::get_random_string;
 use crate::game::shared::util::height_generator::HeightGenerator;
+use crate::game::CommandData;
 use ash::vk::{
-    CommandBuffer, CommandBufferInheritanceInfo, CommandPool, DescriptorSet, Rect2D,
-    SamplerAddressMode, Viewport,
+    CommandBuffer, CommandBufferInheritanceInfo, DescriptorSet, Rect2D, SamplerAddressMode,
+    Viewport,
 };
 use ash::Device;
 use crossbeam::channel::*;
 use crossbeam::sync::ShardedLock;
 use glam::{Mat4, Vec2, Vec3A, Vec4};
 use parking_lot::{Mutex, RwLock};
+use slotmap::DefaultKey;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
@@ -43,24 +47,24 @@ where
     pub const VERTEX_COUNT: u32 = 128;
 
     fn create_terrain(
-        _grid_x: i32,
-        _grid_z: i32,
+        grid_x: i32,
+        grid_z: i32,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         model_index: usize,
         ssbo_index: usize,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+        command_data: CommandData<CommandType>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
         size_ratio_z: f32,
         vertex_count_ratio: f32,
+        primitive: Option<Primitive>,
+        entity: DefaultKey,
     ) -> Self {
-        let pos_x = std::env::var("POS_X").unwrap().parse::<f32>().unwrap();
-        let pos_z = std::env::var("POS_Z").unwrap().parse::<f32>().unwrap();
-        // let x = grid_x as f32 * Self::SIZE * size_ratio_x;
-        // let z = grid_z as f32 * Self::SIZE * size_ratio_z;
-        let x = pos_x * Self::SIZE * size_ratio_x;
-        let z = pos_z * Self::SIZE * size_ratio_z;
+        let x = grid_x as f32 * Self::SIZE * size_ratio_x;
+        let z = grid_z as f32 * Self::SIZE * size_ratio_z;
+        let x = x * Self::SIZE * size_ratio_x;
+        let z = z * Self::SIZE * size_ratio_z;
         let model = Self::generate_terrain(
             model_index,
             ssbo_index,
@@ -72,6 +76,8 @@ where
             size_ratio_x,
             size_ratio_z,
             vertex_count_ratio,
+            primitive,
+            entity,
         );
         Terrain {
             x,
@@ -87,67 +93,76 @@ where
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         position: Vec3A,
-        command_data: HashMap<usize, (Option<Arc<Mutex<CommandPool>>>, CommandType)>,
+        command_data: CommandData<CommandType>,
         height_generator: Arc<ShardedLock<HeightGenerator>>,
         size_ratio_x: f32,
         size_ratio_z: f32,
         vertex_count_ratio: f32,
+        primitive: Option<Primitive>,
+        entity: DefaultKey,
     ) -> Model<GraphicsType, BufferType, CommandType, TextureType> {
-        let vertex_count = (Self::VERTEX_COUNT as f32 * vertex_count_ratio) as u32;
-        let count = vertex_count * vertex_count;
-        let mut vertices: Vec<Vertex> = vec![];
-        vertices.reserve(count as usize);
-        let indices_count = 6 * (vertex_count - 1) * (vertex_count - 1);
-        let mut indices: Vec<u32> = vec![0; indices_count as usize];
-        let generator = height_generator
-            .read()
-            .expect("Failed to lock height generator.");
-        for i in 0..vertex_count {
-            for j in 0..vertex_count {
-                let vertex = Vertex {
-                    position: Vec3A::new(
-                        (j as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_x,
-                        generator.generate_height(j as f32, i as f32),
-                        (i as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_z,
-                    ),
-                    normal: Self::calculate_normal(j as f32, i as f32, &*generator),
-                    uv: Vec2::new(
-                        j as f32 / (vertex_count - 1) as f32,
-                        i as f32 / (vertex_count - 1) as f32,
-                    ),
-                };
-                vertices.push(vertex);
-            }
-        }
-        let mut pointer = 0;
-        for gz in 0..vertex_count - 1 {
-            for gx in 0..vertex_count - 1 {
-                let top_left = (gz * vertex_count) + gx;
-                let top_right = top_left + 1;
-                let bottom_left = ((gz + 1) * vertex_count) + gx;
-                let bottom_right = bottom_left + 1;
-
-                indices[pointer] = top_left;
-                pointer += 1;
-                indices[pointer] = bottom_left;
-                pointer += 1;
-                indices[pointer] = top_right;
-                pointer += 1;
-                indices[pointer] = top_right;
-                pointer += 1;
-                indices[pointer] = bottom_left;
-                pointer += 1;
-                indices[pointer] = bottom_right;
-                pointer += 1;
-            }
-        }
         let (texture, texture_index) = texture_data;
-        let primitive = Primitive {
-            vertices,
-            indices,
-            texture_index: Some(texture_index),
-            is_disposed: false,
+
+        let primitive = if let Some(p) = primitive {
+            p
+        } else {
+            let vertex_count = (Self::VERTEX_COUNT as f32 * vertex_count_ratio) as u32;
+            let count = vertex_count * vertex_count;
+            let mut vertices: Vec<Vertex> = vec![];
+            vertices.reserve(count as usize);
+            let indices_count = 6 * (vertex_count - 1) * (vertex_count - 1);
+            let mut indices: Vec<u32> = vec![0; indices_count as usize];
+            let generator = height_generator
+                .read()
+                .expect("Failed to lock height generator.");
+            for i in 0..vertex_count {
+                for j in 0..vertex_count {
+                    let vertex = Vertex {
+                        position: Vec3A::new(
+                            (j as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_x,
+                            generator.generate_height(j as f32, i as f32),
+                            (i as f32 / (vertex_count - 1) as f32) * Self::SIZE * size_ratio_z,
+                        ),
+                        normal: Self::calculate_normal(j as f32, i as f32, &*generator),
+                        uv: Vec2::new(
+                            j as f32 / (vertex_count - 1) as f32,
+                            i as f32 / (vertex_count - 1) as f32,
+                        ),
+                    };
+                    vertices.push(vertex);
+                }
+            }
+            let mut pointer = 0;
+            for gz in 0..vertex_count - 1 {
+                for gx in 0..vertex_count - 1 {
+                    let top_left = (gz * vertex_count) + gx;
+                    let top_right = top_left + 1;
+                    let bottom_left = ((gz + 1) * vertex_count) + gx;
+                    let bottom_right = bottom_left + 1;
+
+                    indices[pointer] = top_left;
+                    pointer += 1;
+                    indices[pointer] = bottom_left;
+                    pointer += 1;
+                    indices[pointer] = top_right;
+                    pointer += 1;
+                    indices[pointer] = top_right;
+                    pointer += 1;
+                    indices[pointer] = bottom_left;
+                    pointer += 1;
+                    indices[pointer] = bottom_right;
+                    pointer += 1;
+                }
+            }
+
+            Primitive {
+                vertices,
+                indices,
+                texture_index: Some(texture_index),
+                is_disposed: false,
+            }
         };
+
         let mesh = Mesh {
             primitives: vec![primitive],
             vertex_buffer: None,
@@ -158,10 +173,13 @@ where
             shader_type: ShaderType::Terrain,
             model_index,
         };
+
         Model {
-            position,
-            scale: Vec3A::one(),
-            rotation: Vec3A::zero(),
+            position_info: PositionInfo {
+                position,
+                scale: Vec3A::one(),
+                rotation: Vec3A::zero(),
+            },
             model_metadata: ModelMetaData {
                 world_matrix: Mat4::identity(),
                 object_color: Vec4::one(),
@@ -173,6 +191,7 @@ where
             model_name: get_random_string(7),
             graphics,
             ssbo_index,
+            entity,
         }
     }
 
@@ -197,6 +216,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         size_ratio_x: f32,
         size_ratio_z: f32,
         vertex_count_ratio: f32,
+        primitive: Option<Primitive>,
+        entity: DefaultKey,
     ) -> anyhow::Result<Receiver<Self>> {
         log::info!("Generating terrain...Model index: {}", model_index);
         let graphics_arc = graphics
@@ -245,6 +266,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
                 size_ratio_x,
                 size_ratio_z,
                 vertex_count_ratio,
+                primitive,
+                entity,
             );
             generated_terrain.model.model_metadata.world_matrix =
                 generated_terrain.get_world_matrix();
@@ -355,32 +378,16 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         self.model.model_metadata
     }
 
-    fn get_position(&self) -> Vec3A {
-        self.model.position
-    }
-
-    fn get_scale(&self) -> Vec3A {
-        self.model.scale
-    }
-
-    fn get_rotation(&self) -> Vec3A {
-        self.model.rotation
+    fn get_position_info(&self) -> PositionInfo {
+        self.model.position_info
     }
 
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
         self.model.get_command_buffers(frame_index)
     }
 
-    fn set_position(&mut self, position: Vec3A) {
-        self.model.set_position(position);
-    }
-
-    fn set_scale(&mut self, scale: Vec3A) {
-        self.model.set_scale(scale);
-    }
-
-    fn set_rotation(&mut self, rotation: Vec3A) {
-        self.model.set_rotation(rotation);
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.model.position_info = position_info;
     }
 
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {

@@ -58,7 +58,7 @@ impl Frustum {
             vectors[3][3] - vectors[3][2],
         );
         for plane in self.planes.iter_mut() {
-            let sum: f32 = plane.x() * plane.x() + plane.y() * plane.y() + plane.z() * plane.z();
+            let sum: f32 = plane.x * plane.x + plane.y * plane.y + plane.z * plane.z;
             let length = sum.sqrt();
             *plane /= length;
         }
@@ -66,10 +66,7 @@ impl Frustum {
 
     pub fn check_sphere(&self, position: Vec3, radius: f32) -> bool {
         for plane in self.planes.iter() {
-            if (plane.x() * position.x())
-                + (plane.y() * position.y())
-                + (plane.z() * position.z())
-                + plane.w()
+            if (plane.x * position.x) + (plane.y * position.y) + (plane.z * position.z) + plane.w
                 < -radius
             {
                 return false;

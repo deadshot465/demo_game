@@ -6,5 +6,4 @@
     unused_assignments
 )]
 pub mod game;
-pub use dotenv::dotenv;
-pub use std::env;
+pub mod protos;

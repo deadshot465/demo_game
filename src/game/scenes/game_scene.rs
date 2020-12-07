@@ -1,8 +1,10 @@
 use ash::vk::CommandBuffer;
-use crossbeam::channel::*;
+use async_trait::async_trait;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use parking_lot::RwLock;
+use slotmap::{DefaultKey, Key, SlotMap};
+use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
@@ -11,12 +13,16 @@ use crate::game::enums::ShaderType;
 use crate::game::graphics::vk::{Buffer, Graphics, Image};
 use crate::game::shared::enums::SceneType;
 use crate::game::shared::structs::{
-    GeometricPrimitive, InstanceData, InstancedModel, Model, PrimitiveType, SkinnedModel, Terrain,
+    Counts, GeometricPrimitive, InstanceData, InstancedModel, Model, PositionInfo, Primitive,
+    PrimitiveType, SkinnedModel, Terrain, WaitableTasks,
 };
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
-use crate::game::ResourceManager;
+use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
+use crate::protos::grpc_service::game_state::WorldMatrix;
+use std::collections::HashMap;
+use winit::event::{ElementState, VirtualKeyCode};
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -26,22 +32,18 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
-    resource_manager: Weak<
-        RwLock<ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>>,
-    >,
+    resource_manager: ResourceManagerWeak<GraphicsType, BufferType, CommandType, TextureType>,
+    network_system: Weak<tokio::sync::RwLock<NetworkSystem>>,
     scene_name: String,
-    model_count: Arc<AtomicUsize>,
-    ssbo_count: AtomicUsize,
+    counts: Counts,
     height_generator: Arc<ShardedLock<HeightGenerator>>,
-    model_tasks: Vec<Receiver<Model<GraphicsType, BufferType, CommandType, TextureType>>>,
-    skinned_model_tasks:
-        Vec<Receiver<SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
-    terrain_tasks: Vec<Receiver<Terrain<GraphicsType, BufferType, CommandType, TextureType>>>,
-    geometric_primitive_tasks:
-        Vec<Receiver<GeometricPrimitive<GraphicsType, BufferType, CommandType, TextureType>>>,
-    instanced_model_tasks:
-        Vec<Receiver<InstancedModel<GraphicsType, BufferType, CommandType, TextureType>>>,
     scene_type: SceneType,
+    entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
+    terrain_entity: DefaultKey,
+    player_entities: HashMap<String, DefaultKey>,
+    render_components: Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
+    waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
+    loaded: bool,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -53,57 +55,30 @@ where
     TextureType: 'static + Clone + Disposable,
 {
     pub fn new(
-        resource_manager: Weak<
-            RwLock<
-                ManuallyDrop<ResourceManager<GraphicsType, BufferType, CommandType, TextureType>>,
-            >,
-        >,
+        resource_manager: ResourceManagerWeak<GraphicsType, BufferType, CommandType, TextureType>,
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
+        entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
+        network_system: Weak<tokio::sync::RwLock<NetworkSystem>>,
     ) -> Self {
         GameScene {
             graphics,
             resource_manager,
             scene_name: String::from("GAME_SCENE"),
-            model_count: Arc::new(AtomicUsize::new(0)),
+            counts: Counts::new(),
             height_generator: Arc::new(ShardedLock::new(HeightGenerator::new())),
-            model_tasks: vec![],
-            skinned_model_tasks: vec![],
-            terrain_tasks: vec![],
-            geometric_primitive_tasks: vec![],
-            ssbo_count: AtomicUsize::new(0),
-            instanced_model_tasks: vec![],
-            scene_type: SceneType::Game,
+            waitable_tasks: WaitableTasks::new(),
+            scene_type: SceneType::GAME,
+            entities,
+            player_entities: HashMap::new(),
+            render_components: Vec::new(),
+            network_system,
+            loaded: false,
+            terrain_entity: DefaultKey::null(),
         }
     }
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    pub fn generate_terrain(&mut self, grid_x: i32, grid_z: i32) -> anyhow::Result<()> {
-        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
-        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
-        let mut height_generator = self
-            .height_generator
-            .write()
-            .expect("Failed to lock height generator.");
-        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
-        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
-        drop(height_generator);
-        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
-        let terrain = Terrain::new(
-            grid_x,
-            grid_z,
-            model_index,
-            ssbo_index,
-            self.graphics.clone(),
-            self.height_generator.clone(),
-            ratio,
-            ratio,
-            ratio,
-        )?;
-        self.terrain_tasks.push(terrain);
-        Ok(())
-    }
-
     pub fn add_instanced_model(
         &mut self,
         file_name: &'static str,
@@ -112,8 +87,9 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
         instance_count: usize,
+        entity: DefaultKey,
     ) -> anyhow::Result<()> {
-        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let mut instance_data = vec![];
         instance_data.resize(instance_count, InstanceData::default());
         let mut x_offset = 0.0;
@@ -135,176 +111,12 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
             scale,
             rotation,
             color,
-            self.model_count.clone(),
+            self.counts.model_count.clone(),
             ssbo_index,
             instance_data,
+            entity,
         )?;
-        self.instanced_model_tasks.push(task);
-        Ok(())
-    }
-}
-
-impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    fn initialize(&mut self) {}
-
-    fn get_scene_name(&self) -> &str {
-        self.scene_name.as_str()
-    }
-
-    fn set_scene_name(&mut self, scene_name: &str) {
-        self.scene_name = scene_name.to_string();
-    }
-
-    fn load_content(&mut self) -> anyhow::Result<()> {
-        /*self.add_skinned_model(
-            "./models/nathan/Nathan.glb",
-            Vec3A::new(-1.5, 0.0, -1.5),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
-        self.add_model(
-            "./models/ak/output.gltf",
-            Vec3A::new(2.5, 0.0, 2.5),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;*/
-        /*self.add_model(
-            "./models/tank/tank.gltf",
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(90.0, 0.0, 0.0),
-            Vec4::new(0.0, 0.0, 1.0, 1.0),
-        ).await?;*/
-        /*self.add_model("./models/tank/tank.gltf", Vec3A::new(1.5, 0.0, 1.5),
-        Vec3A::new(1.0, 1.0, 1.0), Vec3A::new(90.0, 90.0, 0.0), Vec4::new(0.0, 1.0, 0.0, 1.0));*/
-        self.add_model(
-            "./models/mr.incredible/Mr.Incredible.glb",
-            Vec3A::new(-5.0, 0.0, 5.0),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
-        self.add_model(
-            "./models/bison/output.gltf",
-            Vec3A::new(0.0, 0.0, 5.0),
-            Vec3A::new(400.0, 400.0, 400.0),
-            Vec3A::new(0.0, 90.0, 90.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
-        self.add_skinned_model(
-            "./models/cesiumMan/CesiumMan.glb",
-            Vec3A::new(5.0, 0.0, 5.0),
-            Vec3A::new(2.0, 2.0, 2.0),
-            Vec3A::new(0.0, 180.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-        )?;
-        //let water_pos = std::env::var("WATER_POS")?.parse::<f32>()?;
-        //let water_height = std::env::var("WATER_HEIGHT")?.parse::<f32>()?;
-        //let water_scale = std::env::var("WATER_SCALE")?.parse::<f32>()?;
-        /*self.add_geometric_primitive(
-            PrimitiveType::Rect,
-            None,
-            Vec3A::new(water_pos, water_height, water_pos),
-            Vec3A::new(water_scale, 1.0, water_scale),
-            Vec3A::zero(),
-            Vec4::new(0.0, 0.0, 1.0, 1.0),
-            Some(ShaderType::Water),
-        )?;*/
-        let instance_count = std::env::var("INSTANCE_COUNT")
-            .unwrap()
-            .parse::<usize>()
-            .unwrap();
-        if instance_count > 0 {
-            self.add_instanced_model(
-                "models/stanford_dragon/stanford-dragon.glb",
-                Vec3A::new(0.0, 5.0, 0.0),
-                Vec3A::one(),
-                Vec3A::zero(),
-                Vec4::new(0.72, 0.43, 0.47, 1.0),
-                instance_count,
-            )?;
-        }
-        self.generate_terrain(0, 0)?;
-        Ok(())
-    }
-
-    fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        let graphics = self.graphics.upgrade().unwrap();
-        let mut graphics_lock = graphics.write();
-        graphics_lock.update(delta_time, self.scene_type)?;
-        Ok(())
-    }
-
-    fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
-        let graphics = self
-            .graphics
-            .upgrade()
-            .expect("Failed to upgrade Weak of Graphics for rendering.");
-        {
-            let graphics_lock = graphics.read();
-            let _ = graphics_lock.render(self.scene_type);
-        }
-        Ok(())
-    }
-
-    fn add_model(
-        &mut self,
-        file_name: &'static str,
-        position: Vec3A,
-        scale: Vec3A,
-        rotation: Vec3A,
-        color: Vec4,
-    ) -> anyhow::Result<()> {
-        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
-        let resource_manager = self.resource_manager.upgrade();
-        if resource_manager.is_none() {
-            return Err(anyhow::anyhow!("Resource manager has been destroyed."));
-        }
-        let resource_manager = resource_manager.unwrap();
-        let mut lock = resource_manager.write();
-        let current_model_queue = lock
-            .model_queue
-            .entry(self.scene_type)
-            .or_insert_with(Vec::new);
-        let item = current_model_queue
-            .iter()
-            .find(|m| (*m).lock().get_name() == file_name)
-            .cloned();
-        drop(lock);
-        if let Some(m) = item {
-            let mut model = (*m.lock()).clone();
-            model.set_position(position);
-            model.set_scale(scale);
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
-            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
-            let mut metadata = model.get_model_metadata();
-            metadata.world_matrix = model.get_world_matrix();
-            metadata.object_color = color;
-            model.set_model_metadata(metadata);
-            model.set_ssbo_index(ssbo_index);
-            model.update_model_indices(self.model_count.clone());
-            let mut lock = resource_manager.write();
-            lock.add_clone(self.scene_type, model);
-            drop(lock);
-        } else {
-            let task = Model::new(
-                file_name,
-                self.graphics.clone(),
-                position,
-                scale,
-                rotation,
-                color,
-                self.model_count.clone(),
-                ssbo_index,
-                true,
-            )?;
-            self.model_tasks.push(task);
-        }
-        drop(resource_manager);
+        self.waitable_tasks.instanced_model_tasks.push(task);
         Ok(())
     }
 
@@ -316,7 +128,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
     ) -> anyhow::Result<()> {
-        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let resource_manager = self.resource_manager.upgrade();
         if resource_manager.is_none() {
             return Err(anyhow::anyhow!("Resource manager has been destroyed."));
@@ -334,18 +146,20 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(lock);
         if let Some(m) = item {
             let mut model = (*m.lock()).clone();
-            model.set_position(position);
-            model.set_scale(scale);
-            let x: f32 = rotation.x();
-            let y: f32 = rotation.y();
-            let z: f32 = rotation.z();
-            model.set_rotation(Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()));
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
+            model.set_position_info(PositionInfo {
+                position,
+                scale,
+                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            });
             let mut metadata = model.get_model_metadata();
             metadata.world_matrix = model.get_world_matrix();
             metadata.object_color = color;
             model.set_model_metadata(metadata);
             model.set_ssbo_index(ssbo_index);
-            model.update_model_indices(self.model_count.clone());
+            model.update_model_indices(self.counts.model_count.clone());
             let mut lock = resource_manager.write();
             lock.add_clone(self.scene_type, model);
             drop(lock);
@@ -358,9 +172,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 rotation,
                 color,
                 ssbo_index,
-                self.model_count.clone(),
+                self.counts.model_count.clone(),
             )?;
-            self.skinned_model_tasks.push(task);
+            self.waitable_tasks.skinned_model_tasks.push(task);
         }
         drop(resource_manager);
         Ok(())
@@ -375,9 +189,10 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         rotation: Vec3A,
         color: Vec4,
         shader_type: Option<ShaderType>,
+        entity: DefaultKey,
     ) -> anyhow::Result<()> {
-        let model_index = self.model_count.fetch_add(1, Ordering::SeqCst);
-        let ssbo_index = self.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
         let task = GeometricPrimitive::new(
             self.graphics.clone(),
             primitive_type,
@@ -389,91 +204,154 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             rotation,
             color,
             shader_type,
+            entity,
         )?;
-        self.geometric_primitive_tasks.push(task);
+        self.waitable_tasks.geometric_primitive_tasks.push(task);
         Ok(())
     }
+}
 
-    fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
-        let model_tasks = &mut self.model_tasks;
-        let skinned_model_tasks = &mut self.skinned_model_tasks;
-        let terrain_tasks = &mut self.terrain_tasks;
-        let primitive_tasks = &mut self.geometric_primitive_tasks;
-        let instance_tasks = &mut self.instanced_model_tasks;
-        let mut models = vec![];
-        let mut skinned_models = vec![];
-        let mut terrains = vec![];
-        let mut primitives = vec![];
-        let mut instances = vec![];
-        for task in model_tasks.iter_mut() {
-            let model = task.recv()?;
-            models.push(model);
+#[async_trait]
+impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
+    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
+        let entities = self
+            .entities
+            .upgrade()
+            .expect("Failed to upgrade entities handle.");
+        let mut entities_lock = entities.borrow_mut();
+        let entity = entities_lock.insert(self.counts.entity_count);
+        self.counts.entity_count += 1;
+        self.player_entities.insert(entity_name.to_string(), entity);
+        entity
+    }
+
+    fn add_model(
+        &mut self,
+        file_name: &'static str,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+        entity: DefaultKey,
+    ) -> anyhow::Result<()> {
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let resource_manager = self.resource_manager.upgrade();
+        if resource_manager.is_none() {
+            return Err(anyhow::anyhow!("Resource manager has been destroyed."));
         }
-        for task in skinned_model_tasks.iter_mut() {
-            let model = task.recv()?;
-            skinned_models.push(model);
-        }
-        for task in terrain_tasks.iter_mut() {
-            let terrain = task.recv()?;
-            terrains.push(terrain);
-        }
-        for task in primitive_tasks.iter_mut() {
-            let primitive = task.recv()?;
-            primitives.push(primitive);
-        }
-        for task in instance_tasks.iter_mut() {
-            let instance = task.recv()?;
-            instances.push(instance);
-        }
-        let rm = self.resource_manager.upgrade();
-        if rm.is_none() {
-            return Err(anyhow::anyhow!(
-                "Failed to lock resource manager for waiting tasks."
-            ));
-        }
-        let rm = rm.unwrap();
-        let mut lock = rm.write();
-        for model in models.into_iter() {
-            lock.add_model(self.scene_type, model);
-        }
-        for model in skinned_models.into_iter() {
-            lock.add_model(self.scene_type, model);
-        }
-        for terrain in terrains.into_iter() {
-            lock.add_model(self.scene_type, terrain);
-        }
-        for primitive in primitives.into_iter() {
-            lock.add_model(self.scene_type, primitive);
-        }
-        for instance in instances.into_iter() {
-            lock.add_model(self.scene_type, instance);
-        }
+        let resource_manager = resource_manager.unwrap();
+        let mut lock = resource_manager.write();
+        let current_model_queue = lock
+            .model_queue
+            .entry(self.scene_type)
+            .or_insert_with(Vec::new);
+        let item = current_model_queue
+            .iter()
+            .find(|m| (*m).lock().get_name() == file_name)
+            .cloned();
         drop(lock);
-        drop(rm);
-        self.model_tasks.clear();
-        self.skinned_model_tasks.clear();
-        self.terrain_tasks.clear();
-        self.geometric_primitive_tasks.clear();
-        self.instanced_model_tasks.clear();
+        if let Some(m) = item {
+            let mut model = (*m.lock()).clone();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
+            model.set_position_info(PositionInfo {
+                position,
+                scale,
+                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            });
+            let mut metadata = model.get_model_metadata();
+            metadata.world_matrix = model.get_world_matrix();
+            metadata.object_color = color;
+            model.set_model_metadata(metadata);
+            model.set_ssbo_index(ssbo_index);
+            model.update_model_indices(self.counts.model_count.clone());
+            let mut lock = resource_manager.write();
+            lock.add_clone(self.scene_type, model);
+            drop(lock);
+        } else {
+            let task = Model::new(
+                file_name,
+                self.graphics.clone(),
+                position,
+                scale,
+                rotation,
+                color,
+                self.counts.model_count.clone(),
+                ssbo_index,
+                true,
+                entity,
+            )?;
+            self.waitable_tasks.model_tasks.push(task);
+        }
+        drop(resource_manager);
         Ok(())
-    }
-
-    fn get_model_count(&self) -> Arc<AtomicUsize> {
-        self.model_count.clone()
-    }
-
-    fn get_scene_type(&self) -> SceneType {
-        self.scene_type
     }
 
     fn create_ssbo(&self) -> anyhow::Result<()> {
+        for renderable in self.render_components.iter() {
+            renderable.lock().create_ssbo()?;
+        }
+        Ok(())
+    }
+
+    fn generate_terrain(
+        &mut self,
+        grid_x: i32,
+        grid_z: i32,
+        primitive: Option<Primitive>,
+    ) -> anyhow::Result<Primitive> {
+        let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let mut height_generator = self
+            .height_generator
+            .write()
+            .expect("Failed to lock height generator.");
+        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
+        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
+        drop(height_generator);
+        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
+
+        let entity = {
+            let entities = self
+                .entities
+                .upgrade()
+                .expect("Failed to upgrade entities handle.");
+            let entity_count = self.counts.entity_count;
+            let key = entities.borrow_mut().insert(entity_count);
+            key
+        };
+
+        let terrain = Terrain::new(
+            grid_x,
+            grid_z,
+            model_index,
+            ssbo_index,
+            self.graphics.clone(),
+            self.height_generator.clone(),
+            ratio,
+            ratio,
+            ratio,
+            primitive.clone(),
+            entity,
+        )?;
+        //self.waitable_tasks.terrain_tasks.push(terrain);
         let resource_manager = self
             .resource_manager
             .upgrade()
             .expect("Failed to upgrade resource manager handle.");
-        let resource_lock = resource_manager.read();
-        resource_lock.create_ssbo(self.scene_type)?;
-        Ok(())
+        let result = terrain.recv()?;
+        let primitive = if let Some(p) = primitive {
+            p
+        } else {
+            result.model.meshes[0].lock().primitives[0].clone()
+        };
+        {
+            let mut write_lock = resource_manager.write();
+            self.render_components
+                .push(write_lock.add_model(self.scene_type, result));
+        }
+        Ok(primitive)
     }
 
     fn get_command_buffers(&self) {
@@ -484,4 +362,303 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let mut resource_lock = resource_manager.write();
         resource_lock.get_all_command_buffers(self.scene_type);
     }
+
+    fn get_model_count(&self) -> Arc<AtomicUsize> {
+        self.counts.model_count.clone()
+    }
+
+    fn get_scene_name(&self) -> &str {
+        self.scene_name.as_str()
+    }
+
+    fn get_scene_type(&self) -> SceneType {
+        self.scene_type
+    }
+
+    fn initialize(&mut self) {}
+
+    fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        let (room_state, player) = {
+            let network_system = self
+                .network_system
+                .upgrade()
+                .expect("Failed to upgrade network system handle.");
+            let ns = network_system.read().await;
+            (
+                ns.room_state.clone(),
+                ns.logged_user
+                    .clone()
+                    .expect("Failed to get currently logged-in user."),
+            )
+        };
+
+        let mut room_state_lock = room_state.lock().await;
+        let player_state = room_state_lock
+            .players
+            .iter_mut()
+            .find(|p| p.player_id.as_str() == player.player_id.as_str())
+            .and_then(|p| p.state.as_mut());
+
+        if let Some(ps) = player_state {
+            let world_matrix = ps.state.as_mut().and_then(|e| e.world_matrix.as_mut());
+            if let Some(wm) = world_matrix {
+                let (rotation_x, mut rotation_y, rotation_z) =
+                    (wm.rotation[0], wm.rotation[1], wm.rotation[2]);
+                let (mut x, y, mut z) = (wm.position[0], wm.position[1], wm.position[2]);
+                let scale = wm.scale.clone();
+                match (key, element_state) {
+                    (VirtualKeyCode::A, ElementState::Pressed) => {
+                        rotation_y -= 1.0_f32.to_radians();
+                    }
+                    (VirtualKeyCode::D, ElementState::Pressed) => {
+                        rotation_y += 1.0_f32.to_radians();
+                    }
+                    (VirtualKeyCode::W, ElementState::Pressed) => {
+                        x += rotation_y.sin();
+                        z += rotation_y.cos();
+                    }
+                    (VirtualKeyCode::S, ElementState::Pressed) => {
+                        x -= rotation_y.sin();
+                        z -= rotation_y.cos();
+                    }
+                    _ => {}
+                }
+                *wm = WorldMatrix {
+                    position: vec![x, y, z],
+                    scale,
+                    rotation: vec![rotation_x, rotation_y, rotation_z],
+                };
+            }
+        }
+    }
+
+    async fn load_content(&mut self) -> anyhow::Result<()> {
+        let network_system = self
+            .network_system
+            .upgrade()
+            .expect("Failed to upgrade network system handle.");
+        let mut room_state = None;
+        loop {
+            let ns_lock = network_system.read().await;
+            if let Some(recv) = ns_lock.progress_recv.as_ref() {
+                if let Ok(state) = recv.try_recv() {
+                    room_state = Some(state);
+                    break;
+                }
+            }
+        }
+
+        let room_state = room_state.expect("Failed to get room state from receiver.");
+        let players = room_state.players;
+        for (player_no, player) in players.iter().enumerate() {
+            if let Some(state) = player.state.as_ref() {
+                if let Some(entity_state) = state.state.as_ref() {
+                    if let Some(world_matrix) = entity_state.world_matrix.as_ref() {
+                        let position: Vec3A = Vec3A::new(
+                            world_matrix.position[0],
+                            world_matrix.position[1],
+                            world_matrix.position[2],
+                        );
+                        let scale: Vec3A = Vec3A::new(
+                            world_matrix.scale[0],
+                            world_matrix.scale[1],
+                            world_matrix.scale[2],
+                        );
+                        let rotation: Vec3A = Vec3A::new(
+                            world_matrix.rotation[0],
+                            world_matrix.rotation[1],
+                            world_matrix.rotation[2],
+                        );
+                        let entity = self.add_entity(&format!("Player {}", player_no + 1));
+                        self.add_model(
+                            "./models/tank/tank.gltf",
+                            position,
+                            scale,
+                            rotation,
+                            Vec4::one(),
+                            entity,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        //let mr_incredible = self.add_entity("Mr.Incredible");
+        /*self.add_model(
+            "./models/mr.incredible/Mr.Incredible.glb",
+            Vec3A::new(-5.0, 0.0, 5.0),
+            Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+            mr_incredible,
+        )?;
+        let bison = self.add_entity("Bison");
+        self.add_model(
+            "./models/bison/output.gltf",
+            Vec3A::new(0.0, 0.0, 5.0),
+            Vec3A::new(400.0, 400.0, 400.0),
+            Vec3A::new(0.0, 90.0, 90.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+            bison,
+        )?;
+        self.add_skinned_model(
+            "./models/cesiumMan/CesiumMan.glb",
+            Vec3A::new(5.0, 0.0, 5.0),
+            Vec3A::new(2.0, 2.0, 2.0),
+            Vec3A::new(0.0, 180.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        )?;*/
+        //let water_pos = std::env::var("WATER_POS")?.parse::<f32>()?;
+        //let water_height = std::env::var("WATER_HEIGHT")?.parse::<f32>()?;
+        //let water_scale = std::env::var("WATER_SCALE")?.parse::<f32>()?;
+        /*self.add_geometric_primitive(
+            PrimitiveType::Rect,
+            None,
+            Vec3A::new(water_pos, water_height, water_pos),
+            Vec3A::new(water_scale, 1.0, water_scale),
+            Vec3A::zero(),
+            Vec4::new(0.0, 0.0, 1.0, 1.0),
+            Some(ShaderType::Water),
+        )?;*/
+        //self.generate_terrain(0, 0)?;
+        self.loaded = true;
+        Ok(())
+    }
+
+    fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade Weak of Graphics for rendering.");
+        {
+            let graphics_lock = graphics.read();
+            graphics_lock.render(&self.render_components)?;
+        }
+        Ok(())
+    }
+
+    fn set_scene_name(&mut self, scene_name: &str) {
+        self.scene_name = scene_name.to_string();
+    }
+
+    async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+        if !self.loaded {
+            return Ok(());
+        }
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle.");
+        let network_system = self
+            .network_system
+            .upgrade()
+            .expect("Failed to upgrade network system handle.");
+
+        for (index, (_, key)) in self.player_entities.iter().enumerate() {
+            let model = self
+                .render_components
+                .iter()
+                .find(|r| r.lock().get_entity() == *key);
+            if let Some(r) = model.as_ref() {
+                let ns = network_system.read().await;
+                let room_state = ns.room_state.lock().await;
+                let mut locked_renderable = r.lock();
+                let player = room_state
+                    .players
+                    .get(index)
+                    .expect("Failed to get player.");
+                let player_state = player.state.as_ref().expect("Failed to get player state.");
+                let entity_state = player_state
+                    .state
+                    .as_ref()
+                    .expect("Failed to get entity state.");
+                let world_matrix = entity_state
+                    .world_matrix
+                    .as_ref()
+                    .expect("Failed to get world matrix.");
+                locked_renderable.set_position_info(PositionInfo {
+                    position: Vec3A::new(
+                        world_matrix.position[0],
+                        world_matrix.position[1],
+                        world_matrix.position[2],
+                    ),
+                    scale: Vec3A::new(
+                        world_matrix.scale[0],
+                        world_matrix.scale[1],
+                        world_matrix.scale[2],
+                    ),
+                    rotation: Vec3A::new(
+                        world_matrix.rotation[0],
+                        world_matrix.rotation[1],
+                        world_matrix.rotation[2],
+                    ),
+                });
+            }
+        }
+
+        let mut graphics_lock = graphics.write();
+        graphics_lock.update(delta_time, &self.render_components)?;
+        Ok(())
+    }
+
+    fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
+        let completed_tasks = self.waitable_tasks.wait_for_all_tasks()?;
+        let rm = self.resource_manager.upgrade();
+        if rm.is_none() {
+            return Err(anyhow::anyhow!(
+                "Failed to lock resource manager for waiting tasks."
+            ));
+        }
+        let rm = rm.unwrap();
+        let mut lock = rm.write();
+
+        for model in completed_tasks.models.into_iter() {
+            self.render_components
+                .push(lock.add_model(self.scene_type, model));
+        }
+        for model in completed_tasks.skinned_models.into_iter() {
+            self.render_components
+                .push(lock.add_model(self.scene_type, model));
+        }
+        for terrain in completed_tasks.terrains.into_iter() {
+            self.render_components
+                .push(lock.add_model(self.scene_type, terrain));
+        }
+        for primitive in completed_tasks.geometric_primitives.into_iter() {
+            self.render_components
+                .push(lock.add_model(self.scene_type, primitive));
+        }
+        for instance in completed_tasks.instances.into_iter() {
+            self.render_components
+                .push(lock.add_model(self.scene_type, instance));
+        }
+        drop(lock);
+        drop(rm);
+        self.waitable_tasks.clear();
+        Ok(())
+    }
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Send
+    for GameScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
+}
+
+unsafe impl<GraphicsType, BufferType, CommandType, TextureType> Sync
+    for GameScene<GraphicsType, BufferType, CommandType, TextureType>
+where
+    GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
+    BufferType: 'static + Disposable + Clone,
+    CommandType: 'static + Clone,
+    TextureType: 'static + Clone + Disposable,
+{
 }

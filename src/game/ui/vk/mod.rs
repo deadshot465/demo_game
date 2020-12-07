@@ -617,8 +617,8 @@ impl Drawer {
                 )
                 .expect("Failed to map memory for staging buffer.")
         };
-        let rgba_raw_data = img.to_rgba();
-        let bgra_raw_data = img.to_bgra();
+        let rgba_raw_data = img.to_rgba8();
+        let bgra_raw_data = img.to_bgra8();
         let raw_bytes = match color_format {
             Format::B8G8R8A8_UNORM => bgra_raw_data.as_ptr(),
             Format::R8G8B8A8_UNORM => rgba_raw_data.as_ptr(),
@@ -891,9 +891,9 @@ impl Drawer {
 
     fn create_shader_module(device: &ash::Device, file_name: &str) -> ShaderModule {
         let mut file = std::fs::File::open(file_name)
-            .expect(&format!("Failed to open shader file: {}", file_name));
+            .unwrap_or_else(|_| panic!("Failed to open shader file: {}", file_name));
         let byte_code = ash::util::read_spv(&mut file)
-            .expect(&format!("Failed to read shader byte code: {}", file_name));
+            .unwrap_or_else(|_| panic!("Failed to read shader byte code: {}", file_name));
         let shader_module_info = ShaderModuleCreateInfo::builder().code(byte_code.as_slice());
         unsafe {
             device
@@ -909,33 +909,16 @@ impl Drawer {
         let mut fonts = HashMap::new();
         let mut atlas = FontAtlas::new(allocator);
         atlas.begin();
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(14.0);
-        let font_14 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(14, font_14);
 
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(18.0);
-        let font_18 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(18, font_18);
+        for i in (12..48).step_by(4) {
+            font_config.set_ttf_data_owned_by_atlas(false);
+            font_config.set_size(i as f32);
+            let font = atlas
+                .add_font_with_config(&font_config)
+                .expect("Failed to load font into Nuklear runtime.");
+            fonts.insert(i, font);
+        }
 
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(20.0);
-        let font_20 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(20, font_20);
-
-        font_config.set_ttf_data_owned_by_atlas(false);
-        font_config.set_size(22.0);
-        let font_22 = atlas
-            .add_font_with_config(&font_config)
-            .expect("Failed to load font into Nuklear runtime.");
-        fonts.insert(22, font_22);
         (atlas, fonts)
     }
 

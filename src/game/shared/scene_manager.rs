@@ -1,7 +1,10 @@
+use crate::game::shared::structs::Primitive;
 use crate::game::shared::traits::Scene;
+use slotmap::DefaultKey;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use winit::event::{ElementState, VirtualKeyCode};
 
 pub struct SceneManager {
     pub current_index: usize,
@@ -22,6 +25,61 @@ impl SceneManager {
         }
     }
 
+    pub fn add_entity(&self, entity_name: &str) -> DefaultKey {
+        let current_index = self.current_index;
+        let entity = self
+            .scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow_mut()
+            .add_entity(entity_name);
+        entity
+    }
+
+    pub fn create_ssbo(&self) -> anyhow::Result<()> {
+        let current_index = self.current_index;
+        self.scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow()
+            .create_ssbo()?;
+        Ok(())
+    }
+
+    pub fn generate_terrain(
+        &self,
+        grid_x: i32,
+        grid_z: i32,
+        primitive: Option<Primitive>,
+    ) -> anyhow::Result<Primitive> {
+        let current_index = self.current_index;
+        let primitive = self
+            .scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow_mut()
+            .generate_terrain(grid_x, grid_z, primitive)?;
+        Ok(primitive)
+    }
+
+    pub fn get_command_buffers(&self) {
+        let current_index = self.current_index;
+        self.scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow()
+            .get_command_buffers();
+    }
+
+    pub fn get_scene_model_count(&self) -> Arc<AtomicUsize> {
+        let current_index = self.current_index;
+        self.scenes
+            .get(current_index)
+            .expect("Failed to get current scene.")
+            .borrow()
+            .get_model_count()
+    }
+
     pub fn initialize(&self) {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
@@ -29,28 +87,28 @@ impl SceneManager {
         }
     }
 
-    pub fn load_content(&self) -> anyhow::Result<()> {
+    pub async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().load_content()?;
+            scene.borrow().input_key(key, element_state).await;
+        }
+    }
+
+    pub async fn load_content(&self) -> anyhow::Result<()> {
+        let current_index = self.current_index;
+        if let Some(scene) = self.scenes.get(current_index) {
+            scene.borrow_mut().load_content().await?;
         }
         Ok(())
     }
 
-    pub fn wait_for_all_tasks(&self) -> anyhow::Result<()> {
-        let current_index = self.current_index;
-        if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().wait_for_all_tasks()?;
-        }
-        Ok(())
-    }
-
-    pub fn update(&self, delta_time: f64) -> anyhow::Result<()> {
-        let current_index = self.current_index;
-        if let Some(scene) = self.scenes.get(current_index) {
-            scene.borrow_mut().update(delta_time)?;
-        }
-        Ok(())
+    pub fn register_scene<T>(&mut self, scene: T) -> usize
+    where
+        T: Scene + 'static,
+    {
+        let index = self.scenes.len();
+        self.scenes.push(RefCell::new(Box::new(scene)));
+        index
     }
 
     pub fn render(&self, delta_time: f64) -> anyhow::Result<()> {
@@ -59,13 +117,6 @@ impl SceneManager {
             scene.borrow().render(delta_time)?;
         }
         Ok(())
-    }
-
-    pub fn register_scene<T>(&mut self, scene: T)
-    where
-        T: Scene + 'static,
-    {
-        self.scenes.push(RefCell::new(Box::new(scene)));
     }
 
     pub fn set_current_scene_by_index(&mut self, index: usize) {
@@ -89,31 +140,24 @@ impl SceneManager {
         }
     }
 
-    pub fn get_scene_model_count(&self) -> Arc<AtomicUsize> {
-        let current_index = self.current_index;
-        self.scenes
-            .get(current_index)
-            .expect("Failed to get current scene.")
-            .borrow()
-            .get_model_count()
+    pub fn switch_scene(&mut self, index: usize) {
+        self.set_current_scene_by_index(index);
+        self.initialize();
     }
 
-    pub fn create_ssbo(&self) -> anyhow::Result<()> {
+    pub async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         let current_index = self.current_index;
-        self.scenes
-            .get(current_index)
-            .expect("Failed to get current scene.")
-            .borrow()
-            .create_ssbo()?;
+        if let Some(scene) = self.scenes.get(current_index) {
+            scene.borrow_mut().update(delta_time).await?;
+        }
         Ok(())
     }
 
-    pub fn get_command_buffers(&self) {
+    pub fn wait_for_all_tasks(&self) -> anyhow::Result<()> {
         let current_index = self.current_index;
-        self.scenes
-            .get(current_index)
-            .expect("Failed to get current scene.")
-            .borrow()
-            .get_command_buffers();
+        if let Some(scene) = self.scenes.get(current_index) {
+            scene.borrow_mut().wait_for_all_tasks()?;
+        }
+        Ok(())
     }
 }
