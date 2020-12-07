@@ -14,7 +14,7 @@ layout (std430, binding = 2) readonly buffer ModelMatrices {
     float shine_dampers[];
 };
 
-layout (binding = 3) uniform sampler2D tex_sampler[30];
+layout (binding = 3) uniform sampler2D tex_sampler[16];
 
 layout (push_constant) uniform PushConstant
 {

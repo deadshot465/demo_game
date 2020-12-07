@@ -104,4 +104,4 @@ shutil.rmtree('./target/release/textures')
 shutil.copytree('./textures', './target/release/textures')
 if plt == 'Darwin':
     shutil.rmtree('./target/x86_64-apple-darwin/release/textures')
-    shutil.copytree('./resource', './target/x86_64-apple-darwin/release/textures')
+    shutil.copytree('./textures', './target/x86_64-apple-darwin/release/textures')
