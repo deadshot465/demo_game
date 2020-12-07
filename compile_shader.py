@@ -30,6 +30,7 @@ for x, y in file_names.items():
     os.system('glslangValidator -V {} -o {}'.format(x, y))
 
 # Create the folder in case the folder doesn't exist
+os.chdir('../')
 if not os.path.exists('./target'):
     os.makedirs('./target')
 if not os.path.exists('./target/debug'):
@@ -67,7 +68,6 @@ if plt == 'Darwin':
         os.makedirs('./target/x86_64-apple-darwin/release/textures')
 
 # Copy shaders to debug folder
-os.chdir('../')
 for x, y in file_names.items():
     shutil.copyfile('./shaders/' + y, './target/debug/shaders/' + y)
 shutil.copyfile('./.env', './target/debug/.env')
