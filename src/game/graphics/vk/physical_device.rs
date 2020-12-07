@@ -203,6 +203,7 @@ impl PhysicalDevice {
             log::info!("{}", name.to_str().unwrap());
 
             let result = PhysicalDevice::check_extension_support(instance, device);
+            log::info!("Physical device extension supported: {}", result);
             (result, Some(queue_indices))
         }
     }
@@ -218,6 +219,7 @@ impl PhysicalDevice {
     ) {
         let mut selected_device = ash::vk::PhysicalDevice::null();
         let mut queue_indices = QueueIndices::new();
+        let mut properties = PhysicalDeviceProperties::builder().build();
         unsafe {
             let physical_devices = instance
                 .enumerate_physical_devices()
@@ -230,16 +232,12 @@ impl PhysicalDevice {
                 }
                 queue_indices = _queue_indices.unwrap();
                 selected_device = *device;
-                let properties = instance.get_physical_device_properties(*device);
+                properties = instance.get_physical_device_properties(*device);
                 if properties.device_type == PhysicalDeviceType::DISCRETE_GPU {
                     return (selected_device, queue_indices, properties);
                 }
             }
         }
-        (
-            selected_device,
-            queue_indices,
-            PhysicalDeviceProperties::builder().build(),
-        )
+        (selected_device, queue_indices, properties)
     }
 }
