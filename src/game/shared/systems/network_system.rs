@@ -1,6 +1,7 @@
 use crate::game::shared::structs::Primitive;
 use crate::protos::grpc_service::game_state::{
-    GetTerrainRequest, Player, RegisterPlayerRequest, RoomState, StartGameRequest,
+    GetTerrainRequest, Player, ProgressGameRequest, RegisterPlayerRequest, RoomState,
+    StartGameRequest,
 };
 use crate::protos::grpc_service::grpc_service_client::GrpcServiceClient;
 use crate::protos::grpc_service::{Empty, LoginRequest, RegisterRequest};
@@ -175,12 +176,18 @@ impl NetworkSystem {
     /// Progress the game.
     pub async fn progress_game(&mut self) -> anyhow::Result<()> {
         let room_state = self.room_state.clone();
+        let player = self.logged_user.clone();
         let request_stream = async_stream::stream! {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(35));
             let room_state = room_state;
-            while let time = interval.tick().await {
+            let player = player;
+            while let _ = interval.tick().await {
                 let room_state = room_state.lock().await.clone();
-                yield room_state;
+                let progress_state = ProgressGameRequest  {
+                    player: player.clone(),
+                    room_state: Some(room_state),
+                };
+                yield progress_state;
             }
         };
 
@@ -205,6 +212,7 @@ impl NetworkSystem {
                     Ok(_) => {}
                     Err(e) => {
                         log::warn!("{}", e.to_string());
+                        break;
                     }
                 }
             }

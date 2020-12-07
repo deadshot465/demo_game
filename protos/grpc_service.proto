@@ -32,7 +32,7 @@ service GrpcService {
 
   // Progress the game.
   // Unused.
-  rpc ProgressGame(stream GameState.RoomState) returns (stream GameState.RoomState);
+  rpc ProgressGame(stream GameState.ProgressGameRequest) returns (stream GameState.RoomState);
 }
 
 message RegisterRequest {
@@ -148,5 +148,10 @@ message GameState {
   
   message GetTerrainReply {
     bytes terrain_vertices = 1;
+  }
+  
+  message ProgressGameRequest {
+    GameState.Player player = 1;
+    GameState.RoomState room_state = 2;
   }
 }

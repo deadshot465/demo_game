@@ -107,7 +107,7 @@ impl Initializer {
             .iter()
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
-        let mut extensions = vec![Swapchain::name()];
+        let extensions = vec![Swapchain::name()];
         /*if debug {
             extensions.push(ash::vk::NvDeviceDiagnosticCheckpointsFn::name());
         }*/
@@ -636,10 +636,10 @@ impl Initializer {
             .collect::<Vec<_>>();
         if debug {
             let instance_extensions = entry.enumerate_instance_extension_properties()?;
-            let nv_checkpoint_extension =
+            let _nv_checkpoint_extension =
                 std::ffi::CString::new("VK_KHR_get_physical_device_properties2")
                     .expect("Failed to construct extension name.");
-            let mut required_debug_extensions = vec![DebugUtils::name().to_owned()];
+            let required_debug_extensions = vec![DebugUtils::name().to_owned()];
             //required_debug_extensions.push(nv_checkpoint_extension);
             for extension in instance_extensions.iter() {
                 let extension_name = extension.extension_name.as_ptr();
@@ -648,7 +648,7 @@ impl Initializer {
                     for required_extension in required_debug_extensions.iter() {
                         if required_extension.to_str()? == extension_name.to_str()? {
                             extensions.push(extension_name.clone());
-                            log::warn!("Instance extension enabled: {}", extension_name.to_str()?);
+                            log::info!("Instance extension enabled: {}", extension_name.to_str()?);
                         }
                     }
                 }

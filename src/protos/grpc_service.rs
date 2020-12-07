@@ -171,6 +171,13 @@ pub mod game_state {
         #[prost(bytes, tag = "1")]
         pub terrain_vertices: std::vec::Vec<u8>,
     }
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct ProgressGameRequest {
+        #[prost(message, optional, tag = "1")]
+        pub player: ::std::option::Option<Player>,
+        #[prost(message, optional, tag = "2")]
+        pub room_state: ::std::option::Option<RoomState>,
+    }
 }
 #[doc = r" Generated client implementations."]
 pub mod grpc_service_client {
@@ -340,7 +347,7 @@ pub mod grpc_service_client {
         #[doc = " Unused."]
         pub async fn progress_game(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::game_state::RoomState>,
+            request: impl tonic::IntoStreamingRequest<Message = super::game_state::ProgressGameRequest>,
         ) -> Result<
             tonic::Response<tonic::codec::Streaming<super::game_state::RoomState>>,
             tonic::Status,
@@ -439,7 +446,7 @@ pub mod grpc_service_server {
         #[doc = " Unused."]
         async fn progress_game(
             &self,
-            request: tonic::Request<tonic::Streaming<super::game_state::RoomState>>,
+            request: tonic::Request<tonic::Streaming<super::game_state::ProgressGameRequest>>,
         ) -> Result<tonic::Response<Self::ProgressGameStream>, tonic::Status>;
     }
     #[derive(Debug)]
@@ -734,7 +741,7 @@ pub mod grpc_service_server {
                     #[allow(non_camel_case_types)]
                     struct ProgressGameSvc<T: GrpcService>(pub Arc<T>);
                     impl<T: GrpcService>
-                        tonic::server::StreamingService<super::game_state::RoomState>
+                        tonic::server::StreamingService<super::game_state::ProgressGameRequest>
                         for ProgressGameSvc<T>
                     {
                         type Response = super::game_state::RoomState;
@@ -743,7 +750,9 @@ pub mod grpc_service_server {
                             BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
                         fn call(
                             &mut self,
-                            request: tonic::Request<tonic::Streaming<super::game_state::RoomState>>,
+                            request: tonic::Request<
+                                tonic::Streaming<super::game_state::ProgressGameRequest>,
+                            >,
                         ) -> Self::Future {
                             let inner = self.0.clone();
                             let fut = async move { (*inner).progress_game(request).await };

@@ -4,6 +4,7 @@ use slotmap::DefaultKey;
 use std::cell::RefCell;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use winit::event::{ElementState, VirtualKeyCode};
 
 pub struct SceneManager {
     pub current_index: usize,
@@ -50,7 +51,6 @@ impl SceneManager {
         grid_x: i32,
         grid_z: i32,
         primitive: Option<Primitive>,
-        entity: DefaultKey,
     ) -> anyhow::Result<Primitive> {
         let current_index = self.current_index;
         let primitive = self
@@ -58,7 +58,7 @@ impl SceneManager {
             .get(current_index)
             .expect("Failed to get current scene.")
             .borrow_mut()
-            .generate_terrain(grid_x, grid_z, primitive, entity)?;
+            .generate_terrain(grid_x, grid_z, primitive)?;
         Ok(primitive)
     }
 
@@ -84,6 +84,13 @@ impl SceneManager {
         let current_index = self.current_index;
         if let Some(scene) = self.scenes.get(current_index) {
             scene.borrow_mut().initialize();
+        }
+    }
+
+    pub async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        let current_index = self.current_index;
+        if let Some(scene) = self.scenes.get(current_index) {
+            scene.borrow().input_key(key, element_state).await;
         }
     }
 

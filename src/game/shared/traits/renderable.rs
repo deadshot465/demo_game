@@ -5,6 +5,7 @@ use crate::game::traits::GraphicsBase;
 use ash::vk::{CommandBufferInheritanceInfo, DescriptorSet};
 use crossbeam::sync::ShardedLock;
 use glam::Mat4;
+use slotmap::{DefaultKey, Key};
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
 use std::sync::Arc;
@@ -16,23 +17,25 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
-    fn update(&mut self, delta_time: f64);
-    fn render(
+    fn box_clone(
         &self,
-        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
-        push_constant: PushConstant,
-        viewport: ash::vk::Viewport,
-        scissor: ash::vk::Rect2D,
-        device: Arc<ash::Device>,
-        pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
-        descriptor_set: DescriptorSet,
-        thread_pool: Arc<ThreadPool>,
-        frame_index: usize,
-    );
+    ) -> Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send + 'static>;
 
-    fn get_ssbo_index(&self) -> usize;
+    fn create_ssbo(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn dispose_ssbo(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandType>;
+    fn get_entity(&self) -> DefaultKey {
+        DefaultKey::null()
+    }
     fn get_model_metadata(&self) -> ModelMetaData;
     fn get_position_info(&self) -> PositionInfo;
+    fn get_ssbo_index(&self) -> usize;
 
     fn get_world_matrix(&self) -> Mat4 {
         let PositionInfo {
@@ -47,23 +50,24 @@ where
         world * translation * rotate * scale
     }
 
-    fn create_ssbo(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn dispose_ssbo(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandType>;
-    fn set_position_info(&mut self, position_info: PositionInfo);
-    fn set_model_metadata(&mut self, model_metadata: ModelMetaData);
-    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>);
-    fn set_ssbo_index(&mut self, ssbo_index: usize);
-
-    fn box_clone(
+    fn render(
         &self,
-    ) -> Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send + 'static>;
+        inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
+        push_constant: PushConstant,
+        viewport: ash::vk::Viewport,
+        scissor: ash::vk::Rect2D,
+        device: Arc<ash::Device>,
+        pipeline: Arc<ShardedLock<ManuallyDrop<Pipeline>>>,
+        descriptor_set: DescriptorSet,
+        thread_pool: Arc<ThreadPool>,
+        frame_index: usize,
+    );
+
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData);
+    fn set_position_info(&mut self, position_info: PositionInfo);
+    fn set_ssbo_index(&mut self, ssbo_index: usize);
+    fn update(&mut self, delta_time: f64);
+    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>);
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType> Clone

@@ -494,7 +494,40 @@ where
 impl Renderable<Graphics, Buffer, CommandBuffer, Image>
     for Model<Graphics, Buffer, CommandBuffer, Image>
 {
-    fn update(&mut self, _delta_time: f64) {}
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new(self.clone())
+    }
+
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        let buffers = self
+            .meshes
+            .iter()
+            .map(|m| {
+                m.lock()
+                    .command_data
+                    .get(&frame_index)
+                    .map(|(_, buffer)| *buffer)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        buffers
+    }
+
+    fn get_entity(&self) -> DefaultKey {
+        self.entity
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model_metadata
+    }
+
+    fn get_position_info(&self) -> PositionInfo {
+        self.position_info
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.ssbo_index
+    }
 
     fn render(
         &self,
@@ -612,53 +645,26 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         }
     }
 
-    fn get_ssbo_index(&self) -> usize {
-        self.ssbo_index
-    }
-
-    fn get_model_metadata(&self) -> ModelMetaData {
-        self.model_metadata
-    }
-
-    fn get_position_info(&self) -> PositionInfo {
-        self.position_info
-    }
-
-    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
-        let buffers = self
-            .meshes
-            .iter()
-            .map(|m| {
-                m.lock()
-                    .command_data
-                    .get(&frame_index)
-                    .map(|(_, buffer)| *buffer)
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
-        buffers
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
+        self.model_metadata = model_metadata;
     }
 
     fn set_position_info(&mut self, position_info: PositionInfo) {
         self.position_info = position_info;
     }
 
-    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
-        self.model_metadata = model_metadata;
+    fn set_ssbo_index(&mut self, ssbo_index: usize) {
+        self.ssbo_index = ssbo_index;
+    }
+
+    fn update(&mut self, _delta_time: f64) {
+        self.model_metadata.world_matrix = self.get_world_matrix();
     }
 
     fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
         for mesh in self.meshes.iter() {
             mesh.lock().model_index = model_count.fetch_add(1, Ordering::SeqCst);
         }
-    }
-
-    fn set_ssbo_index(&mut self, ssbo_index: usize) {
-        self.ssbo_index = ssbo_index;
-    }
-
-    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
-        Box::new(self.clone())
     }
 }
 

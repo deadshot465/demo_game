@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crossbeam::sync::ShardedLock;
 use glam::{Vec3A, Vec4};
 use parking_lot::RwLock;
-use slotmap::{DefaultKey, SlotMap};
+use slotmap::{DefaultKey, Key, SlotMap};
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,8 +20,9 @@ use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
 use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
-use crate::protos::grpc_service::game_state::Player;
+use crate::protos::grpc_service::game_state::WorldMatrix;
 use std::collections::HashMap;
+use winit::event::{ElementState, VirtualKeyCode};
 
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
 where
@@ -38,9 +39,11 @@ where
     height_generator: Arc<ShardedLock<HeightGenerator>>,
     scene_type: SceneType,
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
-    current_entities: HashMap<String, DefaultKey>,
+    terrain_entity: DefaultKey,
+    player_entities: HashMap<String, DefaultKey>,
     render_components: Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
+    loaded: bool,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -66,9 +69,11 @@ where
             waitable_tasks: WaitableTasks::new(),
             scene_type: SceneType::GAME,
             entities,
-            current_entities: HashMap::new(),
+            player_entities: HashMap::new(),
             render_components: Vec::new(),
             network_system,
+            loaded: false,
+            terrain_entity: DefaultKey::null(),
         }
     }
 }
@@ -208,14 +213,227 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
 #[async_trait]
 impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
-    fn initialize(&mut self) {}
+    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
+        let entities = self
+            .entities
+            .upgrade()
+            .expect("Failed to upgrade entities handle.");
+        let mut entities_lock = entities.borrow_mut();
+        let entity = entities_lock.insert(self.counts.entity_count);
+        self.counts.entity_count += 1;
+        self.player_entities.insert(entity_name.to_string(), entity);
+        entity
+    }
+
+    fn add_model(
+        &mut self,
+        file_name: &'static str,
+        position: Vec3A,
+        scale: Vec3A,
+        rotation: Vec3A,
+        color: Vec4,
+        entity: DefaultKey,
+    ) -> anyhow::Result<()> {
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let resource_manager = self.resource_manager.upgrade();
+        if resource_manager.is_none() {
+            return Err(anyhow::anyhow!("Resource manager has been destroyed."));
+        }
+        let resource_manager = resource_manager.unwrap();
+        let mut lock = resource_manager.write();
+        let current_model_queue = lock
+            .model_queue
+            .entry(self.scene_type)
+            .or_insert_with(Vec::new);
+        let item = current_model_queue
+            .iter()
+            .find(|m| (*m).lock().get_name() == file_name)
+            .cloned();
+        drop(lock);
+        if let Some(m) = item {
+            let mut model = (*m.lock()).clone();
+            let x: f32 = rotation.x;
+            let y: f32 = rotation.y;
+            let z: f32 = rotation.z;
+            model.set_position_info(PositionInfo {
+                position,
+                scale,
+                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
+            });
+            let mut metadata = model.get_model_metadata();
+            metadata.world_matrix = model.get_world_matrix();
+            metadata.object_color = color;
+            model.set_model_metadata(metadata);
+            model.set_ssbo_index(ssbo_index);
+            model.update_model_indices(self.counts.model_count.clone());
+            let mut lock = resource_manager.write();
+            lock.add_clone(self.scene_type, model);
+            drop(lock);
+        } else {
+            let task = Model::new(
+                file_name,
+                self.graphics.clone(),
+                position,
+                scale,
+                rotation,
+                color,
+                self.counts.model_count.clone(),
+                ssbo_index,
+                true,
+                entity,
+            )?;
+            self.waitable_tasks.model_tasks.push(task);
+        }
+        drop(resource_manager);
+        Ok(())
+    }
+
+    fn create_ssbo(&self) -> anyhow::Result<()> {
+        for renderable in self.render_components.iter() {
+            renderable.lock().create_ssbo()?;
+        }
+        Ok(())
+    }
+
+    fn generate_terrain(
+        &mut self,
+        grid_x: i32,
+        grid_z: i32,
+        primitive: Option<Primitive>,
+    ) -> anyhow::Result<Primitive> {
+        let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
+        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
+        let mut height_generator = self
+            .height_generator
+            .write()
+            .expect("Failed to lock height generator.");
+        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
+        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
+        drop(height_generator);
+        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
+
+        let entity = {
+            let entities = self
+                .entities
+                .upgrade()
+                .expect("Failed to upgrade entities handle.");
+            let entity_count = self.counts.entity_count;
+            let key = entities.borrow_mut().insert(entity_count);
+            key
+        };
+
+        let terrain = Terrain::new(
+            grid_x,
+            grid_z,
+            model_index,
+            ssbo_index,
+            self.graphics.clone(),
+            self.height_generator.clone(),
+            ratio,
+            ratio,
+            ratio,
+            primitive.clone(),
+            entity,
+        )?;
+        //self.waitable_tasks.terrain_tasks.push(terrain);
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
+        let result = terrain.recv()?;
+        let primitive = if let Some(p) = primitive {
+            p
+        } else {
+            result.model.meshes[0].lock().primitives[0].clone()
+        };
+        {
+            let mut write_lock = resource_manager.write();
+            self.render_components
+                .push(write_lock.add_model(self.scene_type, result));
+        }
+        Ok(primitive)
+    }
+
+    fn get_command_buffers(&self) {
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
+        let mut resource_lock = resource_manager.write();
+        resource_lock.get_all_command_buffers(self.scene_type);
+    }
+
+    fn get_model_count(&self) -> Arc<AtomicUsize> {
+        self.counts.model_count.clone()
+    }
 
     fn get_scene_name(&self) -> &str {
         self.scene_name.as_str()
     }
 
-    fn set_scene_name(&mut self, scene_name: &str) {
-        self.scene_name = scene_name.to_string();
+    fn get_scene_type(&self) -> SceneType {
+        self.scene_type
+    }
+
+    fn initialize(&mut self) {}
+
+    fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        let (room_state, player) = {
+            let network_system = self
+                .network_system
+                .upgrade()
+                .expect("Failed to upgrade network system handle.");
+            let ns = network_system.read().await;
+            (
+                ns.room_state.clone(),
+                ns.logged_user
+                    .clone()
+                    .expect("Failed to get currently logged-in user."),
+            )
+        };
+
+        let mut room_state_lock = room_state.lock().await;
+        let player_state = room_state_lock
+            .players
+            .iter_mut()
+            .find(|p| p.player_id.as_str() == player.player_id.as_str())
+            .and_then(|p| p.state.as_mut());
+
+        if let Some(ps) = player_state {
+            let world_matrix = ps.state.as_mut().and_then(|e| e.world_matrix.as_mut());
+            if let Some(wm) = world_matrix {
+                let (rotation_x, mut rotation_y, rotation_z) =
+                    (wm.rotation[0], wm.rotation[1], wm.rotation[2]);
+                let (mut x, y, mut z) = (wm.position[0], wm.position[1], wm.position[2]);
+                let scale = wm.scale.clone();
+                match (key, element_state) {
+                    (VirtualKeyCode::A, ElementState::Pressed) => {
+                        rotation_y -= 1.0_f32.to_radians();
+                    }
+                    (VirtualKeyCode::D, ElementState::Pressed) => {
+                        rotation_y += 1.0_f32.to_radians();
+                    }
+                    (VirtualKeyCode::W, ElementState::Pressed) => {
+                        x += rotation_y.sin();
+                        z += rotation_y.cos();
+                    }
+                    (VirtualKeyCode::S, ElementState::Pressed) => {
+                        x -= rotation_y.sin();
+                        z -= rotation_y.cos();
+                    }
+                    _ => {}
+                }
+                *wm = WorldMatrix {
+                    position: vec![x, y, z],
+                    scale,
+                    rotation: vec![rotation_x, rotation_y, rotation_z],
+                };
+            }
+        }
     }
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
@@ -307,13 +525,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             Some(ShaderType::Water),
         )?;*/
         //self.generate_terrain(0, 0)?;
-        Ok(())
-    }
-
-    async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        let graphics = self.graphics.upgrade().unwrap();
-        let mut graphics_lock = graphics.write();
-        graphics_lock.update(delta_time, self.scene_type)?;
+        self.loaded = true;
         Ok(())
     }
 
@@ -329,129 +541,68 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
-    fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
-        let entities = self
-            .entities
-            .upgrade()
-            .expect("Failed to upgrade entities handle.");
-        self.counts.entity_count += 1;
-        let mut entities_lock = entities.borrow_mut();
-        let entity = entities_lock.insert(self.counts.entity_count);
-        self.current_entities
-            .insert(entity_name.to_string(), entity);
-        entity
+    fn set_scene_name(&mut self, scene_name: &str) {
+        self.scene_name = scene_name.to_string();
     }
 
-    fn add_model(
-        &mut self,
-        file_name: &'static str,
-        position: Vec3A,
-        scale: Vec3A,
-        rotation: Vec3A,
-        color: Vec4,
-        entity: DefaultKey,
-    ) -> anyhow::Result<()> {
-        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
-        let resource_manager = self.resource_manager.upgrade();
-        if resource_manager.is_none() {
-            return Err(anyhow::anyhow!("Resource manager has been destroyed."));
+    async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+        if !self.loaded {
+            return Ok(());
         }
-        let resource_manager = resource_manager.unwrap();
-        let mut lock = resource_manager.write();
-        let current_model_queue = lock
-            .model_queue
-            .entry(self.scene_type)
-            .or_insert_with(Vec::new);
-        let item = current_model_queue
-            .iter()
-            .find(|m| (*m).lock().get_name() == file_name)
-            .cloned();
-        drop(lock);
-        if let Some(m) = item {
-            let mut model = (*m.lock()).clone();
-            let x: f32 = rotation.x;
-            let y: f32 = rotation.y;
-            let z: f32 = rotation.z;
-            model.set_position_info(PositionInfo {
-                position,
-                scale,
-                rotation: Vec3A::new(x.to_radians(), y.to_radians(), z.to_radians()),
-            });
-            let mut metadata = model.get_model_metadata();
-            metadata.world_matrix = model.get_world_matrix();
-            metadata.object_color = color;
-            model.set_model_metadata(metadata);
-            model.set_ssbo_index(ssbo_index);
-            model.update_model_indices(self.counts.model_count.clone());
-            let mut lock = resource_manager.write();
-            lock.add_clone(self.scene_type, model);
-            drop(lock);
-        } else {
-            let task = Model::new(
-                file_name,
-                self.graphics.clone(),
-                position,
-                scale,
-                rotation,
-                color,
-                self.counts.model_count.clone(),
-                ssbo_index,
-                true,
-                entity,
-            )?;
-            self.waitable_tasks.model_tasks.push(task);
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle.");
+        let network_system = self
+            .network_system
+            .upgrade()
+            .expect("Failed to upgrade network system handle.");
+
+        for (index, (_, key)) in self.player_entities.iter().enumerate() {
+            let model = self
+                .render_components
+                .iter()
+                .find(|r| r.lock().get_entity() == *key);
+            if let Some(r) = model.as_ref() {
+                let ns = network_system.read().await;
+                let room_state = ns.room_state.lock().await;
+                let mut locked_renderable = r.lock();
+                let player = room_state
+                    .players
+                    .get(index)
+                    .expect("Failed to get player.");
+                let player_state = player.state.as_ref().expect("Failed to get player state.");
+                let entity_state = player_state
+                    .state
+                    .as_ref()
+                    .expect("Failed to get entity state.");
+                let world_matrix = entity_state
+                    .world_matrix
+                    .as_ref()
+                    .expect("Failed to get world matrix.");
+                locked_renderable.set_position_info(PositionInfo {
+                    position: Vec3A::new(
+                        world_matrix.position[0],
+                        world_matrix.position[1],
+                        world_matrix.position[2],
+                    ),
+                    scale: Vec3A::new(
+                        world_matrix.scale[0],
+                        world_matrix.scale[1],
+                        world_matrix.scale[2],
+                    ),
+                    rotation: Vec3A::new(
+                        world_matrix.rotation[0],
+                        world_matrix.rotation[1],
+                        world_matrix.rotation[2],
+                    ),
+                });
+            }
         }
-        drop(resource_manager);
+
+        let mut graphics_lock = graphics.write();
+        graphics_lock.update(delta_time, &self.render_components)?;
         Ok(())
-    }
-
-    fn generate_terrain(
-        &mut self,
-        grid_x: i32,
-        grid_z: i32,
-        primitive: Option<Primitive>,
-        entity: DefaultKey,
-    ) -> anyhow::Result<Primitive> {
-        let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
-        let ssbo_index = self.counts.ssbo_count.fetch_add(1, Ordering::SeqCst);
-        let mut height_generator = self
-            .height_generator
-            .write()
-            .expect("Failed to lock height generator.");
-        let vertex_count = Terrain::<Graphics, Buffer, CommandBuffer, Image>::VERTEX_COUNT;
-        height_generator.set_offsets(grid_x as i32, grid_z as i32, vertex_count as i32);
-        drop(height_generator);
-        let ratio = std::env::var("RATIO").unwrap().parse::<f32>().unwrap();
-        let terrain = Terrain::new(
-            grid_x,
-            grid_z,
-            model_index,
-            ssbo_index,
-            self.graphics.clone(),
-            self.height_generator.clone(),
-            ratio,
-            ratio,
-            ratio,
-            primitive.clone(),
-            entity,
-        )?;
-        //self.waitable_tasks.terrain_tasks.push(terrain);
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager handle.");
-        let result = terrain.recv()?;
-        let primitive = if let Some(p) = primitive {
-            p
-        } else {
-            result.model.meshes[0].lock().primitives[0].clone()
-        };
-        {
-            let mut write_lock = resource_manager.write();
-            self.render_components
-                .push(write_lock.add_model(self.scene_type, result));
-        }
-        Ok(primitive)
     }
 
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
@@ -489,30 +640,6 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(rm);
         self.waitable_tasks.clear();
         Ok(())
-    }
-
-    fn get_model_count(&self) -> Arc<AtomicUsize> {
-        self.counts.model_count.clone()
-    }
-
-    fn get_scene_type(&self) -> SceneType {
-        self.scene_type
-    }
-
-    fn create_ssbo(&self) -> anyhow::Result<()> {
-        for renderable in self.render_components.iter() {
-            renderable.lock().create_ssbo()?;
-        }
-        Ok(())
-    }
-
-    fn get_command_buffers(&self) {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager handle.");
-        let mut resource_lock = resource_manager.write();
-        resource_lock.get_all_command_buffers(self.scene_type);
     }
 }
 

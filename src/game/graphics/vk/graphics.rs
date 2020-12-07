@@ -45,6 +45,7 @@ type UIManagerHandle = std::rc::Weak<
 type LockableRenderable =
     Arc<Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>>;
 
+#[derive(Clone)]
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
     object_colors: [Vec4; SSBO_DATA_COUNT],
@@ -134,6 +135,7 @@ pub struct Graphics {
     offscreen_pass: ManuallyDrop<OffscreenPass>,
     is_initialized: bool,
     //checkpoint_fn: NvDeviceDiagnosticCheckpointsFn,
+    primary_ssbo_data: PrimarySSBOData,
 }
 
 impl Graphics {
@@ -347,6 +349,12 @@ impl Graphics {
             descriptor_layout_cache: Arc::new(Mutex::new(ManuallyDrop::new(
                 descriptor_layout_cache,
             ))),
+            primary_ssbo_data: PrimarySSBOData {
+                world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
+                object_colors: [Vec4::zero(); SSBO_DATA_COUNT],
+                reflectivities: [0.0; SSBO_DATA_COUNT],
+                shine_dampers: [0.0; SSBO_DATA_COUNT],
+            },
         })
     }
 
@@ -889,38 +897,45 @@ impl Graphics {
         }
     }
 
-    pub fn update(&mut self, delta_time: f64, scene_type: SceneType) -> anyhow::Result<()> {
+    pub fn update(
+        &mut self,
+        delta_time: f64,
+        renderables: &[LockableRenderable],
+    ) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
         }
-        let resource_arc = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager handle.");
-        let resource_lock = resource_arc.read();
-        let empty_queue = vec![];
-        let current_model_queue = resource_lock
-            .model_queue
-            .get(&scene_type)
-            .unwrap_or(&empty_queue);
-        for model in current_model_queue.iter() {
+        for model in renderables.iter() {
             let mut model_lock = model.lock();
             model_lock.update(delta_time);
         }
-        drop(resource_lock);
 
         let vp_size = std::mem::size_of::<ViewProjection>();
-        let camera = self.camera.borrow();
-        let view_projection =
-            ViewProjection::new(camera.get_view_matrix(), camera.get_projection_matrix());
-        let mapped = self.uniform_buffers.view_projection.mapped_memory;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                &view_projection as *const _ as *const c_void,
-                mapped,
-                vp_size,
-            );
+        {
+            let camera = self.camera.borrow();
+            let view_projection =
+                ViewProjection::new(camera.get_view_matrix(), camera.get_projection_matrix());
+            let mapped = self.uniform_buffers.view_projection.mapped_memory;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    &view_projection as *const _ as *const c_void,
+                    mapped,
+                    vp_size,
+                );
+            }
         }
+        self.update_primary_ssbo(renderables);
+        let mapped = self.uniform_buffers.primary_ssbo.as_ref();
+        if let Some(ptr) = mapped {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    &self.primary_ssbo_data as *const _ as *const std::ffi::c_void,
+                    ptr.mapped_memory,
+                    std::mem::size_of::<PrimarySSBOData>(),
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -1637,28 +1652,15 @@ impl Graphics {
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
-        let mut model_metadata = PrimarySSBOData {
-            world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
-            object_colors: [Vec4::zero(); SSBO_DATA_COUNT],
-            reflectivities: [0.0; SSBO_DATA_COUNT],
-            shine_dampers: [0.0; SSBO_DATA_COUNT],
-        };
-        let model_queue = resource_lock
+        let renderables = resource_lock
             .model_queue
             .get(&scene_type)
             .expect("Failed to get model queue for the current scene.");
-        for model in model_queue.iter() {
-            let model_lock = model.lock();
-            let metadata = model_lock.get_model_metadata();
-            let ssbo_index = model_lock.get_ssbo_index();
-            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
-            model_metadata.object_colors[ssbo_index] = metadata.object_color;
-            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
-            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
-        }
+        self.update_primary_ssbo(renderables.as_slice());
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);
         drop(resource_manager);
+        let model_metadata = &self.primary_ssbo_data;
         let mut buffer = super::Buffer::new(
             Arc::downgrade(&self.logical_device),
             buffer_size as u64,
@@ -1711,6 +1713,19 @@ impl Graphics {
             &self.frame_data[current_frame % inflight_buffer_count],
             current_frame % inflight_buffer_count,
         )
+    }
+
+    fn update_primary_ssbo(&mut self, renderables: &[LockableRenderable]) {
+        let model_metadata = &mut self.primary_ssbo_data;
+        for model in renderables.iter() {
+            let model_lock = model.lock();
+            let metadata = model_lock.get_model_metadata();
+            let ssbo_index = model_lock.get_ssbo_index();
+            model_metadata.world_matrices[ssbo_index] = metadata.world_matrix;
+            model_metadata.object_colors[ssbo_index] = metadata.object_color;
+            model_metadata.reflectivities[ssbo_index] = metadata.reflectivity;
+            model_metadata.shine_dampers[ssbo_index] = metadata.shine_damper;
+        }
     }
 
     fn update_secondary_command_buffers(

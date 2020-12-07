@@ -646,39 +646,72 @@ where
 impl Renderable<Graphics, Buffer, CommandBuffer, Image>
     for SkinnedModel<Graphics, Buffer, CommandBuffer, Image>
 {
-    fn update(&mut self, delta_time: f64) {
-        let mut keys = self.animations.keys();
-        let animation_name = keys.next().cloned().unwrap();
-        let animation = self.animations.get_mut(&animation_name).unwrap();
-        animation.current_time += delta_time as f32;
-        let animation_end_time = *animation.channels.last().unwrap().inputs.last().unwrap();
-        if animation.current_time > animation_end_time {
-            animation.current_time -= animation_end_time;
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new(self.clone())
+    }
+
+    fn create_ssbo(&mut self) -> anyhow::Result<()> {
+        let mut ssbo_handles = HashMap::new();
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle.");
+        for (index, _) in self.skinned_meshes.iter().enumerate() {
+            let entry = ssbo_handles.entry(index).or_insert_with(Vec::new);
+            let graphics_clone = graphics.clone();
+            let (ssbo_send, ssbo_recv) = bounded(5);
+            rayon::spawn(move || {
+                let buffer = [Mat4::identity(); 500];
+                ssbo_send
+                    .send(SSBO::new(graphics_clone, &buffer))
+                    .expect("Failed to send SSBO result.");
+            });
+            entry.push(ssbo_recv);
         }
-        let buffer_size = std::mem::size_of::<Mat4>() * 500;
-        for mesh in self.skinned_meshes.iter() {
-            let mesh_lock = mesh.lock();
-            let mut buffer = [Mat4::identity(); 500];
-            let local_transform = mesh_lock.transform;
-            match mesh_lock.root_joint.as_ref() {
-                Some(joint) => generate_joint_transforms(
-                    animation,
-                    animation.current_time,
-                    joint,
-                    local_transform,
-                    &mut buffer,
-                ),
-                None => continue,
-            }
-            let mapped = mesh_lock.ssbo.as_ref().unwrap().buffer.mapped_memory;
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    buffer.as_ptr() as *const std::ffi::c_void,
-                    mapped,
-                    buffer_size,
-                );
-            }
+        for (index, mesh) in self.skinned_meshes.iter().enumerate() {
+            let ssbos = ssbo_handles
+                .get_mut(&index)
+                .expect("Failed to get SSBO handle.");
+            let item = ssbos
+                .get_mut(0)
+                .expect("Failed to get ssbo result.")
+                .recv()??;
+            mesh.lock().ssbo = Some(item);
         }
+        Ok(())
+    }
+
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        let buffers = self
+            .skinned_meshes
+            .iter()
+            .map(|m| {
+                m.lock()
+                    .primitives
+                    .iter()
+                    .map(|p| {
+                        p.command_data
+                            .get(&frame_index)
+                            .map(|(_, buffer)| *buffer)
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        buffers
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model_metadata
+    }
+
+    fn get_position_info(&self) -> PositionInfo {
+        self.position_info
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.ssbo_index
     }
 
     fn render(
@@ -802,76 +835,51 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         }
     }
 
-    fn get_ssbo_index(&self) -> usize {
-        self.ssbo_index
-    }
-
-    fn get_model_metadata(&self) -> ModelMetaData {
-        self.model_metadata
-    }
-
-    fn get_position_info(&self) -> PositionInfo {
-        self.position_info
-    }
-
-    fn create_ssbo(&mut self) -> anyhow::Result<()> {
-        let mut ssbo_handles = HashMap::new();
-        let graphics = self
-            .graphics
-            .upgrade()
-            .expect("Failed to upgrade graphics handle.");
-        for (index, _) in self.skinned_meshes.iter().enumerate() {
-            let entry = ssbo_handles.entry(index).or_insert_with(Vec::new);
-            let graphics_clone = graphics.clone();
-            let (ssbo_send, ssbo_recv) = bounded(5);
-            rayon::spawn(move || {
-                let buffer = [Mat4::identity(); 500];
-                ssbo_send
-                    .send(SSBO::new(graphics_clone, &buffer))
-                    .expect("Failed to send SSBO result.");
-            });
-            entry.push(ssbo_recv);
-        }
-        for (index, mesh) in self.skinned_meshes.iter().enumerate() {
-            let ssbos = ssbo_handles
-                .get_mut(&index)
-                .expect("Failed to get SSBO handle.");
-            let item = ssbos
-                .get_mut(0)
-                .expect("Failed to get ssbo result.")
-                .recv()??;
-            mesh.lock().ssbo = Some(item);
-        }
-        Ok(())
-    }
-
-    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
-        let buffers = self
-            .skinned_meshes
-            .iter()
-            .map(|m| {
-                m.lock()
-                    .primitives
-                    .iter()
-                    .map(|p| {
-                        p.command_data
-                            .get(&frame_index)
-                            .map(|(_, buffer)| *buffer)
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-        buffers
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
+        self.model_metadata = model_metadata;
     }
 
     fn set_position_info(&mut self, position_info: PositionInfo) {
         self.position_info = position_info;
     }
 
-    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
-        self.model_metadata = model_metadata;
+    fn set_ssbo_index(&mut self, ssbo_index: usize) {
+        self.ssbo_index = ssbo_index;
+    }
+
+    fn update(&mut self, delta_time: f64) {
+        let mut keys = self.animations.keys();
+        let animation_name = keys.next().cloned().unwrap();
+        let animation = self.animations.get_mut(&animation_name).unwrap();
+        animation.current_time += delta_time as f32;
+        let animation_end_time = *animation.channels.last().unwrap().inputs.last().unwrap();
+        if animation.current_time > animation_end_time {
+            animation.current_time -= animation_end_time;
+        }
+        let buffer_size = std::mem::size_of::<Mat4>() * 500;
+        for mesh in self.skinned_meshes.iter() {
+            let mesh_lock = mesh.lock();
+            let mut buffer = [Mat4::identity(); 500];
+            let local_transform = mesh_lock.transform;
+            match mesh_lock.root_joint.as_ref() {
+                Some(joint) => generate_joint_transforms(
+                    animation,
+                    animation.current_time,
+                    joint,
+                    local_transform,
+                    &mut buffer,
+                ),
+                None => continue,
+            }
+            let mapped = mesh_lock.ssbo.as_ref().unwrap().buffer.mapped_memory;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    buffer.as_ptr() as *const std::ffi::c_void,
+                    mapped,
+                    buffer_size,
+                );
+            }
+        }
     }
 
     fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
@@ -879,14 +887,6 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
             let mut mesh_lock = mesh.lock();
             mesh_lock.model_index = model_count.fetch_add(1, Ordering::SeqCst);
         }
-    }
-
-    fn set_ssbo_index(&mut self, ssbo_index: usize) {
-        self.ssbo_index = ssbo_index;
-    }
-
-    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
-        Box::new(self.clone())
     }
 }
 

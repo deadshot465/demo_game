@@ -224,8 +224,24 @@ where
 impl Renderable<Graphics, Buffer, CommandBuffer, Image>
     for InstancedModel<Graphics, Buffer, CommandBuffer, Image>
 {
-    fn update(&mut self, delta_time: f64) {
-        self.model.update(delta_time);
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new((*self).clone())
+    }
+
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        self.model.get_command_buffers(frame_index)
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model.get_model_metadata()
+    }
+
+    fn get_position_info(&self) -> PositionInfo {
+        self.model.position_info
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.ssbo_index
     }
 
     fn render(
@@ -347,40 +363,24 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         }
     }
 
-    fn get_ssbo_index(&self) -> usize {
-        self.ssbo_index
-    }
-
-    fn get_model_metadata(&self) -> ModelMetaData {
-        self.model.get_model_metadata()
-    }
-
-    fn get_position_info(&self) -> PositionInfo {
-        self.model.position_info
-    }
-
-    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
-        self.model.get_command_buffers(frame_index)
+    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
+        self.model.set_model_metadata(model_metadata)
     }
 
     fn set_position_info(&mut self, position_info: PositionInfo) {
         self.model.position_info = position_info;
     }
 
-    fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
-        self.model.set_model_metadata(model_metadata)
-    }
-
-    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
-        self.model.update_model_indices(model_count)
-    }
-
     fn set_ssbo_index(&mut self, ssbo_index: usize) {
         self.ssbo_index = ssbo_index;
     }
 
-    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
-        Box::new((*self).clone())
+    fn update(&mut self, delta_time: f64) {
+        self.model.update(delta_time);
+    }
+
+    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
+        self.model.update_model_indices(model_count)
     }
 }
 

@@ -126,7 +126,9 @@ fn main() -> anyhow::Result<()> {
                                     CameraType::Watch(glam::Vec3A::zero()),
                                     virtual_key_code,
                                 );*/
-                                game.input_key(virtual_key_code, state);
+                                rt.block_on(async {
+                                    game.input_key(virtual_key_code, state).await;
+                                });
                             }
                         },
                         WindowEvent::CursorMoved {

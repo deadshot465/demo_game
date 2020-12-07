@@ -31,6 +31,7 @@ where
     entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
     current_entities: HashMap<String, DefaultKey>,
     render_components: Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
+    loaded: bool,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -56,6 +57,7 @@ where
             entities,
             render_components: vec![],
             current_entities: HashMap::new(),
+            loaded: false,
         }
     }
 }
@@ -64,59 +66,6 @@ impl TitleScene<Graphics, Buffer, CommandBuffer, Image> {}
 
 #[async_trait]
 impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
-    fn initialize(&mut self) {}
-
-    fn get_scene_name(&self) -> &str {
-        &self.scene_name
-    }
-
-    fn set_scene_name(&mut self, scene_name: &str) {
-        self.scene_name = scene_name.to_string();
-    }
-
-    async fn load_content(&mut self) -> anyhow::Result<()> {
-        let title_tank = self.add_entity("TitleTank");
-        self.add_model(
-            "./models/merkava_tank/scene.gltf",
-            Vec3A::new(1.5, 0.0, 1.5),
-            Vec3A::new(0.01, 0.01, 0.01),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-            title_tank,
-        )?;
-        /*self.add_model(
-            "./models/tank/tank.gltf",
-            Vec3A::new(1.5, 0.0, 1.5),
-            Vec3A::new(1.0, 1.0, 1.0),
-            Vec3A::new(0.0, 0.0, 0.0),
-            Vec4::new(1.0, 1.0, 1.0, 1.0),
-            title_tank,
-        )?;*/
-        Ok(())
-    }
-
-    async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
-        let graphics = self
-            .graphics
-            .upgrade()
-            .expect("Failed to upgrade graphics handle.");
-        let mut graphics_lock = graphics.write();
-        graphics_lock.update(delta_time, self.scene_type)?;
-        Ok(())
-    }
-
-    fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
-        let graphics = self
-            .graphics
-            .upgrade()
-            .expect("Failed to upgrade Weak of Graphics for rendering.");
-        {
-            let graphics_lock = graphics.read();
-            graphics_lock.render(&self.render_components)?;
-        }
-        Ok(())
-    }
-
     fn add_entity(&mut self, entity_name: &str) -> DefaultKey {
         let entities = self
             .entities
@@ -193,6 +142,83 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    fn create_ssbo(&self) -> anyhow::Result<()> {
+        for renderable in self.render_components.iter() {
+            renderable.lock().create_ssbo()?;
+        }
+        Ok(())
+    }
+
+    fn get_command_buffers(&self) {
+        let resource_manager = self
+            .resource_manager
+            .upgrade()
+            .expect("Failed to upgrade resource manager handle.");
+        let mut resource_lock = resource_manager.write();
+        resource_lock.get_all_command_buffers(self.scene_type);
+    }
+
+    fn get_model_count(&self) -> Arc<AtomicUsize> {
+        self.counts.model_count.clone()
+    }
+
+    fn get_scene_name(&self) -> &str {
+        &self.scene_name
+    }
+
+    fn get_scene_type(&self) -> SceneType {
+        self.scene_type
+    }
+
+    fn initialize(&mut self) {}
+
+    fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    async fn load_content(&mut self) -> anyhow::Result<()> {
+        let title_tank = self.add_entity("TitleTank");
+        self.add_model(
+            "./models/merkava_tank/scene.gltf",
+            Vec3A::new(1.5, 0.0, 1.5),
+            Vec3A::new(0.01, 0.01, 0.01),
+            Vec3A::new(0.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+            title_tank,
+        )?;
+        self.loaded = true;
+        Ok(())
+    }
+
+    fn render(&self, _delta_time: f64) -> anyhow::Result<()> {
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade Weak of Graphics for rendering.");
+        {
+            let graphics_lock = graphics.read();
+            graphics_lock.render(&self.render_components)?;
+        }
+        Ok(())
+    }
+
+    fn set_scene_name(&mut self, scene_name: &str) {
+        self.scene_name = scene_name.to_string();
+    }
+
+    async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+        if !self.loaded {
+            return Ok(());
+        }
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle.");
+        let mut graphics_lock = graphics.write();
+        graphics_lock.update(delta_time, &self.render_components)?;
+        Ok(())
+    }
+
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
         let completed_tasks = self.waitable_tasks.wait_for_all_tasks()?;
         let rm = self.resource_manager.upgrade();
@@ -211,30 +237,6 @@ impl Scene for TitleScene<Graphics, Buffer, CommandBuffer, Image> {
         drop(rm);
         self.waitable_tasks.clear();
         Ok(())
-    }
-
-    fn get_model_count(&self) -> Arc<AtomicUsize> {
-        self.counts.model_count.clone()
-    }
-
-    fn get_scene_type(&self) -> SceneType {
-        self.scene_type
-    }
-
-    fn create_ssbo(&self) -> anyhow::Result<()> {
-        for renderable in self.render_components.iter() {
-            renderable.lock().create_ssbo()?;
-        }
-        Ok(())
-    }
-
-    fn get_command_buffers(&self) {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade resource manager handle.");
-        let mut resource_lock = resource_manager.write();
-        resource_lock.get_all_command_buffers(self.scene_type);
     }
 }
 

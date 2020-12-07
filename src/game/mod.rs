@@ -123,10 +123,11 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
         }
     }
 
-    pub fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+    pub async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
         if let Some(ui) = self.ui_system.as_ref() {
             ui.borrow_mut().input_key(key, element_state);
         }
+        self.scene_manager.input_key(key, element_state).await;
     }
 
     pub fn input_motion(&self, x: f64, y: f64) {
@@ -230,17 +231,12 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
 
             {
                 let mut ns = self.network_system.write().await;
-                let entity = self.scene_manager.add_entity("GameTerrain");
                 if is_owner {
-                    let primitive = self.scene_manager.generate_terrain(0, 0, None, entity)?;
+                    let primitive = self.scene_manager.generate_terrain(0, 0, None)?;
                     ns.start_game(primitive).await?;
                 } else {
-                    self.scene_manager.generate_terrain(
-                        0,
-                        0,
-                        Some(ns.get_terrain().await?),
-                        entity,
-                    )?;
+                    self.scene_manager
+                        .generate_terrain(0, 0, Some(ns.get_terrain().await?))?;
                 }
                 ns.progress_game().await?;
             }
@@ -269,17 +265,24 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
                             available_rooms.iter().choose(&mut rng)
                         };
 
-                        let room = randomly_selected_room.expect("Failed to get available room.");
-
-                        Some(
-                            network_system
-                                .register_player(
-                                    room.room_id.clone(),
-                                    room.room_name.clone(),
-                                    false,
-                                )
-                                .await?,
-                        )
+                        if let Some(room) = randomly_selected_room {
+                            Some(
+                                network_system
+                                    .register_player(
+                                        room.room_id.clone(),
+                                        room.room_name.clone(),
+                                        false,
+                                    )
+                                    .await?,
+                            )
+                        } else {
+                            let room_id = get_random_string(7);
+                            Some(
+                                network_system
+                                    .register_player(room_id, "Test Room".into(), true)
+                                    .await?,
+                            )
+                        }
                     }
                 }
                 _ => None,
