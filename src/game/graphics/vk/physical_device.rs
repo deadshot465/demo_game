@@ -156,7 +156,7 @@ impl PhysicalDevice {
                 }
 
                 if item.1.queue_count > 0
-                    && ((item.1.queue_flags & QueueFlags::COMPUTE) != QueueFlags::COMPUTE)
+                    && ((item.1.queue_flags & QueueFlags::COMPUTE) == QueueFlags::COMPUTE)
                 {
                     queue_indices.compute_family = Some(item.0 as u32);
                 }

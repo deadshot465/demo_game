@@ -1127,6 +1127,23 @@ impl Graphics {
                     .build();
                 texture_info.push(image_info);
             }
+
+            #[cfg(target_os = "macos")]
+                {
+                    let current_length = texture_info.len();
+                    let last_texture = resource_lock.textures.last()
+                        .expect("Failed to get last texture from resource manager.");
+                    let texture_lock = last_texture.read()
+                        .expect("Failed to lock last texture for writing descriptor set.");
+                    for _ in current_length..30 {
+                        let image_info = DescriptorImageInfo::builder()
+                            .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .image_view(texture_lock.image_view)
+                            .sampler(texture_lock.sampler)
+                            .build();
+                        texture_info.push(image_info);
+                    }
+                }
         }
 
         if let Some((descriptor_set, descriptor_set_layout)) =
