@@ -13,9 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const SERVER_ENDPOINT: &str = "http://64.227.99.31:26361";
-//const SERVER_ENDPOINT: &str = "http://localhost:26361";
-
 /// ユーザーが入力した内容を検証する正規表現。<br />
 /// Regular expressions used to validate user inputs.
 static USERNAME_REGEX: OnceCell<Regex> = OnceCell::new();
@@ -78,8 +75,9 @@ impl NetworkSystem {
     ///　コンストラクター。<br />
     /// Constructor.
     pub async fn new() -> anyhow::Result<Self> {
-        let mut jwt_client = JwtTokenServiceClient::connect(SERVER_ENDPOINT).await?;
-        let grpc_client = GrpcServiceClient::connect(SERVER_ENDPOINT).await?;
+        let endpoint = dotenv::var("SERVER_ENDPOINT")?;
+        let mut jwt_client = JwtTokenServiceClient::connect(endpoint.clone()).await?;
+        let grpc_client = GrpcServiceClient::connect(endpoint).await?;
         let authentication = Self::authenticate(&mut jwt_client).await?;
 
         // 無効な入力は禁止されているので正規表現で検証する。<br />
