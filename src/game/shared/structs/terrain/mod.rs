@@ -47,8 +47,8 @@ where
     pub const VERTEX_COUNT: u32 = 128;
 
     fn create_terrain(
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         model_index: usize,
         ssbo_index: usize,
@@ -61,10 +61,8 @@ where
         primitive: Option<Primitive>,
         entity: DefaultKey,
     ) -> Self {
-        let x = grid_x as f32 * Self::SIZE * size_ratio_x;
-        let z = grid_z as f32 * Self::SIZE * size_ratio_z;
-        let x = x * Self::SIZE * size_ratio_x;
-        let z = z * Self::SIZE * size_ratio_z;
+        let x = grid_x * Self::SIZE * size_ratio_x;
+        let z = grid_z * Self::SIZE * size_ratio_z;
         let model = Self::generate_terrain(
             model_index,
             ssbo_index,
@@ -207,8 +205,8 @@ where
 
 impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
     pub fn new(
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         model_index: usize,
         ssbo_index: usize,
         graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,

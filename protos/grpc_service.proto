@@ -152,6 +152,6 @@ message GameState {
   
   message ProgressGameRequest {
     GameState.Player player = 1;
-    GameState.RoomState room_state = 2;
+    string room_id = 2;
   }
 }

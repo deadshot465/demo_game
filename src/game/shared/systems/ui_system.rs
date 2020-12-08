@@ -205,7 +205,7 @@ where
             let current_players = format!("Current players: {}", room_state.current_players);
             ctx.text(&current_players, TextAlignment::Centered as Flags);
             if let Some(player) = ns.logged_user.as_ref() {
-                if let Some(state) = player.state.as_ref() {
+                if let Some(state) = player.lock().await.state.as_ref() {
                     let is_owner = state.is_owner;
                     let is_player_sufficient = room_state.current_players >= 2;
                     if is_owner && is_player_sufficient {

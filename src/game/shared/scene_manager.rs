@@ -48,8 +48,8 @@ impl SceneManager {
 
     pub fn generate_terrain(
         &self,
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         primitive: Option<Primitive>,
     ) -> anyhow::Result<Primitive> {
         let current_index = self.current_index;

@@ -53,7 +53,7 @@ pub struct NetworkSystem {
 
     /// ログインしたプレイヤーのデータ。まだログインしていないならNoneを保存する。<br />
     /// The current logged in player. None if not yet logged in.
-    pub logged_user: Option<Player>,
+    pub logged_user: Option<Arc<Mutex<Player>>>,
 
     pub progress_recv: Option<crossbeam::channel::Receiver<RoomState>>,
 
@@ -159,9 +159,9 @@ impl NetworkSystem {
                     .player
                     .take()
                     .expect("Failed to get player from response.");
-                self.logged_user = Some(player);
+                self.logged_user = Some(Arc::new(Mutex::new(player.clone())));
                 self.is_player_login = true;
-                self.logged_user.clone()
+                Some(player)
             } else {
                 None
             }
@@ -173,17 +173,19 @@ impl NetworkSystem {
     /// ゲームを推進する。<br />
     /// Progress the game.
     pub async fn progress_game(&mut self) -> anyhow::Result<()> {
-        let room_state = self.room_state.clone();
-        let player = self.logged_user.clone();
+        let room_id = self.room_state.lock().await.room_id.clone();
+        let player = self
+            .logged_user
+            .clone()
+            .expect("Failed to get current logged in player.");
         let request_stream = async_stream::stream! {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(35));
-            let room_state = room_state;
+            let room_id = room_id;
             let player = player;
             while let _ = interval.tick().await {
-                let room_state = room_state.lock().await.clone();
                 let progress_state = ProgressGameRequest  {
-                    player: player.clone(),
-                    room_state: Some(room_state),
+                    player: Some(player.lock().await.clone()),
+                    room_id: room_id.clone(),
                 };
                 yield progress_state;
             }
@@ -269,8 +271,8 @@ impl NetworkSystem {
         room_name: String,
         is_owner: bool,
     ) -> anyhow::Result<crossbeam::channel::Receiver<bool>> {
-        if let Some(player) = self.logged_user.as_mut() {
-            if let Some(state) = player.state.as_mut() {
+        if let Some(player) = self.logged_user.as_ref() {
+            if let Some(state) = player.lock().await.state.as_mut() {
                 state.is_owner = is_owner;
                 state.room_id = room_id.to_string();
             }
@@ -278,7 +280,14 @@ impl NetworkSystem {
         let request = tonic::Request::new(RegisterPlayerRequest {
             room_id,
             room_name,
-            player: self.logged_user.clone(),
+            player: Some(
+                self.logged_user
+                    .clone()
+                    .expect("Failed to get currently logged in player")
+                    .lock()
+                    .await
+                    .clone(),
+            ),
         });
         let response = self.grpc_client.register_player(request).await?;
         let response = response.into_inner();

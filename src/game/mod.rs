@@ -219,7 +219,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             let is_owner = {
                 let ns = self.network_system.read().await;
                 if let Some(player) = ns.logged_user.as_ref() {
-                    if let Some(state) = player.state.as_ref() {
+                    if let Some(state) = player.lock().await.state.as_ref() {
                         state.is_owner
                     } else {
                         false
@@ -232,11 +232,14 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             {
                 let mut ns = self.network_system.write().await;
                 if is_owner {
-                    let primitive = self.scene_manager.generate_terrain(0, 0, None)?;
+                    let primitive = self.scene_manager.generate_terrain(-0.5, -0.5, None)?;
                     ns.start_game(primitive).await?;
                 } else {
-                    self.scene_manager
-                        .generate_terrain(0, 0, Some(ns.get_terrain().await?))?;
+                    self.scene_manager.generate_terrain(
+                        -0.5,
+                        -0.5,
+                        Some(ns.get_terrain().await?),
+                    )?;
                 }
                 ns.progress_game().await?;
             }

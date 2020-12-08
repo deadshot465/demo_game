@@ -20,7 +20,7 @@ use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
 use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
-use crate::protos::grpc_service::game_state::WorldMatrix;
+use crate::protos::grpc_service::game_state::{EntityState, WorldMatrix};
 use std::collections::HashMap;
 use winit::event::{ElementState, VirtualKeyCode};
 
@@ -297,8 +297,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
     fn generate_terrain(
         &mut self,
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         primitive: Option<Primitive>,
     ) -> anyhow::Result<Primitive> {
         let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
@@ -396,15 +396,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             )
         };
 
-        let mut room_state_lock = room_state.lock().await;
-        let player_state = room_state_lock
-            .players
-            .iter_mut()
-            .find(|p| p.player_id.as_str() == player.player_id.as_str())
-            .and_then(|p| p.state.as_mut());
-
-        if let Some(ps) = player_state {
-            let world_matrix = ps.state.as_mut().and_then(|e| e.world_matrix.as_mut());
+        let mut player_lock = player.lock().await;
+        if let Some(state) = player_lock.state.as_mut() {
+            let world_matrix = state.state.as_mut().and_then(|e| e.world_matrix.as_mut());
             if let Some(wm) = world_matrix {
                 let (rotation_x, mut rotation_y, rotation_z) =
                     (wm.rotation[0], wm.rotation[1], wm.rotation[2]);

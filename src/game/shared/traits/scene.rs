@@ -25,8 +25,8 @@ pub trait Scene: Sync {
 
     fn generate_terrain(
         &mut self,
-        _grid_x: i32,
-        _grid_z: i32,
+        _grid_x: f32,
+        _grid_z: f32,
         _primitive: Option<Primitive>,
     ) -> anyhow::Result<Primitive> {
         Ok(Primitive {
