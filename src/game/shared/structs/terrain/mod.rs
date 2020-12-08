@@ -130,6 +130,13 @@ where
                     vertices.push(vertex);
                 }
             }
+
+            let first_vertex = vertices[0];
+            let diff = first_vertex.position.y - 0.0;
+            for vertex in vertices.iter_mut() {
+                vertex.position.y -= diff;
+            }
+
             let mut pointer = 0;
             for gz in 0..vertex_count - 1 {
                 for gx in 0..vertex_count - 1 {
