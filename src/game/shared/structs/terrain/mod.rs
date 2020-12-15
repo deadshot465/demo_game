@@ -131,8 +131,16 @@ where
                 }
             }
 
-            let first_vertex = vertices[0];
-            let diff = first_vertex.position.y - 0.0;
+            let highest_vertex = vertices
+                .iter()
+                .max_by(|v1, v2| {
+                    v1.position
+                        .y
+                        .partial_cmp(&v2.position.y)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&vertices[0]);
+            let diff = highest_vertex.position.y - 0.0;
             for vertex in vertices.iter_mut() {
                 vertex.position.y -= diff;
             }

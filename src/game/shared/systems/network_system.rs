@@ -183,8 +183,17 @@ impl NetworkSystem {
             let room_id = room_id;
             let player = player;
             while let _ = interval.tick().await {
+                let player_state = player.lock().await.clone();
+                if let Some(state) = player_state.state.as_ref() {
+                    let world_matrix = state.state.as_ref().and_then(|s| s.world_matrix.as_ref());
+                    if let Some(wm) = world_matrix {
+                        println!("World Matrix: {:?}", &wm.position);
+                    } else {
+                        continue;
+                    }
+                }
                 let progress_state = ProgressGameRequest  {
-                    player: Some(player.lock().await.clone()),
+                    player: Some(player_state),
                     room_id: room_id.clone(),
                 };
                 yield progress_state;
@@ -293,10 +302,15 @@ impl NetworkSystem {
         let response = response.into_inner();
         let room_state = self.room_state.clone();
         let (send, recv) = crossbeam::channel::bounded(5);
+        let logged_player = self
+            .logged_user
+            .clone()
+            .expect("Failed to get currently logged in player.");
         tokio::spawn(async {
             let current_room_state = room_state;
             let mut response = response;
             let send = send;
+            let logged_player = logged_player;
             while let Ok(r) = response.message().await {
                 let mut state = current_room_state.lock().await;
                 if state.started {
@@ -308,11 +322,20 @@ impl NetworkSystem {
                     *state = actual_state;
                 }
             }
+            let mut player = logged_player.lock().await;
+            let latest_room_state = current_room_state.lock().await;
+            let updated_player = latest_room_state
+                .players
+                .iter()
+                .find(|p| p.player_id.as_str() == player.player_id.as_str());
+            if let Some(p) = updated_player {
+                *player = p.clone();
+            }
         });
         Ok(recv)
     }
 
-    /// 部屋を待たせないようにして、ゲームを始める。<br />
+    /// 部屋を待たないようにして、ゲームを始める。<br />
     /// この関数を呼び出せるのはホスト（部屋のオーナー）のみです。<br />
     /// Stop waiting in a room and start the game.<br />
     /// This function can only be invoked by the client of the host (the owner of the room).

@@ -397,6 +397,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         };
 
         let mut player_lock = player.lock().await;
+        let player_id = player_lock.player_id.clone();
         if let Some(state) = player_lock.state.as_mut() {
             let world_matrix = state.state.as_mut().and_then(|e| e.world_matrix.as_mut());
             if let Some(wm) = world_matrix {
@@ -421,11 +422,27 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                     }
                     _ => {}
                 }
-                *wm = WorldMatrix {
-                    position: vec![x, y, z],
+                let new_position = vec![x, y, z];
+                println!("{:?}", &new_position);
+                let world_matrix = WorldMatrix {
+                    position: new_position,
                     scale,
                     rotation: vec![rotation_x, rotation_y, rotation_z],
                 };
+                *wm = world_matrix.clone();
+                let mut rs = room_state.lock().await;
+                let current_player = rs
+                    .players
+                    .iter_mut()
+                    .find(|p| p.player_id.as_str() == player_id.as_str());
+                let player_matrix = current_player.and_then(|p| {
+                    p.state
+                        .as_mut()
+                        .and_then(|s| s.state.as_mut().and_then(|e| e.world_matrix.as_mut()))
+                });
+                if let Some(m) = player_matrix {
+                    *m = world_matrix
+                }
             }
         }
     }
