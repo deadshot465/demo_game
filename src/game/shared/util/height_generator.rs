@@ -22,7 +22,7 @@ impl HeightGenerator {
 
     pub fn new() -> Self {
         let mut rng = thread_rng();
-        let seed = rng.gen_range(0, 1_000_000_000);
+        let seed = rng.gen_range(0..1_000_000_000);
         HeightGenerator {
             seed,
             perlin_noise: PerlinNoise::new(),
@@ -88,8 +88,8 @@ impl HeightGenerator {
         let mut rng = rand::rngs::StdRng::seed_from_u64(
             (x * 49362.0 + z * 325176.0 + (self.seed as f32)) as u64,
         );
-        let x = rng.gen_range(0.0_f64, 1.0_f64) * 2.0 - 1.0;
-        let z = rng.gen_range(0.0_f64, 1.0_f64) * 2.0 - 1.0;
+        let x = rng.gen_range(0.0_f64..1.0_f64) * 2.0 - 1.0;
+        let z = rng.gen_range(0.0_f64..1.0_f64) * 2.0 - 1.0;
         self.perlin_noise.noise(x as f64, z as f64) as f32
         //rng.gen_range(0.0, 1.0) * 2.0 - 1.0
     }

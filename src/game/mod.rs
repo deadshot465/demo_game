@@ -46,6 +46,7 @@ where
     pub scene_manager: SceneManager,
     pub ui_system: UISystemHandle<GraphicsType, BufferType, CommandType, TextureType>,
     pub current_scene: SceneType,
+    pub is_terminating: bool,
     resource_manager: ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType>,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
     network_system: Arc<tokio::sync::RwLock<NetworkSystem>>,
@@ -88,6 +89,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             scenes: HashMap::new(),
             current_scene: SceneType::TITLE,
             room_state_receiver: None,
+            is_terminating: false,
         })
     }
 
@@ -181,6 +183,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if self.is_terminating {
+            return Ok(());
+        }
         self.scene_manager.render(delta_time)?;
         Ok(())
     }
@@ -193,6 +198,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if self.is_terminating {
+            return Ok(());
+        }
         let old_scene = self.current_scene;
         let mut new_scene = self.current_scene;
         if let Some(ui_system) = self.ui_system.as_ref() {
@@ -344,6 +352,7 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             scenes: HashMap::new(),
             current_scene: SceneType::TITLE,
             room_state_receiver: None,
+            is_terminating: false,
         }
     }
 

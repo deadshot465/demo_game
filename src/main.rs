@@ -112,6 +112,7 @@ fn main() -> anyhow::Result<()> {
                         } => match virtual_key_code {
                             VirtualKeyCode::Escape => {
                                 unsafe {
+                                    game.is_terminating = true;
                                     std::mem::ManuallyDrop::drop(game);
                                 }
                                 *control_flow = ControlFlow::Exit;

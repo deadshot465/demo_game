@@ -20,7 +20,7 @@ use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
 use crate::game::traits::Disposable;
 use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
-use crate::protos::grpc_service::game_state::{EntityState, WorldMatrix};
+use crate::protos::grpc_service::game_state::WorldMatrix;
 use std::collections::HashMap;
 use winit::event::{ElementState, VirtualKeyCode};
 

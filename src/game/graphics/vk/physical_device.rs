@@ -70,8 +70,10 @@ impl PhysicalDevice {
             let features = instance.get_physical_device_features(device);
 
             let mut indexing_feature = PhysicalDeviceDescriptorIndexingFeatures::default();
-            let mut features2 = PhysicalDeviceFeatures2::default();
-            features2.p_next = &mut indexing_feature as *mut _ as *mut std::ffi::c_void;
+            let mut features2 = PhysicalDeviceFeatures2 {
+                p_next: &mut indexing_feature as *mut _ as *mut std::ffi::c_void,
+                ..Default::default()
+            };
             instance.get_physical_device_features2(device, &mut features2);
 
             let feature_support = FeatureSupport {
