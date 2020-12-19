@@ -186,9 +186,7 @@ impl NetworkSystem {
                 let player_state = player.lock().await.clone();
                 if let Some(state) = player_state.state.as_ref() {
                     let world_matrix = state.state.as_ref().and_then(|s| s.world_matrix.as_ref());
-                    if let Some(wm) = world_matrix {
-                        println!("World Matrix: {:?}", &wm.position);
-                    } else {
+                    if world_matrix.is_none() {
                         continue;
                     }
                 }
