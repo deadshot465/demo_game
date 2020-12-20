@@ -21,6 +21,7 @@ use crate::game::shared::util::HeightGenerator;
 use crate::game::structs::games::WorldMatrixUdp;
 use crate::game::traits::Disposable;
 use crate::game::{Camera, LockableRenderable, NetworkSystem, ResourceManagerWeak};
+use crate::protos::grpc_service::game_state::WorldMatrix;
 use std::collections::HashMap;
 use winit::event::{ElementState, VirtualKeyCode};
 
@@ -384,7 +385,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.loaded
     }
 
-    async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+    /*async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
         let player = {
             let network_system = self
                 .network_system
@@ -446,25 +447,21 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             rotation: vec![rotation_x, rotation_y, rotation_z],
         };
         *world_matrix = new_world_matrix;
-    }
+    }*/
 
-    /*async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
-        let (room_state, player) = {
+    async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        let player = {
             let network_system = self
                 .network_system
                 .upgrade()
                 .expect("Failed to upgrade network system handle.");
             let ns = network_system.read().await;
-            (
-                ns.room_state.clone(),
-                ns.logged_user
-                    .clone()
-                    .expect("Failed to get currently logged-in user."),
-            )
+            ns.logged_user
+                .clone()
+                .expect("Failed to get currently logged-in user.")
         };
 
         let mut player_lock = player.lock().await;
-        let player_id = player_lock.player_id.clone();
         if let Some(state) = player_lock.state.as_mut() {
             let world_matrix = state.state.as_mut().and_then(|e| e.world_matrix.as_mut());
             if let Some(wm) = world_matrix {
@@ -489,30 +486,31 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                     }
                     _ => {}
                 }
+
+                {
+                    let camera = self
+                        .camera
+                        .upgrade()
+                        .expect("Failed to upgrade camera handle.");
+                    let mut borrowed_camera = camera.borrow_mut();
+                    borrowed_camera.target.x = x;
+                    borrowed_camera.target.y = y;
+                    borrowed_camera.target.z = z;
+                    borrowed_camera.position.x = x;
+                    borrowed_camera.position.y = y + 10.0;
+                    borrowed_camera.position.z = z - 10.0;
+                }
+
                 let new_position = vec![x, y, z];
-                println!("{:?}", &new_position);
                 let world_matrix = WorldMatrix {
                     position: new_position,
                     scale,
                     rotation: vec![rotation_x, rotation_y, rotation_z],
                 };
-                *wm = world_matrix.clone();
-                let mut rs = room_state.lock().await;
-                let current_player = rs
-                    .players
-                    .iter_mut()
-                    .find(|p| p.player_id.as_str() == player_id.as_str());
-                let player_matrix = current_player.and_then(|p| {
-                    p.state
-                        .as_mut()
-                        .and_then(|s| s.state.as_mut().and_then(|e| e.world_matrix.as_mut()))
-                });
-                if let Some(m) = player_matrix {
-                    *m = world_matrix
-                }
+                *wm = world_matrix;
             }
         }
-    }*/
+    }
 
     async fn load_content(&mut self) -> anyhow::Result<()> {
         let network_system = self
@@ -532,7 +530,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
         let room_state = room_state.expect("Failed to get room state from receiver.");
         let players = room_state.players;
-        for (player_no, player) in players.iter().enumerate() {
+        /*for (player_no, player) in players.iter().enumerate() {
             let world_matrix = &player.state.state.world_matrix;
             let position: Vec3A = Vec3A::new(
                 world_matrix.position[0],
@@ -558,8 +556,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 Vec4::one(),
                 entity,
             )?;
-        }
-        /*for (player_no, player) in players.iter().enumerate() {
+        }*/
+
+        for (player_no, player) in players.iter().enumerate() {
             if let Some(state) = player.state.as_ref() {
                 if let Some(entity_state) = state.state.as_ref() {
                     if let Some(world_matrix) = entity_state.world_matrix.as_ref() {
@@ -590,7 +589,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                     }
                 }
             }
-        }*/
+        }
 
         //let mr_incredible = self.add_entity("Mr.Incredible");
         /*self.add_model(
@@ -650,7 +649,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.scene_name = scene_name.to_string();
     }
 
-    /*async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+    async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         if !self.loaded {
             return Ok(());
         }
@@ -708,9 +707,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let mut graphics_lock = graphics.write();
         graphics_lock.update(delta_time, &self.render_components)?;
         Ok(())
-    }*/
+    }
 
-    async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+    /*async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
         if !self.loaded {
             return Ok(());
         }
@@ -760,7 +759,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         let mut graphics_lock = graphics.write();
         graphics_lock.update(delta_time, &self.render_components)?;
         Ok(())
-    }
+    }*/
 
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
         let completed_tasks = self.waitable_tasks.wait_for_all_tasks()?;

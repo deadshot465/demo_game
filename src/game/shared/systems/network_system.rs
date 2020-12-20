@@ -1,7 +1,8 @@
 use crate::game::shared::structs::games::{PlayerUdp, RoomStateUdp};
 use crate::game::shared::structs::Primitive;
 use crate::protos::grpc_service::game_state::{
-    GetTerrainRequest, Player, RegisterPlayerRequest, RoomState, StartGameRequest,
+    GetTerrainRequest, Player, ProgressGameRequest, RegisterPlayerRequest, RoomState,
+    StartGameRequest,
 };
 use crate::protos::grpc_service::grpc_service_client::GrpcServiceClient;
 use crate::protos::grpc_service::{Empty, LoginRequest, RegisterRequest};
@@ -60,7 +61,7 @@ pub struct NetworkSystem {
 
     pub logged_user_udp: Arc<Mutex<PlayerUdp>>,
 
-    pub progress_recv: Option<tokio::sync::oneshot::Receiver<RoomStateUdp>>,
+    pub progress_recv: Option<tokio::sync::oneshot::Receiver<RoomState>>,
 
     /// もらったトークンや検証データを保存するためのフィールド。<br />
     /// A field to store acquired JWT token and authentication data.
@@ -183,7 +184,7 @@ impl NetworkSystem {
         }
     }
 
-    pub async fn progress_game(&mut self) -> anyhow::Result<()> {
+    /*pub async fn progress_game(&mut self) -> anyhow::Result<()> {
         let player = self.logged_user_udp.clone();
         let room_state = self.room_state_udp.clone();
         let udp_socket = self.udp_socket.clone();
@@ -256,18 +257,18 @@ impl NetworkSystem {
         });
         self.progress_recv = Some(recv);
         Ok(())
-    }
+    }*/
 
     /// ゲームを推進する。<br />
     /// Progress the game.
-    /*pub async fn progress_game(&mut self) -> anyhow::Result<()> {
+    pub async fn progress_game(&mut self) -> anyhow::Result<()> {
         let room_id = self.room_state.lock().await.room_id.clone();
         let player = self
             .logged_user
             .clone()
             .expect("Failed to get currently logged in player.");
         let request_stream = async_stream::stream! {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(35));
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(1));
             let room_id = room_id;
             let player = player;
             while let _ = interval.tick().await {
@@ -291,11 +292,28 @@ impl NetworkSystem {
             .progress_game(tonic::Request::new(request_stream))
             .await?;
         let mut inbound = response.into_inner();
-        let (send, recv) = crossbeam::channel::unbounded();
+        let (send, recv) = tokio::sync::oneshot::channel();
         let room_state = self.room_state.clone();
         tokio::spawn(async move {
             let room_state = room_state;
-            let send = send;
+            let sender = send;
+
+            while let Some(state) = inbound
+                .message()
+                .await
+                .expect("Failed to received update room state from server")
+            {
+                let mut state_lock = room_state.lock().await;
+                *state_lock = state;
+                match sender.send(state_lock.clone()) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        log::warn!("An error occurred when sending via oneshot channel.");
+                    }
+                }
+                break;
+            }
+
             while let Some(state) = inbound
                 .message()
                 .await
@@ -303,18 +321,11 @@ impl NetworkSystem {
             {
                 let mut state_lock = room_state.lock().await;
                 *state_lock = state;
-                match send.send(state_lock.clone()) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::warn!("{}", e.to_string());
-                        break;
-                    }
-                }
             }
         });
         self.progress_recv = Some(recv);
         Ok(())
-    }*/
+    }
 
     /// ユーザーが入力したデータに基づいてサーバーとデータベースに登録する。<br />
     /// Register player to the database and server using inputted information.
