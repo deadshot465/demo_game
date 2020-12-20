@@ -107,9 +107,10 @@ impl From<EntityState> for EntityStateUdp {
             current_sp: state.current_sp,
             max_sp: state.max_sp,
             is_alive: state.is_alive,
-            world_matrix: WorldMatrixUdp::from(
-                state.world_matrix.expect("Failed to get world matrix."),
-            ),
+            world_matrix: match state.world_matrix {
+                None => WorldMatrixUdp::default(),
+                Some(w) => WorldMatrixUdp::from(w),
+            },
         }
     }
 }
@@ -137,7 +138,10 @@ impl From<PlayerState> for PlayerStateUdp {
             is_in_game: state.is_in_game,
             room_id: state.room_id,
             is_owner: state.is_owner,
-            state: EntityStateUdp::from(state.state.expect("Failed to get entity state.")),
+            state: match state.state {
+                Some(s) => EntityStateUdp::from(s),
+                None => EntityStateUdp::default(),
+            },
         }
     }
 }
@@ -179,7 +183,10 @@ impl From<Player> for PlayerUdp {
             lose_count: p.lose_count,
             credits: p.credits,
             email: p.email,
-            state: PlayerStateUdp::from(p.state.expect("Failed to get player state.")),
+            state: match p.state {
+                Some(s) => PlayerStateUdp::from(s),
+                None => PlayerStateUdp::default(),
+            },
         }
     }
 }

@@ -524,7 +524,6 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             let mut ns_lock = network_system.write().await;
             if let Some(recv) = ns_lock.progress_recv.as_mut() {
                 if let Ok(state) = recv.await {
-                    println!("Successfully received state.");
                     room_state = Some(state);
                     break;
                 }

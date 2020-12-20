@@ -251,6 +251,7 @@ impl NetworkSystem {
                 }
                 let mut room_state_lock = room_state.lock().await;
                 *room_state_lock = deserialized;
+                tokio::time::delay_for(std::time::Duration::from_millis(30)).await;
             }
         });
         self.progress_recv = Some(recv);
