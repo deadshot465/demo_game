@@ -1475,10 +1475,17 @@ impl Graphics {
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
-        let renderables = resource_lock
-            .model_queue
-            .get(&scene_type)
-            .expect("Failed to get model queue for the current scene.");
+        let mut empty_queue = vec![];
+        let mut renderables = &empty_queue;
+        while empty_queue.is_empty() {
+            let model_queue = resource_lock.model_queue.get(&scene_type);
+            if let Some(mq) = model_queue {
+                renderables = mq;
+                break;
+            } else {
+                continue;
+            }
+        }
         self.update_primary_ssbo(renderables.as_slice());
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);

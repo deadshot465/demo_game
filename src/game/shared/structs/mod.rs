@@ -3,6 +3,7 @@ pub mod blend_mode;
 pub mod completed_tasks;
 pub mod counts;
 pub mod frustum;
+pub mod games;
 pub mod lighting;
 pub mod models;
 pub mod player;

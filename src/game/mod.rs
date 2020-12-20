@@ -110,6 +110,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             Arc::downgrade(&self.graphics),
             Rc::downgrade(&self.entities),
             Arc::downgrade(&self.network_system),
+            Rc::downgrade(&self.camera),
         );
         let title_scene_index = self.scene_manager.register_scene(title_scene);
         let game_scene_index = self.scene_manager.register_scene(game_scene);

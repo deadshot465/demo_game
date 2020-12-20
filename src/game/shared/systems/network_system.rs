@@ -1,7 +1,7 @@
+use crate::game::shared::structs::games::{PlayerUdp, RoomStateUdp};
 use crate::game::shared::structs::Primitive;
 use crate::protos::grpc_service::game_state::{
-    GetTerrainRequest, Player, ProgressGameRequest, RegisterPlayerRequest, RoomState,
-    StartGameRequest,
+    GetTerrainRequest, Player, RegisterPlayerRequest, RoomState, StartGameRequest,
 };
 use crate::protos::grpc_service::grpc_service_client::GrpcServiceClient;
 use crate::protos::grpc_service::{Empty, LoginRequest, RegisterRequest};
@@ -11,6 +11,7 @@ use once_cell::sync::OnceCell;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
 /// ユーザーが入力した内容を検証する正規表現。<br />
@@ -51,11 +52,15 @@ pub struct NetworkSystem {
     /// Since the player can only exist in a room at a given time, we save the room state into this field.
     pub room_state: Arc<Mutex<RoomState>>,
 
+    pub room_state_udp: Arc<Mutex<RoomStateUdp>>,
+
     /// ログインしたプレイヤーのデータ。まだログインしていないならNoneを保存する。<br />
     /// The current logged in player. None if not yet logged in.
     pub logged_user: Option<Arc<Mutex<Player>>>,
 
-    pub progress_recv: Option<crossbeam::channel::Receiver<RoomState>>,
+    pub logged_user_udp: Arc<Mutex<PlayerUdp>>,
+
+    pub progress_recv: Option<tokio::sync::oneshot::Receiver<RoomStateUdp>>,
 
     /// もらったトークンや検証データを保存するためのフィールド。<br />
     /// A field to store acquired JWT token and authentication data.
@@ -68,6 +73,8 @@ pub struct NetworkSystem {
     /// ゲームデータの転送・取得を処理する主なgRPCクライアント。<br />
     /// Primary gRPC client for sending and receiving game data.
     grpc_client: GrpcServiceClient<tonic::transport::Channel>,
+
+    udp_socket: Arc<Mutex<UdpSocket>>,
 }
 
 /// ネットワークシステムの実装
@@ -92,6 +99,9 @@ impl NetworkSystem {
             )
             .expect("Failed to initialize regular expression.");
 
+        let bind_point = dotenv::var("UDP_BINDPOINT")?;
+        let udp_socket = UdpSocket::bind(&bind_point).await?;
+
         Ok(NetworkSystem {
             authentication,
             is_player_login: false,
@@ -110,6 +120,9 @@ impl NetworkSystem {
                 message: String::new(),
             })),
             progress_recv: None,
+            udp_socket: Arc::new(Mutex::new(udp_socket)),
+            room_state_udp: Arc::new(Mutex::new(RoomStateUdp::default())),
+            logged_user_udp: Arc::new(Mutex::new(PlayerUdp::default())),
         })
     }
 
@@ -170,14 +183,88 @@ impl NetworkSystem {
         }
     }
 
+    pub async fn progress_game(&mut self) -> anyhow::Result<()> {
+        let player = self.logged_user_udp.clone();
+        let room_state = self.room_state_udp.clone();
+        let udp_socket = self.udp_socket.clone();
+        let remote_addr = dotenv::var("UDP_ENDPOINT")?;
+        udp_socket.lock().await.connect(&remote_addr).await?;
+        log::info!("Successfully connected to UDP endpoint.");
+        let (send, recv) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let room_state = room_state;
+            let player = player;
+            let udp_socket = udp_socket;
+            let sender = send;
+
+            loop {
+                let player_state = player.lock().await.clone();
+                let message =
+                    serde_json::to_vec(&player_state).expect("Failed to serialize player.");
+                let mut socket = udp_socket.lock().await;
+                socket
+                    .send(&message)
+                    .await
+                    .expect("Failed to send UDP packet.");
+                let mut buffer = [0_u8; 4096];
+                let size = socket
+                    .recv(&mut buffer[0..])
+                    .await
+                    .expect("Failed to receive UDP packet.");
+                let deserialized: RoomStateUdp = serde_json::from_slice(&buffer[0..size])
+                    .expect("Failed to deserialize incoming packet.");
+                if !deserialized.started {
+                    break;
+                }
+                if !deserialized.players.is_empty() {
+                    let send_result = sender.send(deserialized.clone());
+                    match send_result {
+                        Ok(_) => {}
+                        Err(_) => {
+                            log::error!("An error occurred when sending via oneshot channel.");
+                        }
+                    }
+                    break;
+                }
+                let mut room_state_lock = room_state.lock().await;
+                *room_state_lock = deserialized;
+            }
+
+            loop {
+                let player_state = player.lock().await.clone();
+                let message =
+                    serde_json::to_vec(&player_state).expect("Failed to serialize player.");
+                let mut socket = udp_socket.lock().await;
+                socket
+                    .send(&message)
+                    .await
+                    .expect("Failed to send UDP packet.");
+                let mut buffer = [0_u8; 4096];
+                let size = socket
+                    .recv(&mut buffer[0..])
+                    .await
+                    .expect("Failed to receive UDP packet.");
+                let deserialized: RoomStateUdp = serde_json::from_slice(&buffer[0..size])
+                    .expect("Failed to deserialize incoming packet.");
+                if !deserialized.started {
+                    break;
+                }
+                let mut room_state_lock = room_state.lock().await;
+                *room_state_lock = deserialized;
+            }
+        });
+        self.progress_recv = Some(recv);
+        Ok(())
+    }
+
     /// ゲームを推進する。<br />
     /// Progress the game.
-    pub async fn progress_game(&mut self) -> anyhow::Result<()> {
+    /*pub async fn progress_game(&mut self) -> anyhow::Result<()> {
         let room_id = self.room_state.lock().await.room_id.clone();
         let player = self
             .logged_user
             .clone()
-            .expect("Failed to get current logged in player.");
+            .expect("Failed to get currently logged in player.");
         let request_stream = async_stream::stream! {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(35));
             let room_id = room_id;
@@ -226,7 +313,7 @@ impl NetworkSystem {
         });
         self.progress_recv = Some(recv);
         Ok(())
-    }
+    }*/
 
     /// ユーザーが入力したデータに基づいてサーバーとデータベースに登録する。<br />
     /// Register player to the database and server using inputted information.
@@ -299,16 +386,20 @@ impl NetworkSystem {
         let response = self.grpc_client.register_player(request).await?;
         let response = response.into_inner();
         let room_state = self.room_state.clone();
+        let room_state_udp = self.room_state_udp.clone();
         let (send, recv) = crossbeam::channel::bounded(5);
         let logged_player = self
             .logged_user
             .clone()
             .expect("Failed to get currently logged in player.");
+        let logged_player_udp = self.logged_user_udp.clone();
         tokio::spawn(async {
             let current_room_state = room_state;
+            let current_room_state_udp = room_state_udp;
             let mut response = response;
             let send = send;
             let logged_player = logged_player;
+            let logged_player_udp = logged_player_udp;
             while let Ok(r) = response.message().await {
                 let mut state = current_room_state.lock().await;
                 if state.started {
@@ -321,6 +412,7 @@ impl NetworkSystem {
                 }
             }
             let mut player = logged_player.lock().await;
+            let mut player_udp = logged_player_udp.lock().await;
             let latest_room_state = current_room_state.lock().await;
             let updated_player = latest_room_state
                 .players
@@ -328,7 +420,10 @@ impl NetworkSystem {
                 .find(|p| p.player_id.as_str() == player.player_id.as_str());
             if let Some(p) = updated_player {
                 *player = p.clone();
+                *player_udp = PlayerUdp::from(p.clone());
             }
+            let mut room_state_udp_lock = current_room_state_udp.lock().await;
+            *room_state_udp_lock = RoomStateUdp::from(latest_room_state.clone());
         });
         Ok(recv)
     }
@@ -346,9 +441,27 @@ impl NetworkSystem {
         let new_room_state = self.grpc_client.start_game(request).await?;
         let new_room_state = new_room_state.into_inner();
         {
+            let logged_player = self
+                .logged_user
+                .clone()
+                .expect("Failed to get currently logged in user.");
+            let mut player = logged_player.lock().await;
+            let mut player_udp = self.logged_user_udp.lock().await;
+            let updated_player = new_room_state
+                .players
+                .iter()
+                .find(|p| p.player_id.as_str() == player.player_id.as_str());
+            if let Some(p) = updated_player {
+                *player = p.clone();
+                *player_udp = PlayerUdp::from(p.clone());
+            }
+
             let mut room_state_lock = self.room_state.lock().await;
+            let mut room_state_udp_lock = self.room_state_udp.lock().await;
+            *room_state_udp_lock = RoomStateUdp::from(new_room_state.clone());
             *room_state_lock = new_room_state;
         }
+        log::info!("Successfully started game.");
         Ok(())
     }
 
