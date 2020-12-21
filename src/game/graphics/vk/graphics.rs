@@ -30,21 +30,45 @@ use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buf
 use crate::game::{Camera, ResourceManager, UISystem};
 use ash::prelude::VkResult;
 
+/// 既定のSSBO配列の長さ。<br />
+/// The default length of SSBO array.
 const SSBO_DATA_COUNT: usize = 50;
+
+/// 水面反射のレンダーターゲットの幅。<br />
+/// The width of the render target of water surface's reflection.
 const REFLECTION_WIDTH: u32 = 320;
+
+/// 水面反射のレンダーターゲットの高さ。<br />
+/// The height of the render target of water surface's reflection.
 const REFLECTION_HEIGHT: u32 = 180;
+
+/// 水面屈折のレンダーターゲットの幅。<br />
+/// The width of the render target of water surface's refraction.
 const REFRACTION_WIDTH: u32 = 1280;
+
+/// 水面屈折のレンダーターゲットの高さ。<br />
+/// The height of the render target of water surface's refraction.
 const REFRACTION_HEIGHT: u32 = 720;
 
+/// リソースマネジャーのハンドルタイプ定義。<br />
+/// Type definition of resource manager handle.
 type ResourceManagerHandle = Weak<
     RwLock<ManuallyDrop<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
+
+/// UIマネジャーのハンドルタイプ定義。<br />
+/// Type definition of UI manager handle.
 type UIManagerHandle = std::rc::Weak<
     RefCell<ManuallyDrop<UISystem<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
+
+/// マルチスレッドのためロックできる、描画できるリソースのハンドルタイプ定義。<br />
+/// Type definition of handle to lockable and renderable resource for multithreading.
 type LockableRenderable =
     Arc<Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>>;
 
+/// 主なSSBOデータコンテンツ。<br />
+/// Primary SSBO contents.
 #[derive(Clone)]
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -53,6 +77,8 @@ struct PrimarySSBOData {
     shine_dampers: [f32; SSBO_DATA_COUNT],
 }
 
+/// トリプルバッファリングのフレームデータ。<br />
+/// Frame data for triple buffering.
 struct FrameData {
     pub acquired_semaphore: Semaphore,
     pub completed_semaphore: Semaphore,
@@ -61,6 +87,8 @@ struct FrameData {
     pub main_command_buffer: CommandBuffer,
 }
 
+/// 水面上と水面上を描画するためのフレームバッファ。<br />
+/// Framebuffer for rendering above and below the water surface.
 struct OffscreenFramebuffer {
     pub framebuffer: Vec<Framebuffer>,
     pub color_image: ManuallyDrop<super::Image>,
@@ -80,6 +108,8 @@ impl Drop for OffscreenFramebuffer {
     }
 }
 
+/// 水面を描画するためのレンダーパス。<br />
+/// Renderpass for rendering water surface.
 struct OffscreenPass {
     pub framebuffers: [ManuallyDrop<OffscreenFramebuffer>; 2],
 }
@@ -94,17 +124,51 @@ impl Drop for OffscreenPass {
     }
 }
 
+/// Vulkanベース描画のコア。<br />
+/// The core of Vulkan-based rendering.
 pub struct Graphics {
+    /// ロジカルデバイス。<br />
+    /// ロジカルデバイスは全ての描画のコアである。<br />
+    /// Logical device.<br />
+    /// A logical device is the core of all rendering.
     pub logical_device: Arc<Device>,
+
+    /// レンダーリングパイプライン。<br />
+    /// Rendering pipelines.
     pub pipeline: Arc<ShardedLock<ManuallyDrop<super::Pipeline>>>,
+
+    /// 描述子セット。<br />
+    /// Descriptor set.
     pub descriptor_set: DescriptorSet,
+
+    /// プッシュコンスタント。<br />
+    /// Push constant.
     pub push_constant: PushConstant,
+
+    /// 描述子セットの配置。<br />
+    /// The layout of descriptor set.
     pub descriptor_set_layout: DescriptorSetLayout,
+
+    /// SSBO描述子セットの配置。<br />
+    /// The layout of SSBO descriptor set.
     pub ssbo_descriptor_set_layout: DescriptorSetLayout,
+
+    /// 描述子プール。<br />
+    /// Descriptor pool.
     pub descriptor_pool: Arc<Mutex<DescriptorPool>>,
+
+    /// マルチスレッドで描画するためのスレッドプール。<br />
+    /// Thread pool for multithreaded rendering.
     pub thread_pool: Arc<ThreadPool>,
+
+    /// VMAメモリー配置器。<br />
+    /// VMA memory allocator.
     pub allocator: Arc<ShardedLock<Allocator>>,
+
+    /// 主なグラフィックキュー。<br />
+    /// Main graphic queue.
     pub graphics_queue: Arc<Mutex<Queue>>,
+
     pub present_queue: Arc<Mutex<Queue>>,
     pub compute_queue: Arc<Mutex<Queue>>,
     pub swapchain: ManuallyDrop<super::Swapchain>,
