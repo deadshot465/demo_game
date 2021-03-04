@@ -21,6 +21,8 @@ use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
 use std::sync::{Arc, Weak};
 
+/// 簡単なシェイプ。後程他のしぇいぷも追加する予定なので構造体ではなく`enum`にしました。
+/// Simple shapes. For convenience in the future when new shapes are added, this is not a `struct`, but a `enum`.
 #[derive(Copy, Clone, Debug)]
 pub enum PrimitiveType {
     Rect,
@@ -146,6 +148,8 @@ where
 }
 
 impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
+    /// 数学的にシェイプを作成し、全てのデータを作成します。<br />
+    /// Create shapes mathematically and create all necessary data.
     pub fn new(
         graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
         primitive_type: PrimitiveType,
@@ -236,6 +240,8 @@ impl GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image> {
         Ok(primitive_recv)
     }
 
+    /// モデルのバッファを作成する。<br />
+    /// Create buffers for the model.
     fn create_buffer(
         &mut self,
         graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,
@@ -299,7 +305,28 @@ where
 impl Renderable<Graphics, Buffer, CommandBuffer, Image>
     for GeometricPrimitive<Graphics, Buffer, CommandBuffer, Image>
 {
-    fn update(&mut self, _delta_time: f64) {}
+    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
+        Box::new(self.clone())
+    }
+
+    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
+        self.model
+            .as_ref()
+            .unwrap()
+            .get_command_buffers(frame_index)
+    }
+
+    fn get_model_metadata(&self) -> ModelMetaData {
+        self.model.as_ref().unwrap().model_metadata
+    }
+
+    fn get_position_info(&self) -> PositionInfo {
+        self.model.as_ref().unwrap().position_info
+    }
+
+    fn get_ssbo_index(&self) -> usize {
+        self.model.as_ref().unwrap().ssbo_index
+    }
 
     fn render(
         &self,
@@ -327,29 +354,6 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         );
     }
 
-    fn get_ssbo_index(&self) -> usize {
-        self.model.as_ref().unwrap().ssbo_index
-    }
-
-    fn get_model_metadata(&self) -> ModelMetaData {
-        self.model.as_ref().unwrap().model_metadata
-    }
-
-    fn get_position_info(&self) -> PositionInfo {
-        self.model.as_ref().unwrap().position_info
-    }
-
-    fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandBuffer> {
-        self.model
-            .as_ref()
-            .unwrap()
-            .get_command_buffers(frame_index)
-    }
-
-    fn set_position_info(&mut self, position_info: PositionInfo) {
-        self.model.as_mut().unwrap().position_info = position_info;
-    }
-
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData) {
         self.model
             .as_mut()
@@ -357,19 +361,21 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
             .set_model_metadata(model_metadata);
     }
 
-    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
-        self.model
-            .as_mut()
-            .unwrap()
-            .update_model_indices(model_count);
+    fn set_position_info(&mut self, position_info: PositionInfo) {
+        self.model.as_mut().unwrap().position_info = position_info;
     }
 
     fn set_ssbo_index(&mut self, ssbo_index: usize) {
         self.model.as_mut().unwrap().set_ssbo_index(ssbo_index);
     }
 
-    fn box_clone(&self) -> Box<dyn Renderable<Graphics, Buffer, CommandBuffer, Image> + Send> {
-        Box::new(self.clone())
+    fn update(&mut self, _delta_time: f64) {}
+
+    fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>) {
+        self.model
+            .as_mut()
+            .unwrap()
+            .update_model_indices(model_count);
     }
 }
 

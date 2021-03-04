@@ -16,6 +16,8 @@ pub struct Swapchain {
     capabilities: SurfaceCapabilitiesKHR,
 }
 
+/// スワップチェーンのラッパー。
+/// Wrapper for swapchain.
 impl Swapchain {
     pub fn new(
         surface_loader: &Surface,
@@ -64,6 +66,8 @@ impl Swapchain {
         swapchain
     }
 
+    /// ハードウェアに基づいてスワップチェーンのフォーマットを選択する。<br />
+    /// Select the format of the swapchain based on hardware.
     fn choose_format(formats: &[SurfaceFormatKHR]) -> SurfaceFormatKHR {
         for format in formats.iter() {
             if format.format == Format::B8G8R8A8_UNORM
@@ -75,6 +79,8 @@ impl Swapchain {
         formats[0]
     }
 
+    /// ハードウェアに基づいてスワップチェーンのサイズを選択する。<br />
+    /// Select the size of the swapchain based on hardware.
     fn choose_extent(
         capabilities: &SurfaceCapabilitiesKHR,
         window: &winit::window::Window,
@@ -109,6 +115,8 @@ impl Swapchain {
         }
     }
 
+    /// ハードウェアに基づいてスワップチェーンのプレゼントモードを選択する。<br />
+    /// Select the present mode of the swapchain based on hardware.
     fn choose_present_mode(present_modes: &[PresentModeKHR]) -> PresentModeKHR {
         let mut fifo_support = false;
         for mode in present_modes.iter() {
@@ -129,6 +137,8 @@ impl Swapchain {
         }
     }
 
+    /// GPUからスワップチェーンの機能を取得する。<br />
+    /// Get swapchain features and supports from the GPU.
     fn get_swapchain_details(
         surface_loader: &Surface,
         surface: SurfaceKHR,

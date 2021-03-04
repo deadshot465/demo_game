@@ -10,6 +10,9 @@ use crate::game::traits::Disposable;
 use crate::game::CommandData;
 use ash::vk::CommandBuffer;
 
+/// SkinnedPrimitive > SkinnedMesh > SkinnedModel<br />
+/// SkinnedPrimitiveは骨付きのメッシュを構成します。<br />
+/// 骨付きのメッシュはモデルを構成します。
 #[derive(Clone, Debug)]
 pub struct SkinnedPrimitive<BufferType, CommandType, TextureType>
 where
@@ -102,6 +105,8 @@ where
     }
 }
 
+/// SkinnedMesh > SkinnedModel<br />
+/// 骨付きのメッシュはモデルを構成します。
 #[derive(Clone)]
 pub struct SkinnedMesh<BufferType, CommandType, TextureType>
 where

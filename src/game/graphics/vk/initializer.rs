@@ -23,6 +23,8 @@ use std::mem::ManuallyDrop;
 use std::sync::{Arc, Weak};
 use vk_mem::Allocator;
 
+/// この構造体の全ての関数はVulkanのボイラープレートを生成する関数です。<br />
+/// All functions in this struct are used for boilerplate of Vulkan.
 pub struct Initializer {}
 
 impl Initializer {

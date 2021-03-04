@@ -25,6 +25,8 @@ use crate::protos::grpc_service::game_state::WorldMatrix;
 use std::collections::HashMap;
 use winit::event::{ElementState, VirtualKeyCode};
 
+/// メインゲームシーン<br />
+/// Main game scene
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -83,6 +85,8 @@ where
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
+    /// インスタンス描画のモデルを追加する。<br />
+    /// Add instance rendering models.
     pub fn add_instanced_model(
         &mut self,
         file_name: &'static str,
@@ -124,6 +128,8 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    /// 骨付きの動的なモデルを追加する。<br />
+    /// Add skinned models.
     fn add_skinned_model(
         &mut self,
         file_name: &'static str,
@@ -184,6 +190,8 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    /// 簡単なシェイプを追加する。<br />
+    /// Add simple shapes.
     fn add_geometric_primitive(
         &mut self,
         primitive_type: PrimitiveType,

@@ -1,11 +1,15 @@
 use ash::vk::DeviceSize;
 use glam::Mat4;
 
+/// 動的ユニーフォームバッファを使うときのワールド行列データ<br />
+/// World matrix data when using dynamic uniform buffer
 pub struct DynamicModel {
     pub model_matrices: Vec<Mat4>,
     pub buffer: *mut Mat4,
 }
 
+/// 動的ユニーフォームバッファのワールド行列データ、とメモリーの中の最低限の間隔<br />
+/// World matrix data when using dynamic uniform buffer and the minimum alignment information in the memory
 pub struct DynamicBufferObject {
     pub models: DynamicModel,
     pub meshes: DynamicModel,

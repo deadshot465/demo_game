@@ -1,5 +1,7 @@
 use ash::vk::*;
 
+/// メモリ的にマップすることができるリソース（イメージ、バッファなど）<br />
+/// Resources that can be mapped to an address in memory, such as images and buffers.
 pub trait Mappable {
     //fn allocate_memory(&mut self, instance: &ash::Instance, physical_device: PhysicalDevice, memory_properties: MemoryPropertyFlags) -> DeviceMemory;
     fn map_memory(&mut self, device_size: DeviceSize, offset: DeviceSize) -> *mut std::ffi::c_void;

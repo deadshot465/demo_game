@@ -32,6 +32,10 @@ pub struct FeatureSupport {
     pub shader_clip_distance: bool,
 }
 
+/// 実体装置のラッパー構造体。<br />
+/// IDXGIAdapterと似ています。<br />
+/// Wrapper for the physical device.<br />
+/// This is similar to DirectX's IDXGIAdapter.
 #[derive(Copy, Clone, Debug)]
 pub struct PhysicalDevice {
     pub physical_device: ash::vk::PhysicalDevice,

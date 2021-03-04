@@ -11,6 +11,8 @@ use crate::game::graphics::vk::{Buffer, DescriptorBuilder, Graphics};
 use crate::game::shared::traits::Disposable;
 use crate::game::traits::Mappable;
 
+/// これは主なSSBOではなく、骨付きのモデルの頂点情報を保存するためのSSBOです。<br />
+/// This is not the primary SSBO. This is the SSBO for storing all vertices information of a skinned model.
 #[derive(Clone)]
 pub struct SSBO {
     pub buffer: Buffer,

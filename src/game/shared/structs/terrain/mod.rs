@@ -22,6 +22,8 @@ use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
 use std::sync::{Arc, Weak};
 
+/// パーリンノイズで乱数で生成する地形のモデル<br />
+/// Model of randomly generated terrains using Perlin noise.
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -208,6 +210,8 @@ where
         }
     }
 
+    /// 乱数で生成された地形のノーマルを計算する。<br />
+    /// Calculate normals for randomly generated terrains.
     fn calculate_normal(x: f32, z: f32, height_generator: &HeightGenerator) -> Vec3A {
         let height_l = height_generator.generate_height(x - 1.0, z);
         let height_r = height_generator.generate_height(x + 1.0, z);
@@ -219,6 +223,8 @@ where
 }
 
 impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
+    /// 地形の乱数生成と全てのデータを作成します。<br />
+    /// Randomly generate a terrain and create all necessary data.
     pub fn new(
         grid_x: f32,
         grid_z: f32,
@@ -295,6 +301,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         Ok(terrain_recv)
     }
 
+    /// モデルのバッファを作成する。<br />
+    /// Create buffers for the model.
     fn create_buffers(
         &mut self,
         graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,

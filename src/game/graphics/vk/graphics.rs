@@ -169,19 +169,42 @@ pub struct Graphics {
     /// Main graphic queue.
     pub graphics_queue: Arc<Mutex<Queue>>,
 
+    /// 主なプレゼントキュー。<br />
+    /// Main present queue.
     pub present_queue: Arc<Mutex<Queue>>,
+
+    /// 主な計算キュー。<br />
+    /// Main compute queue.
     pub compute_queue: Arc<Mutex<Queue>>,
+
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager: ResourceManagerHandle,
+
+    /// 使用するフレームバッファ数。<br />
+    /// 2の場合はダブルバッファリング、3の場合はトリプルバッファリング<br />
+    /// The number of framebuffers.<br />
+    /// If it's 2 it means it's double buffering; if it's 3 it means it's triple buffering.
     pub inflight_buffer_count: usize,
+
+    /// VkInstance
     pub instance: Arc<Instance>,
     pub physical_device: super::PhysicalDevice,
     pub ui_manager: Option<UIManagerHandle>,
     pub depth_format: Format,
     pub sample_count: SampleCountFlags,
+
+    /// 描述子配置器。<br />
+    /// Descriptor allocator.
     pub descriptor_allocator: Arc<Mutex<ManuallyDrop<DescriptorAllocator>>>,
+
+    /// 描述子レイアウトのキャッシュ。<br />
+    /// Descriptor layout cache.
     pub descriptor_layout_cache: Arc<Mutex<ManuallyDrop<DescriptorLayoutCache>>>,
+
+    /// ゲーム画面のウィンドウ。<br />
+    /// Weakを使って循環参照を避けます。<br />
+    /// The window of the game, using Weak to avoid circular reference.
     window: std::rc::Weak<RefCell<winit::window::Window>>,
     window_width: u32,
     window_height: u32,
@@ -195,10 +218,18 @@ pub struct Graphics {
     camera: Rc<RefCell<Camera>>,
     sky_color: Vec4,
     frame_data: Vec<FrameData>,
+
+    /// 現在のフレーム番号。<br />
+    /// The number of the current frame.
     current_frame: AtomicUsize,
+
+    /// オフスクリーンのレンダパース。まだ実装していません。<br />
+    /// Offscreen renderpass. Not yet implemented.
     offscreen_pass: ManuallyDrop<OffscreenPass>,
     is_initialized: bool,
     //checkpoint_fn: NvDeviceDiagnosticCheckpointsFn,
+    /// 主なSSBOデータ。全部のモデルのデータはこの大きなSSBOに保存されます。<br />
+    /// Primary SSBO data. Alll models' data are stored inside this large SSBO.
     primary_ssbo_data: PrimarySSBOData,
 }
 
@@ -422,6 +453,10 @@ impl Graphics {
         })
     }
 
+    /// 頂点バッファとインデックスバッファを生成する。<br />
+    /// これは自由な関数です。自らを参照していません。<br />
+    /// Create vertex buffer and index buffer.<br />
+    /// This is a free function. It doesn't reference itself.
     pub fn create_vertex_and_index_buffer<VertexType: 'static + Send + Sync>(
         graphics: Arc<RwLock<ManuallyDrop<Self>>>,
         vertices: Vec<VertexType>,
@@ -535,6 +570,8 @@ impl Graphics {
         Ok((vertex_buffer, index_buffer))
     }
 
+    /// GLTFモデルからテクスチャを生成する。自由関数。<br />
+    /// Create a texture from a GLTF model. Free function.
     pub fn create_gltf_textures(
         images: Vec<gltf::image::Data>,
         graphics: Arc<RwLock<ManuallyDrop<Self>>>,
@@ -605,6 +642,8 @@ impl Graphics {
         }
     }
 
+    /// ファイルからイメージを生成する。自由関数。<br />
+    /// Create an Image from a file. Free function.
     pub fn create_image_from_file(
         file_name: &str,
         graphics: Arc<RwLock<ManuallyDrop<Self>>>,
@@ -614,6 +653,8 @@ impl Graphics {
         Initializer::create_image_from_file(file_name, graphics, command_pool, sampler_address_mode)
     }
 
+    /// マルチスレッド描画するためのセカンダリーコマンドバッファを生成する。自由関数。<br />
+    /// Create a secondary command buffer for multi-threaded rendering. Free function.
     pub fn create_secondary_command_buffer(
         device: &ash::Device,
         command_pool: CommandPool,
@@ -630,12 +671,17 @@ impl Graphics {
         }
     }
 
+    /// 現在のシーンのリソースを解放する。<br />
+    /// Release resource of the current scene.
     pub fn destroy_scene_resource(&mut self) {
         unsafe {
             ManuallyDrop::drop(&mut self.uniform_buffers);
         }
     }
 
+    /// コマンドプールを取得する。<br />
+    /// Vulkanの仕様によって、コマンドバッファを実行するとき絶対そのコマンドバッファを生成するコマンドプールを使わないといけません。<br />
+    /// Get command pool. According to Vulkan's design, when executing a command buffer, it must use the same command pool that creates such command buffer.
     pub fn get_command_pool(
         graphics: &Self,
         model_index: usize,
@@ -645,6 +691,8 @@ impl Graphics {
         graphics.thread_pool.threads[model_index % thread_count].command_pools[frame_index].clone()
     }
 
+    /// コマンドプールを取得し、そのコマンドプールからセカンダリーコマンドバッファを生成する。<br />
+    /// Get a command pool and create a secondary command buffer from that command pool.
     pub fn get_command_pool_and_secondary_command_buffer(
         graphics: &Self,
         model_index: usize,
@@ -657,10 +705,14 @@ impl Graphics {
         (pool_handle, command_buffer)
     }
 
+    /// スレッドプールから現在タスクのないスレッドのコマンドプールを取得する。<br />
+    /// Get the command pool of an idling thread that doesn't have any task for the time being from the thread pool.
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
         self.thread_pool.get_idle_command_pool()
     }
 
+    /// グラフィックパイプラインを初期化。<br />
+    /// Initialize graphic pipelines.
     pub fn initialize_pipelines(&mut self) -> anyhow::Result<()> {
         //self.create_descriptor_set_layout()?;
         //self.allocate_descriptor_set()?;
@@ -691,6 +743,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// シーンのリソースを再生成する。<br />
+    /// Recreate resource for a scene.
     pub fn initialize_scene_resource(
         &mut self,
         scene_type: SceneType,
@@ -723,6 +777,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// スワップチェーンとスワップチェーンと関連するリソースを再構成。<br />
+    /// Recreate swapchain and associated resource.
     pub fn recreate_swapchain(
         &mut self,
         width: u32,
@@ -829,6 +885,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 主なレンダリング関数。レンダリング関数は自分を変更するべきではないので`&self`にします。<br />
+    /// Main rendering function. A "rendering" function shouldn't change itself so it takes `&self`.
     pub fn render(&self, renderables: &[LockableRenderable]) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
@@ -961,6 +1019,8 @@ impl Graphics {
         }
     }
 
+    /// 更新関数。色々なデータを更新するため、`&mut self`にする必要があります。<br />
+    /// Update function. Since it will update a number of resources, it takes `&mut self`.
     pub fn update(
         &mut self,
         delta_time: f64,
@@ -1003,6 +1063,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 描述子を配置する。<br />
+    /// Allocate descriptors.
     fn allocate_descriptors(&mut self) -> anyhow::Result<()> {
         let mut cache = self.descriptor_layout_cache.lock();
         let mut allocator = self.descriptor_allocator.lock();
@@ -1114,6 +1176,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 描画開始。<br />
+    /// Draw begins.
     fn begin_draw(
         &self,
         frame_buffer: Framebuffer,
@@ -1178,6 +1242,9 @@ impl Graphics {
             .clear_values(clear_values.as_slice())
             .render_area(*render_area)
             .framebuffer(self.offscreen_pass.framebuffers[0].framebuffer[frame_index]);
+
+        // この分は元々水面を描画するため書いたコードです。
+        // 水面の描画はまだ実装していませんのでコメントしました。
 
         /*let inheritance_ptr = {
             let inheritance_info = Box::new(
@@ -1291,6 +1358,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// フレームバッファを生成する。戻り値は`Vec<Framebuffer>`の理由はこのプログラムにはトリプルバッファリングを使うから。<br />
+    /// Create framebuffers. The reason that the return value is `Vec<Framebuffer>` is that this program utilizes triple buffering.
     fn create_frame_buffers(
         frame_width: u32,
         frame_height: u32,
@@ -1325,6 +1394,8 @@ impl Graphics {
         frame_buffers
     }
 
+    /// シェーダーのタイプに応じてグラフィックパイプラインを生成する。<br />
+    /// Create graphic pipelines according to the shader type.
     fn create_graphics_pipeline(&mut self, shader_type: ShaderType) -> anyhow::Result<()> {
         let shaders = vec![
             super::Shader::new(
@@ -1370,6 +1441,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// オフスクリーンレンダパースを生成する。<br />
+    /// Create offscreen renderpass.
     fn create_offscreen_pass(
         device: Weak<Device>,
         color_format: Format,
@@ -1529,6 +1602,8 @@ impl Graphics {
         }
     }
 
+    /// 主なSSBOを生成する。<br />
+    /// Create primary SSBO.
     fn create_primary_ssbo(&mut self, scene_type: SceneType) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
@@ -1575,6 +1650,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// リソースを解放する。なぜなら、それはVulkanのリソース解放は順番に従わないといけません。<br />
+    /// Dispose resources. The reason is that in Vulkan, all resources must be released in order.
     unsafe fn dispose(&mut self) -> anyhow::Result<()> {
         for buffer in self.frame_buffers.iter() {
             self.logical_device.destroy_framebuffer(*buffer, None);
@@ -1600,6 +1677,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 現在のフレームデータと番号を取得する。<br />
+    /// Get current frame data and number.
     fn get_current_frame(&self) -> (&FrameData, usize) {
         let current_frame = self.current_frame.load(Ordering::SeqCst);
         let inflight_buffer_count = self.inflight_buffer_count;
@@ -1609,6 +1688,8 @@ impl Graphics {
         )
     }
 
+    /// SSBOを更新する。<br />
+    /// Update SSBO.
     fn update_primary_ssbo(&mut self, renderables: &[LockableRenderable]) {
         let model_metadata = &mut self.primary_ssbo_data;
         for model in renderables.iter() {
@@ -1622,6 +1703,8 @@ impl Graphics {
         }
     }
 
+    /// セカンダリーコマンドバッファを描画する。そして最後に全てのコマンドバッファを返す。<br />
+    /// Render secondary command buffers and return all secondary command buffers.
     fn update_secondary_command_buffers(
         &self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,

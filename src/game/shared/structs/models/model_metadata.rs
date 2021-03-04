@@ -1,5 +1,7 @@
 use glam::{Mat4, Vec4};
 
+/// モデルのメタデータ。SSBOに保存されます。<br />
+/// Metadata of models, stored in the primary SSBO.
 #[derive(Copy, Clone, Debug)]
 pub struct ModelMetaData {
     pub world_matrix: Mat4,

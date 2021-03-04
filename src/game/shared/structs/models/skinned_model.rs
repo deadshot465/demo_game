@@ -26,6 +26,10 @@ use ash::version::DeviceV1_0;
 use ash::Device;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+/// 骨付きのモデル。モデルと同じ、コードの中身はGLTFの読み込みを含めています。<br />
+/// 詳しくはGLTFの仕様書を参照。<br />
+/// Skinned model. Same as the most common models, the code also contains reading from GLTF.<br />
+/// Please refer to GLTF's documentation for more information.
 pub struct SkinnedModel<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -421,6 +425,8 @@ where
 }
 
 impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
+    /// モデルの読み込みと全てのデータを作成します。<br />
+    /// Read from the model file and create all necessary data.
     pub fn new(
         file_name: &'static str,
         graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
@@ -503,6 +509,8 @@ impl SkinnedModel<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model_recv)
     }
 
+    /// モデルのバッファを作成する。<br />
+    /// Create buffers for the model.
     fn create_buffers(
         &mut self,
         graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,

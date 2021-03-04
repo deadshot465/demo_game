@@ -3,6 +3,10 @@ use crate::game::structs::{GeometricPrimitive, InstancedModel, Model, SkinnedMod
 use crate::game::traits::{Disposable, GraphicsBase};
 use crossbeam::channel::*;
 
+/// モデルの読み込み及びシェイプや地形を生成するとき、より効率的に実行するため、読み込み開始の時点は全てをタスク化しました。<br />
+/// 処理完了する際にタスクを待つことができるような仕様です。<br />
+/// When reading models or generating shapes and terrains, to increase the performance, all reading/generating will return tasks.<br />
+/// When all reading/generating functions are invoked, the tasks can then be waited.
 pub struct WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,

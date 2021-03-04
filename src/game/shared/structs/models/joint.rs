@@ -1,5 +1,7 @@
 use glam::{Mat4, Quat, Vec3A};
 
+/// 骨付きモデルの骨の接点<br />
+/// Joints for skinned models' bones.
 #[derive(Clone, Debug)]
 pub struct Joint {
     pub name: String,
