@@ -2,3 +2,5 @@
 .idea/
 caches/
 .env
+**/.DS_Store
+**/*.spv

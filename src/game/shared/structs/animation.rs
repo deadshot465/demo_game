@@ -3,6 +3,8 @@ use gltf::animation::Interpolation;
 
 use crate::game::shared::structs::Joint;
 
+/// アニメーション用のチャンネル<br />
+/// Channels for animations.
 #[derive(Clone, Debug)]
 pub enum ChannelOutputs {
     Translations(Vec<Vec3A>),

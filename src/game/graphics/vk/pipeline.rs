@@ -16,6 +16,8 @@ pub enum RenderPassType {
     Offscreen,
 }
 
+/// パイプラインのラッパー構造体。中にはグラフィックパイプラインと計算パイプラインを含めています。<br />
+/// Wrapper for the pipeline, including graphic pipeline and compute pipeline.
 #[derive(Clone)]
 pub struct Pipeline {
     pub render_pass: HashMap<RenderPassType, RenderPass>,
@@ -70,6 +72,8 @@ impl Pipeline {
         }
     }
 
+    /// オフスクリーンレンダパスを生成する。未実装の水面用。<br />
+    /// Create offscreen renderpass, used for the unimplemented water surface.
     pub fn create_offscreen_renderpass(
         &mut self,
         graphics_format: Format,
@@ -173,6 +177,8 @@ impl Pipeline {
         Ok(())
     }
 
+    /// 通常なレンダパスを生成する。描画用。<br />
+    /// Create normal renderpass for rendering.
     pub fn create_normal_renderpass(
         &mut self,
         graphics_format: Format,
@@ -283,6 +289,8 @@ impl Pipeline {
         }
     }
 
+    /// マルチスレッドでグラフィックパイプラインを作成する。<br />
+    /// Multi-threadedly create graphic pipeline.
     pub fn create_graphic_pipelines(
         &mut self,
         descriptor_set_layout: &[DescriptorSetLayout],
@@ -558,6 +566,8 @@ impl Pipeline {
         *self.pipeline_layouts.get(&shader_type).unwrap()
     }
 
+    /// パイプラインのキャッシュを書き出して、次回プログラムを実行する際にパイプラインの作成を加速する。<br />
+    /// Write out pipeline cache to accelerate the creation of pipelines next time when the program boots up.
     fn write_cache_data(&self) {
         for (shader_type, type_name) in self.shader_types.iter() {
             let cache_lock = self.pipeline_caches.get(shader_type).unwrap();

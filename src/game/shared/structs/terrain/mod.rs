@@ -22,6 +22,8 @@ use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
 use std::sync::{Arc, Weak};
 
+/// パーリンノイズで乱数で生成する地形のモデル<br />
+/// Model of randomly generated terrains using Perlin noise.
 pub struct Terrain<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -47,8 +49,8 @@ where
     pub const VERTEX_COUNT: u32 = 128;
 
     fn create_terrain(
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         texture_data: (Arc<ShardedLock<TextureType>>, usize),
         model_index: usize,
         ssbo_index: usize,
@@ -61,10 +63,8 @@ where
         primitive: Option<Primitive>,
         entity: DefaultKey,
     ) -> Self {
-        let x = grid_x as f32 * Self::SIZE * size_ratio_x;
-        let z = grid_z as f32 * Self::SIZE * size_ratio_z;
-        let x = x * Self::SIZE * size_ratio_x;
-        let z = z * Self::SIZE * size_ratio_z;
+        let x = grid_x * Self::SIZE * size_ratio_x;
+        let z = grid_z * Self::SIZE * size_ratio_z;
         let model = Self::generate_terrain(
             model_index,
             ssbo_index,
@@ -132,6 +132,21 @@ where
                     vertices.push(vertex);
                 }
             }
+
+            let highest_vertex = vertices
+                .iter()
+                .max_by(|v1, v2| {
+                    v1.position
+                        .y
+                        .partial_cmp(&v2.position.y)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&vertices[0]);
+            let diff = highest_vertex.position.y - 0.0;
+            for vertex in vertices.iter_mut() {
+                vertex.position.y -= diff;
+            }
+
             let mut pointer = 0;
             for gz in 0..vertex_count - 1 {
                 for gx in 0..vertex_count - 1 {
@@ -195,6 +210,8 @@ where
         }
     }
 
+    /// 乱数で生成された地形のノーマルを計算する。<br />
+    /// Calculate normals for randomly generated terrains.
     fn calculate_normal(x: f32, z: f32, height_generator: &HeightGenerator) -> Vec3A {
         let height_l = height_generator.generate_height(x - 1.0, z);
         let height_r = height_generator.generate_height(x + 1.0, z);
@@ -206,9 +223,11 @@ where
 }
 
 impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
+    /// 地形の乱数生成と全てのデータを作成します。<br />
+    /// Randomly generate a terrain and create all necessary data.
     pub fn new(
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         model_index: usize,
         ssbo_index: usize,
         graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
@@ -282,6 +301,8 @@ impl Terrain<Graphics, Buffer, CommandBuffer, Image> {
         Ok(terrain_recv)
     }
 
+    /// モデルのバッファを作成する。<br />
+    /// Create buffers for the model.
     fn create_buffers(
         &mut self,
         graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,

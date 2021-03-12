@@ -175,8 +175,8 @@ pub mod game_state {
     pub struct ProgressGameRequest {
         #[prost(message, optional, tag = "1")]
         pub player: ::std::option::Option<Player>,
-        #[prost(message, optional, tag = "2")]
-        pub room_state: ::std::option::Option<RoomState>,
+        #[prost(string, tag = "2")]
+        pub room_id: std::string::String,
     }
 }
 #[doc = r" Generated client implementations."]

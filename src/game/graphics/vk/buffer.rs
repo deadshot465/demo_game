@@ -15,16 +15,46 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::mappable::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
 
+/// Vulkanのバッファをラップする。<br />
+/// Wraps Vulkan buffer.
 #[derive(Clone)]
 pub struct Buffer {
+    /// 生のVulkanバッファ。<br />
+    /// Raw Vulkan buffer.
     pub buffer: ash::vk::Buffer,
+
+    /// デバイスメモリー。<br />
+    /// Device memory.
     pub device_memory: DeviceMemory,
+
+    /// 常にマップしているメモリー。<br />
+    /// `std::ptr::copy_nonoverlapping`に使います。<br />
+    /// Consistently mapped memory.<br />
+    /// Used in `std::ptr::copy_nonoverlapping`
     pub mapped_memory: *mut c_void,
+
+    /// このバッファは既に解放したのかどうか。<br />
+    /// Is this buffer already released?
     pub is_disposed: bool,
+
+    /// バッファのサイズ。<br />
+    /// Buffer size.
     pub buffer_size: DeviceSize,
+
+    /// ロジカルデバイスのハンドル。<br />
+    /// Handle to the logical device.
     logical_device: Weak<Device>,
+
+    /// VMAメモリー配置器のWeakポインタ。<br />
+    /// VMA memory allocator's weak pointer.
     allocator: Weak<ShardedLock<Allocator>>,
+
+    /// メモリー配置。<br />
+    /// Memory allocation.
     allocation: Allocation,
+
+    /// メモリー配置の情報。<br />
+    /// Memory allocation's info.
     allocation_info: Option<AllocationInfo>,
 }
 
@@ -32,6 +62,8 @@ unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
 impl Buffer {
+    ///　コンストラクター。<br />
+    /// Constructor.
     pub fn new(
         device: Weak<Device>,
         buffer_size: DeviceSize,
@@ -90,6 +122,8 @@ impl Buffer {
         }
     }
 
+    /// バッファ元からこのバッファにコピーする。<br />
+    /// Copy buffer from another buffer.
     pub fn copy_buffer(
         &self,
         src_buffer: &Buffer,

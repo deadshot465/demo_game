@@ -14,10 +14,10 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use wio::com::ComPtr;
 
 fn main() -> anyhow::Result<()> {
-    //println!("{}", std::mem::size_of::<PushConstant>());
-    //println!("{}", std::mem::size_of::<usize>());
-    //return Ok(());
+    // 環境変数のロード
     dotenv::dotenv().ok();
+
+    // ログを設定する
     let log_level = dotenv::var("LOG").unwrap();
     Builder::new()
         .filter(
@@ -33,22 +33,36 @@ fn main() -> anyhow::Result<()> {
         )
         .default_format()
         .init();
+
+    // 環境変数から描画APIを決めます
     let api = dotenv::var("API").unwrap();
     log::info!("Using API: {}", &api);
+
+    // Tokio非同期ランタイムをセットアップ
     let mut rt = tokio::runtime::Builder::new()
         .threaded_scheduler()
         .enable_all()
         .build()?;
+
+    // ウィンドウのイベントループを設定
     let event_loop = EventLoop::new();
+
+    // FPSを計算するための時間
     let mut last_second = time::Instant::now();
     let mut current_time = time::Instant::now();
+
+    // フレーム数
     let mut frame_count = 0_u32;
+    // 時間の差
     let mut delta_time = 0.0_f64;
+
+    // ネットワークシステムを初期化
     let network_system = rt.block_on(async {
         NetworkSystem::new()
             .await
             .expect("Failed to initialize network system.")
     });
+
     match api.as_str() {
         "VULKAN" => {
             let mut game = std::mem::ManuallyDrop::new(Game::<
@@ -69,12 +83,16 @@ fn main() -> anyhow::Result<()> {
                 });
             }
             log::info!("Game content loaded.");
+
             let mut mouse_x = 0.0;
             let mut mouse_y = 0.0;
+
+            // ウィンドウのメインループ
             event_loop.run(move |event, _target, control_flow| {
                 let game = &mut game;
                 let rt = &mut rt;
                 match event {
+                    // FPSを計算及び入力の受け
                     Event::NewEvents(_) => {
                         delta_time = current_time.elapsed().as_secs_f64();
                         current_time = time::Instant::now();
@@ -91,16 +109,20 @@ fn main() -> anyhow::Result<()> {
                         }
                         game.start_input();
                     }
+                    // ウィンドウ全般のイベント
                     Event::WindowEvent { event, .. } => match event {
+                        // ウィンドウを閉じる
                         WindowEvent::CloseRequested => {
                             unsafe {
                                 std::mem::ManuallyDrop::drop(game);
                             }
                             *control_flow = ControlFlow::Exit;
                         }
+                        // 文字が入力される
                         WindowEvent::ReceivedCharacter(c) => {
                             game.input_unicode(c);
                         }
+                        // キーボードの入力
                         WindowEvent::KeyboardInput {
                             input:
                                 KeyboardInput {
@@ -110,8 +132,10 @@ fn main() -> anyhow::Result<()> {
                                 },
                             ..
                         } => match virtual_key_code {
+                            // Esc
                             VirtualKeyCode::Escape => {
                                 unsafe {
+                                    game.is_terminating = true;
                                     std::mem::ManuallyDrop::drop(game);
                                 }
                                 *control_flow = ControlFlow::Exit;
@@ -126,11 +150,14 @@ fn main() -> anyhow::Result<()> {
                                     CameraType::Watch(glam::Vec3A::zero()),
                                     virtual_key_code,
                                 );*/
+
+                                // キーの入力
                                 rt.block_on(async {
                                     game.input_key(virtual_key_code, state).await;
                                 });
                             }
                         },
+                        // マウスの移動
                         WindowEvent::CursorMoved {
                             position: winit::dpi::PhysicalPosition { x, y },
                             ..
@@ -139,12 +166,14 @@ fn main() -> anyhow::Result<()> {
                             mouse_y = y;
                             game.input_motion(x, y);
                         }
+                        // マウスの入力
                         WindowEvent::MouseInput { state, button, .. } => {
                             game.input_button(button, mouse_x, mouse_y, state);
                         }
                         WindowEvent::MouseWheel { delta, .. } => {
                             game.input_scroll(delta);
                         }
+                        // ウィンドウのサイズ調整
                         WindowEvent::Resized(winit::dpi::PhysicalSize { width, height }) => {
                             let current_scene = game.current_scene;
                             game.graphics
@@ -159,13 +188,19 @@ fn main() -> anyhow::Result<()> {
                         }
                         _ => (),
                     },
+                    // 全てのウィンドウのイベント処理が完了する
                     Event::MainEventsCleared => {
+                        // 入力完了
                         game.end_input();
+
+                        // ゲームを更新
                         rt.block_on(async {
                             game.update(delta_time)
                                 .await
                                 .expect("Failed to update the game.");
                         });
+
+                        // ゲームを描画
                         game.render(delta_time).expect("Failed to render the game.");
                     }
                     _ => (),

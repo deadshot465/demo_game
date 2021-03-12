@@ -8,6 +8,9 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::structs::Vertex;
 use crate::game::{graphics, CommandData};
 
+/// Primitive > Mesh > Model<br />
+/// Primitiveはメッシュを構成します。<br />
+/// メッシュはモデルを構成します。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Primitive {
     pub vertices: Vec<Vertex>,
@@ -16,6 +19,8 @@ pub struct Primitive {
     pub is_disposed: bool,
 }
 
+/// Mesh > Model<br />
+/// メッシュはモデルを構成します。
 #[derive(Clone)]
 pub struct Mesh<BufferType, CommandType, TextureType>
 where

@@ -180,7 +180,7 @@ impl ResourceManager<Graphics, Buffer, CommandBuffer, Image> {
                 .command_buffers
                 .entry(scene_type)
                 .or_insert_with(HashMap::new);
-            let entry = current_scene.entry(i).or_insert(vec![]);
+            let entry = current_scene.entry(i).or_insert_with(Vec::new);
             *entry = model_command_buffers;
         }
     }

@@ -3,6 +3,8 @@ use ash::vk::{Format, VertexInputAttributeDescription};
 use glam::Vec3A;
 use std::convert::TryFrom;
 
+/// ワールド行列を作るためのインスタンスデータ<br />
+/// Instance data for creating world matrices.
 #[derive(Copy, Clone, Debug)]
 pub struct InstanceData {
     pub translation: Vec3A,

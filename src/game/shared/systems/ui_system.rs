@@ -205,7 +205,7 @@ where
             let current_players = format!("Current players: {}", room_state.current_players);
             ctx.text(&current_players, TextAlignment::Centered as Flags);
             if let Some(player) = ns.logged_user.as_ref() {
-                if let Some(state) = player.state.as_ref() {
+                if let Some(state) = player.lock().await.state.as_ref() {
                     let is_owner = state.is_owner;
                     let is_player_sufficient = room_state.current_players >= 2;
                     if is_owner && is_player_sufficient {
@@ -589,10 +589,10 @@ where
 
     fn email_filter(_: &TextEdit, c: char) -> bool {
         c == '\u{002E}'
-            || (c >= '\u{0030}' && c <= '\u{0039}')
-            || (c >= '\u{0040}' && c <= '\u{005A}')
+            || (('\u{0030}'..='\u{0039}').contains(&c))
+            || (('\u{0040}'..='\u{005A}').contains(&c))
             || c == '\u{005F}'
-            || (c >= '\u{0061}' && c <= '\u{007A}')
+            || (('\u{0061}'..='\u{007A}').contains(&c))
     }
 
     fn free_type_filter(_: &TextEdit, c: char) -> bool {

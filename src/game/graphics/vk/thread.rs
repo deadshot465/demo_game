@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+/// 自定義のスレッド。マルチスレッド描画用。<br />
+/// A custom thread for multi-threaded rendering.
 #[allow(dead_code)]
 pub struct Thread {
     pub command_pools: Vec<Arc<Mutex<ash::vk::CommandPool>>>,
@@ -72,6 +74,8 @@ impl Thread {
         }
     }
 
+    /// 新しい描画のタスクを追加し、チャンネルを通じてスレッドを通知する。<br />
+    /// Add a new rendering task and notify the threads via channels.
     pub fn add_job(&self, work: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
         match self.task_queue.push(Box::new(work)) {
             Ok(_) => (),
@@ -82,6 +86,8 @@ impl Thread {
         Ok(())
     }
 
+    /// チャンネルを通じて描画完了する際に通知を受けます。<br />
+    /// Receive rendering complete notifications via channels.
     pub fn wait(&self) -> anyhow::Result<()> {
         self.notify.recv()?;
         Ok(())
@@ -103,6 +109,8 @@ impl Drop for Thread {
     }
 }
 
+/// 自定義のスレッドプール。マルチスレッド描画用。<br />
+/// A custom thread pool for multi-threaded rendering.
 pub struct ThreadPool {
     pub threads: Vec<Thread>,
     pub thread_count: usize,
@@ -141,6 +149,8 @@ impl ThreadPool {
         }
     }
 
+    /// スレッドプールの中の全部のスレッドを待ちます。<br />
+    /// Wait for all threads in the thread pool.
     pub fn wait(&self) -> anyhow::Result<()> {
         for thread in self.threads.iter() {
             if !thread.work_received.load(Ordering::SeqCst) {
@@ -152,6 +162,8 @@ impl ThreadPool {
         Ok(())
     }
 
+    /// タスクのない、忙しくないコマンドプールを取得する。<br />
+    /// Get a command pool that doesn't have any task or isn't busy.
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
         loop {
             if let Some(thread) = self

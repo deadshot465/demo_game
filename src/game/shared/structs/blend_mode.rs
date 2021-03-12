@@ -1,3 +1,5 @@
+/// ブレンドモード<br />
+/// Blend mode
 pub struct BlendMode(pub(crate) usize);
 
 impl BlendMode {

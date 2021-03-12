@@ -32,6 +32,10 @@ pub struct FeatureSupport {
     pub shader_clip_distance: bool,
 }
 
+/// 実体装置のラッパー構造体。<br />
+/// IDXGIAdapterと似ています。<br />
+/// Wrapper for the physical device.<br />
+/// This is similar to DirectX's IDXGIAdapter.
 #[derive(Copy, Clone, Debug)]
 pub struct PhysicalDevice {
     pub physical_device: ash::vk::PhysicalDevice,
@@ -70,8 +74,10 @@ impl PhysicalDevice {
             let features = instance.get_physical_device_features(device);
 
             let mut indexing_feature = PhysicalDeviceDescriptorIndexingFeatures::default();
-            let mut features2 = PhysicalDeviceFeatures2::default();
-            features2.p_next = &mut indexing_feature as *mut _ as *mut std::ffi::c_void;
+            let mut features2 = PhysicalDeviceFeatures2 {
+                p_next: &mut indexing_feature as *mut _ as *mut std::ffi::c_void,
+                ..Default::default()
+            };
             instance.get_physical_device_features2(device, &mut features2);
 
             let feature_support = FeatureSupport {
@@ -156,7 +162,7 @@ impl PhysicalDevice {
                 }
 
                 if item.1.queue_count > 0
-                    && ((item.1.queue_flags & QueueFlags::COMPUTE) != QueueFlags::COMPUTE)
+                    && ((item.1.queue_flags & QueueFlags::COMPUTE) == QueueFlags::COMPUTE)
                 {
                     queue_indices.compute_family = Some(item.0 as u32);
                 }
@@ -203,6 +209,7 @@ impl PhysicalDevice {
             log::info!("{}", name.to_str().unwrap());
 
             let result = PhysicalDevice::check_extension_support(instance, device);
+            log::info!("Physical device extension supported: {}", result);
             (result, Some(queue_indices))
         }
     }
@@ -218,6 +225,7 @@ impl PhysicalDevice {
     ) {
         let mut selected_device = ash::vk::PhysicalDevice::null();
         let mut queue_indices = QueueIndices::new();
+        let mut properties = PhysicalDeviceProperties::builder().build();
         unsafe {
             let physical_devices = instance
                 .enumerate_physical_devices()
@@ -230,16 +238,12 @@ impl PhysicalDevice {
                 }
                 queue_indices = _queue_indices.unwrap();
                 selected_device = *device;
-                let properties = instance.get_physical_device_properties(*device);
+                properties = instance.get_physical_device_properties(*device);
                 if properties.device_type == PhysicalDeviceType::DISCRETE_GPU {
                     return (selected_device, queue_indices, properties);
                 }
             }
         }
-        (
-            selected_device,
-            queue_indices,
-            PhysicalDeviceProperties::builder().build(),
-        )
+        (selected_device, queue_indices, properties)
     }
 }

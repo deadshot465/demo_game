@@ -28,6 +28,12 @@ use ash::Device;
 use slotmap::DefaultKey;
 use std::collections::HashMap;
 
+/// 最も一般的なモデル。<br />
+/// GLTFのサポートは少ないため、この構造体の中にはモデルの読み込みコードも含めています。<br />
+/// 詳しくはGLTFの仕様書を参照。<br />
+/// The most common models.<br />
+/// Since the support for GLTF format is lacking, this struct also contains codes for reading models.<br />
+/// Please refer to GLTF's documentation to learn more.
 pub struct Model<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -53,6 +59,8 @@ where
     CommandType: 'static + Clone,
     TextureType: 'static + Clone + Disposable,
 {
+    /// モデルを作成するのエントリーポイント。<br />
+    /// The entry point for creating a model.
     fn create_model(
         file_name: &str,
         model_index: Arc<AtomicUsize>,
@@ -271,6 +279,8 @@ where
 }
 
 impl Model<Graphics, Buffer, CommandBuffer, Image> {
+    /// モデルの読み込みと全てのデータを作成します。<br />
+    /// Read from the model file and create all necessary data.
     pub fn new(
         file_name: &'static str,
         graphics: Weak<RwLock<ManuallyDrop<Graphics>>>,
@@ -358,6 +368,8 @@ impl Model<Graphics, Buffer, CommandBuffer, Image> {
         Ok(model_recv)
     }
 
+    /// モデルのバッファを作成する。<br />
+    /// Create buffers for the model.
     fn create_buffers(
         &mut self,
         graphics: Arc<RwLock<ManuallyDrop<Graphics>>>,

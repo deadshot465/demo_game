@@ -7,6 +7,8 @@ use std::sync::Weak;
 
 use crate::game::graphics::vk::Image;
 
+/// 各描画APIサンプラーリソースのラッパー<br />
+/// Wrapper for sampler resource of each graphic API.
 #[derive(Clone, Debug)]
 pub enum SamplerResource {
     DescriptorSet(ash::vk::DescriptorSet),

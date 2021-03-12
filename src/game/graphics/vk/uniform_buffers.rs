@@ -1,6 +1,8 @@
 use crate::game::shared::traits::Disposable;
 use std::mem::ManuallyDrop;
 
+/// ユニフォームバッファのラッパーと統一の構造体<br />
+/// Wrapper and a unified struct for uniform buffers.
 pub struct UniformBuffers {
     pub is_disposed: bool,
     pub view_projection: ManuallyDrop<super::Buffer>,

@@ -23,6 +23,8 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
+/// インスタンス描画用のモデル<br />
+/// Model for instanced rendering.
 pub struct InstancedModel<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,

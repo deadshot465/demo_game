@@ -12,6 +12,8 @@ use crate::game::shared::traits::disposable::Disposable;
 use crate::game::shared::traits::mappable::Mappable;
 use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buffer};
 
+/// Vulkanのイメージをラップする。<br />
+/// Wraps Vulkan image.
 #[derive(Clone)]
 pub struct Image {
     pub image_view: ImageView,
@@ -106,6 +108,8 @@ impl Image {
         image
     }
 
+    /// 別のVkImageに基づいて新しいVkImageを生成する。<br />
+    /// Create a new VkImage based on another VkImage.
     pub fn from_image(
         image: ash::vk::Image,
         device: Weak<ash::Device>,
@@ -133,6 +137,8 @@ impl Image {
         image
     }
 
+    /// イメージのレイアウトを転換する。<br />
+    /// Transition the layout of this image.
     pub fn transition_layout(
         &mut self,
         old_layout: ImageLayout,
@@ -213,6 +219,8 @@ impl Image {
         }
     }
 
+    /// サンプラーを作成する。<br />
+    /// Create sampler.
     pub fn create_sampler(&mut self, mip_levels: u32, sampler_address_mode: SamplerAddressMode) {
         let create_info = SamplerCreateInfo::builder()
             .address_mode_u(sampler_address_mode)
@@ -242,6 +250,8 @@ impl Image {
         }
     }
 
+    /// バッファからイメージのデータをコピーする。<br />
+    /// Copy image data from a buffer.
     pub fn copy_buffer_to_image(
         &self,
         source_buffer: Buffer,

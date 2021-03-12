@@ -18,12 +18,15 @@ use crate::game::shared::structs::{
 };
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
+use crate::game::structs::games::WorldMatrixUdp;
 use crate::game::traits::Disposable;
-use crate::game::{LockableRenderable, NetworkSystem, ResourceManagerWeak};
+use crate::game::{Camera, LockableRenderable, NetworkSystem, ResourceManagerWeak};
 use crate::protos::grpc_service::game_state::WorldMatrix;
 use std::collections::HashMap;
 use winit::event::{ElementState, VirtualKeyCode};
 
+/// メインゲームシーン<br />
+/// Main game scene
 pub struct GameScene<GraphicsType, BufferType, CommandType, TextureType>
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -44,6 +47,7 @@ where
     render_components: Vec<LockableRenderable<GraphicsType, BufferType, CommandType, TextureType>>,
     waitable_tasks: WaitableTasks<GraphicsType, BufferType, CommandType, TextureType>,
     loaded: bool,
+    camera: std::rc::Weak<RefCell<Camera>>,
 }
 
 impl<GraphicsType, BufferType, CommandType, TextureType>
@@ -59,6 +63,7 @@ where
         graphics: Weak<RwLock<ManuallyDrop<GraphicsType>>>,
         entities: std::rc::Weak<RefCell<SlotMap<DefaultKey, usize>>>,
         network_system: Weak<tokio::sync::RwLock<NetworkSystem>>,
+        camera: std::rc::Weak<RefCell<Camera>>,
     ) -> Self {
         GameScene {
             graphics,
@@ -74,11 +79,14 @@ where
             network_system,
             loaded: false,
             terrain_entity: DefaultKey::null(),
+            camera,
         }
     }
 }
 
 impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
+    /// インスタンス描画のモデルを追加する。<br />
+    /// Add instance rendering models.
     pub fn add_instanced_model(
         &mut self,
         file_name: &'static str,
@@ -120,6 +128,8 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    /// 骨付きの動的なモデルを追加する。<br />
+    /// Add skinned models.
     fn add_skinned_model(
         &mut self,
         file_name: &'static str,
@@ -180,6 +190,8 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
         Ok(())
     }
 
+    /// 簡単なシェイプを追加する。<br />
+    /// Add simple shapes.
     fn add_geometric_primitive(
         &mut self,
         primitive_type: PrimitiveType,
@@ -297,8 +309,8 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
     fn generate_terrain(
         &mut self,
-        grid_x: i32,
-        grid_z: i32,
+        grid_x: f32,
+        grid_z: f32,
         primitive: Option<Primitive>,
     ) -> anyhow::Result<Primitive> {
         let model_index = self.counts.model_count.fetch_add(1, Ordering::SeqCst);
@@ -381,30 +393,85 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         self.loaded
     }
 
-    async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
-        let (room_state, player) = {
+    /*async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        let player = {
             let network_system = self
                 .network_system
                 .upgrade()
                 .expect("Failed to upgrade network system handle.");
             let ns = network_system.read().await;
-            (
-                ns.room_state.clone(),
-                ns.logged_user
-                    .clone()
-                    .expect("Failed to get currently logged-in user."),
-            )
+            ns.logged_user_udp.clone()
         };
 
-        let mut room_state_lock = room_state.lock().await;
-        let player_state = room_state_lock
-            .players
-            .iter_mut()
-            .find(|p| p.player_id.as_str() == player.player_id.as_str())
-            .and_then(|p| p.state.as_mut());
+        let mut player_lock = player.lock().await;
+        let world_matrix = &mut player_lock.state.state.world_matrix;
+        let (rotation_x, mut rotation_y, rotation_z) = (
+            world_matrix.rotation[0],
+            world_matrix.rotation[1],
+            world_matrix.rotation[2],
+        );
+        let (mut x, y, mut z) = (
+            world_matrix.position[0],
+            world_matrix.position[1],
+            world_matrix.position[2],
+        );
+        let scale = world_matrix.scale.clone();
+        match (key, element_state) {
+            (VirtualKeyCode::A, ElementState::Pressed) => {
+                rotation_y -= 1.0_f32.to_radians();
+            }
+            (VirtualKeyCode::D, ElementState::Pressed) => {
+                rotation_y += 1.0_f32.to_radians();
+            }
+            (VirtualKeyCode::W, ElementState::Pressed) => {
+                x += rotation_y.sin();
+                z += rotation_y.cos();
+            }
+            (VirtualKeyCode::S, ElementState::Pressed) => {
+                x -= rotation_y.sin();
+                z -= rotation_y.cos();
+            }
+            _ => {}
+        }
 
-        if let Some(ps) = player_state {
-            let world_matrix = ps.state.as_mut().and_then(|e| e.world_matrix.as_mut());
+        {
+            let camera = self
+                .camera
+                .upgrade()
+                .expect("Failed to upgrade camera handle.");
+            let mut borrowed_camera = camera.borrow_mut();
+            borrowed_camera.target.x = x;
+            borrowed_camera.target.y = y;
+            borrowed_camera.target.z = z;
+            borrowed_camera.position.x = x;
+            borrowed_camera.position.y = y + 10.0;
+            borrowed_camera.position.z = z - 10.0;
+        }
+
+        let new_position = vec![x, y, z];
+        let new_world_matrix = WorldMatrixUdp {
+            position: new_position,
+            scale,
+            rotation: vec![rotation_x, rotation_y, rotation_z],
+        };
+        *world_matrix = new_world_matrix;
+    }*/
+
+    async fn input_key(&self, key: VirtualKeyCode, element_state: ElementState) {
+        let player = {
+            let network_system = self
+                .network_system
+                .upgrade()
+                .expect("Failed to upgrade network system handle.");
+            let ns = network_system.read().await;
+            ns.logged_user
+                .clone()
+                .expect("Failed to get currently logged-in user.")
+        };
+
+        let mut player_lock = player.lock().await;
+        if let Some(state) = player_lock.state.as_mut() {
+            let world_matrix = state.state.as_mut().and_then(|e| e.world_matrix.as_mut());
             if let Some(wm) = world_matrix {
                 let (rotation_x, mut rotation_y, rotation_z) =
                     (wm.rotation[0], wm.rotation[1], wm.rotation[2]);
@@ -427,11 +494,28 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                     }
                     _ => {}
                 }
-                *wm = WorldMatrix {
-                    position: vec![x, y, z],
+
+                {
+                    let camera = self
+                        .camera
+                        .upgrade()
+                        .expect("Failed to upgrade camera handle.");
+                    let mut borrowed_camera = camera.borrow_mut();
+                    borrowed_camera.target.x = x;
+                    borrowed_camera.target.y = y;
+                    borrowed_camera.target.z = z;
+                    borrowed_camera.position.x = x;
+                    borrowed_camera.position.y = y + 10.0;
+                    borrowed_camera.position.z = z - 10.0;
+                }
+
+                let new_position = vec![x, y, z];
+                let world_matrix = WorldMatrix {
+                    position: new_position,
                     scale,
                     rotation: vec![rotation_x, rotation_y, rotation_z],
                 };
+                *wm = world_matrix;
             }
         }
     }
@@ -443,9 +527,9 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
             .expect("Failed to upgrade network system handle.");
         let mut room_state = None;
         loop {
-            let ns_lock = network_system.read().await;
-            if let Some(recv) = ns_lock.progress_recv.as_ref() {
-                if let Ok(state) = recv.try_recv() {
+            let mut ns_lock = network_system.write().await;
+            if let Some(recv) = ns_lock.progress_recv.as_mut() {
+                if let Ok(state) = recv.await {
                     room_state = Some(state);
                     break;
                 }
@@ -454,6 +538,34 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
 
         let room_state = room_state.expect("Failed to get room state from receiver.");
         let players = room_state.players;
+        /*for (player_no, player) in players.iter().enumerate() {
+            let world_matrix = &player.state.state.world_matrix;
+            let position: Vec3A = Vec3A::new(
+                world_matrix.position[0],
+                world_matrix.position[1],
+                world_matrix.position[2],
+            );
+            let scale: Vec3A = Vec3A::new(
+                world_matrix.scale[0],
+                world_matrix.scale[1],
+                world_matrix.scale[2],
+            );
+            let rotation: Vec3A = Vec3A::new(
+                world_matrix.rotation[0],
+                world_matrix.rotation[1],
+                world_matrix.rotation[2],
+            );
+            let entity = self.add_entity(&format!("Player {}", player_no + 1));
+            self.add_model(
+                "./models/tank/tank.gltf",
+                position,
+                scale,
+                rotation,
+                Vec4::one(),
+                entity,
+            )?;
+        }*/
+
         for (player_no, player) in players.iter().enumerate() {
             if let Some(state) = player.state.as_ref() {
                 if let Some(entity_state) = state.state.as_ref() {
@@ -604,6 +716,58 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
         graphics_lock.update(delta_time, &self.render_components)?;
         Ok(())
     }
+
+    /*async fn update(&self, delta_time: f64) -> anyhow::Result<()> {
+        if !self.loaded {
+            return Ok(());
+        }
+        let graphics = self
+            .graphics
+            .upgrade()
+            .expect("Failed to upgrade graphics handle.");
+        let network_system = self
+            .network_system
+            .upgrade()
+            .expect("Failed to upgrade network system handle.");
+
+        for (index, (_, key)) in self.player_entities.iter().enumerate() {
+            let model = self
+                .render_components
+                .iter()
+                .find(|r| r.lock().get_entity() == *key);
+            if let Some(r) = model.as_ref() {
+                let ns = network_system.read().await;
+                let room_state = ns.room_state_udp.lock().await;
+                let mut locked_renderable = r.lock();
+                let player = room_state
+                    .players
+                    .get(index)
+                    .expect("Failed to get player.");
+                let world_matrix = &player.state.state.world_matrix;
+                locked_renderable.set_position_info(PositionInfo {
+                    position: Vec3A::new(
+                        world_matrix.position[0],
+                        world_matrix.position[1],
+                        world_matrix.position[2],
+                    ),
+                    scale: Vec3A::new(
+                        world_matrix.scale[0],
+                        world_matrix.scale[1],
+                        world_matrix.scale[2],
+                    ),
+                    rotation: Vec3A::new(
+                        world_matrix.rotation[0],
+                        world_matrix.rotation[1],
+                        world_matrix.rotation[2],
+                    ),
+                });
+            }
+        }
+
+        let mut graphics_lock = graphics.write();
+        graphics_lock.update(delta_time, &self.render_components)?;
+        Ok(())
+    }*/
 
     fn wait_for_all_tasks(&mut self) -> anyhow::Result<()> {
         let completed_tasks = self.waitable_tasks.wait_for_all_tasks()?;

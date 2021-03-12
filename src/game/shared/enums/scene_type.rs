@@ -1,3 +1,5 @@
+/// シーンのタイプ<br />
+/// Scene types.
 #[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug, Hash)]
 pub struct SceneType(pub(crate) u32);
 

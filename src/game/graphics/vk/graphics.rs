@@ -30,21 +30,45 @@ use crate::game::util::{end_one_time_command_buffer, get_single_time_command_buf
 use crate::game::{Camera, ResourceManager, UISystem};
 use ash::prelude::VkResult;
 
+/// 既定のSSBO配列の長さ。<br />
+/// The default length of SSBO array.
 const SSBO_DATA_COUNT: usize = 50;
+
+/// 水面反射のレンダーターゲットの幅。<br />
+/// The width of the render target of water surface's reflection.
 const REFLECTION_WIDTH: u32 = 320;
+
+/// 水面反射のレンダーターゲットの高さ。<br />
+/// The height of the render target of water surface's reflection.
 const REFLECTION_HEIGHT: u32 = 180;
+
+/// 水面屈折のレンダーターゲットの幅。<br />
+/// The width of the render target of water surface's refraction.
 const REFRACTION_WIDTH: u32 = 1280;
+
+/// 水面屈折のレンダーターゲットの高さ。<br />
+/// The height of the render target of water surface's refraction.
 const REFRACTION_HEIGHT: u32 = 720;
 
+/// リソースマネジャーのハンドルタイプ定義。<br />
+/// Type definition of resource manager handle.
 type ResourceManagerHandle = Weak<
     RwLock<ManuallyDrop<ResourceManager<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
+
+/// UIマネジャーのハンドルタイプ定義。<br />
+/// Type definition of UI manager handle.
 type UIManagerHandle = std::rc::Weak<
     RefCell<ManuallyDrop<UISystem<Graphics, super::Buffer, CommandBuffer, super::Image>>>,
 >;
+
+/// マルチスレッドのためロックできる、描画できるリソースのハンドルタイプ定義。<br />
+/// Type definition of handle to lockable and renderable resource for multithreading.
 type LockableRenderable =
     Arc<Mutex<Box<dyn Renderable<Graphics, super::Buffer, CommandBuffer, super::Image> + Send>>>;
 
+/// 主なSSBOデータコンテンツ。<br />
+/// Primary SSBO contents.
 #[derive(Clone)]
 struct PrimarySSBOData {
     world_matrices: [Mat4; SSBO_DATA_COUNT],
@@ -53,6 +77,8 @@ struct PrimarySSBOData {
     shine_dampers: [f32; SSBO_DATA_COUNT],
 }
 
+/// トリプルバッファリングのフレームデータ。<br />
+/// Frame data for triple buffering.
 struct FrameData {
     pub acquired_semaphore: Semaphore,
     pub completed_semaphore: Semaphore,
@@ -61,6 +87,8 @@ struct FrameData {
     pub main_command_buffer: CommandBuffer,
 }
 
+/// 水面上と水面上を描画するためのフレームバッファ。<br />
+/// Framebuffer for rendering above and below the water surface.
 struct OffscreenFramebuffer {
     pub framebuffer: Vec<Framebuffer>,
     pub color_image: ManuallyDrop<super::Image>,
@@ -80,6 +108,8 @@ impl Drop for OffscreenFramebuffer {
     }
 }
 
+/// 水面を描画するためのレンダーパス。<br />
+/// Renderpass for rendering water surface.
 struct OffscreenPass {
     pub framebuffers: [ManuallyDrop<OffscreenFramebuffer>; 2],
 }
@@ -94,30 +124,87 @@ impl Drop for OffscreenPass {
     }
 }
 
+/// Vulkanベース描画のコア。<br />
+/// The core of Vulkan-based rendering.
 pub struct Graphics {
+    /// ロジカルデバイス。<br />
+    /// ロジカルデバイスは全ての描画のコアである。<br />
+    /// Logical device.<br />
+    /// A logical device is the core of all rendering.
     pub logical_device: Arc<Device>,
+
+    /// レンダーリングパイプライン。<br />
+    /// Rendering pipelines.
     pub pipeline: Arc<ShardedLock<ManuallyDrop<super::Pipeline>>>,
+
+    /// 描述子セット。<br />
+    /// Descriptor set.
     pub descriptor_set: DescriptorSet,
+
+    /// プッシュコンスタント。<br />
+    /// Push constant.
     pub push_constant: PushConstant,
+
+    /// 描述子セットの配置。<br />
+    /// The layout of descriptor set.
     pub descriptor_set_layout: DescriptorSetLayout,
+
+    /// SSBO描述子セットの配置。<br />
+    /// The layout of SSBO descriptor set.
     pub ssbo_descriptor_set_layout: DescriptorSetLayout,
+
+    /// 描述子プール。<br />
+    /// Descriptor pool.
     pub descriptor_pool: Arc<Mutex<DescriptorPool>>,
+
+    /// マルチスレッドで描画するためのスレッドプール。<br />
+    /// Thread pool for multithreaded rendering.
     pub thread_pool: Arc<ThreadPool>,
+
+    /// VMAメモリー配置器。<br />
+    /// VMA memory allocator.
     pub allocator: Arc<ShardedLock<Allocator>>,
+
+    /// 主なグラフィックキュー。<br />
+    /// Main graphic queue.
     pub graphics_queue: Arc<Mutex<Queue>>,
+
+    /// 主なプレゼントキュー。<br />
+    /// Main present queue.
     pub present_queue: Arc<Mutex<Queue>>,
+
+    /// 主な計算キュー。<br />
+    /// Main compute queue.
     pub compute_queue: Arc<Mutex<Queue>>,
+
     pub swapchain: ManuallyDrop<super::Swapchain>,
     pub frame_buffers: Vec<Framebuffer>,
     pub resource_manager: ResourceManagerHandle,
+
+    /// 使用するフレームバッファ数。<br />
+    /// 2の場合はダブルバッファリング、3の場合はトリプルバッファリング<br />
+    /// The number of framebuffers.<br />
+    /// If it's 2 it means it's double buffering; if it's 3 it means it's triple buffering.
     pub inflight_buffer_count: usize,
+
+    /// VkInstance
     pub instance: Arc<Instance>,
     pub physical_device: super::PhysicalDevice,
     pub ui_manager: Option<UIManagerHandle>,
     pub depth_format: Format,
     pub sample_count: SampleCountFlags,
+
+    /// 描述子配置器。<br />
+    /// Descriptor allocator.
     pub descriptor_allocator: Arc<Mutex<ManuallyDrop<DescriptorAllocator>>>,
+
+    /// 描述子レイアウトのキャッシュ。<br />
+    /// Descriptor layout cache.
     pub descriptor_layout_cache: Arc<Mutex<ManuallyDrop<DescriptorLayoutCache>>>,
+
+    /// ゲーム画面のウィンドウ。<br />
+    /// Weakを使って循環参照を避けます。<br />
+    /// The window of the game, using Weak to avoid circular reference.
     window: std::rc::Weak<RefCell<winit::window::Window>>,
     window_width: u32,
     window_height: u32,
@@ -131,10 +218,18 @@ pub struct Graphics {
     camera: Rc<RefCell<Camera>>,
     sky_color: Vec4,
     frame_data: Vec<FrameData>,
+
+    /// 現在のフレーム番号。<br />
+    /// The number of the current frame.
     current_frame: AtomicUsize,
+
+    /// オフスクリーンのレンダパース。まだ実装していません。<br />
+    /// Offscreen renderpass. Not yet implemented.
     offscreen_pass: ManuallyDrop<OffscreenPass>,
     is_initialized: bool,
     //checkpoint_fn: NvDeviceDiagnosticCheckpointsFn,
+    /// 主なSSBOデータ。全部のモデルのデータはこの大きなSSBOに保存されます。<br />
+    /// Primary SSBO data. Alll models' data are stored inside this large SSBO.
     primary_ssbo_data: PrimarySSBOData,
 }
 
@@ -358,6 +453,10 @@ impl Graphics {
         })
     }
 
+    /// 頂点バッファとインデックスバッファを生成する。<br />
+    /// これは自由な関数です。自らを参照していません。<br />
+    /// Create vertex buffer and index buffer.<br />
+    /// This is a free function. It doesn't reference itself.
     pub fn create_vertex_and_index_buffer<VertexType: 'static + Send + Sync>(
         graphics: Arc<RwLock<ManuallyDrop<Self>>>,
         vertices: Vec<VertexType>,
@@ -471,6 +570,8 @@ impl Graphics {
         Ok((vertex_buffer, index_buffer))
     }
 
+    /// GLTFモデルからテクスチャを生成する。自由関数。<br />
+    /// Create a texture from a GLTF model. Free function.
     pub fn create_gltf_textures(
         images: Vec<gltf::image::Data>,
         graphics: Arc<RwLock<ManuallyDrop<Self>>>,
@@ -541,6 +642,8 @@ impl Graphics {
         }
     }
 
+    /// ファイルからイメージを生成する。自由関数。<br />
+    /// Create an Image from a file. Free function.
     pub fn create_image_from_file(
         file_name: &str,
         graphics: Arc<RwLock<ManuallyDrop<Self>>>,
@@ -550,6 +653,8 @@ impl Graphics {
         Initializer::create_image_from_file(file_name, graphics, command_pool, sampler_address_mode)
     }
 
+    /// マルチスレッド描画するためのセカンダリーコマンドバッファを生成する。自由関数。<br />
+    /// Create a secondary command buffer for multi-threaded rendering. Free function.
     pub fn create_secondary_command_buffer(
         device: &ash::Device,
         command_pool: CommandPool,
@@ -566,12 +671,17 @@ impl Graphics {
         }
     }
 
+    /// 現在のシーンのリソースを解放する。<br />
+    /// Release resource of the current scene.
     pub fn destroy_scene_resource(&mut self) {
         unsafe {
             ManuallyDrop::drop(&mut self.uniform_buffers);
         }
     }
 
+    /// コマンドプールを取得する。<br />
+    /// Vulkanの仕様によって、コマンドバッファを実行するとき絶対そのコマンドバッファを生成するコマンドプールを使わないといけません。<br />
+    /// Get command pool. According to Vulkan's design, when executing a command buffer, it must use the same command pool that creates such command buffer.
     pub fn get_command_pool(
         graphics: &Self,
         model_index: usize,
@@ -581,6 +691,8 @@ impl Graphics {
         graphics.thread_pool.threads[model_index % thread_count].command_pools[frame_index].clone()
     }
 
+    /// コマンドプールを取得し、そのコマンドプールからセカンダリーコマンドバッファを生成する。<br />
+    /// Get a command pool and create a secondary command buffer from that command pool.
     pub fn get_command_pool_and_secondary_command_buffer(
         graphics: &Self,
         model_index: usize,
@@ -593,10 +705,14 @@ impl Graphics {
         (pool_handle, command_buffer)
     }
 
+    /// スレッドプールから現在タスクのないスレッドのコマンドプールを取得する。<br />
+    /// Get the command pool of an idling thread that doesn't have any task for the time being from the thread pool.
     pub fn get_idle_command_pool(&self) -> Arc<Mutex<CommandPool>> {
         self.thread_pool.get_idle_command_pool()
     }
 
+    /// グラフィックパイプラインを初期化。<br />
+    /// Initialize graphic pipelines.
     pub fn initialize_pipelines(&mut self) -> anyhow::Result<()> {
         //self.create_descriptor_set_layout()?;
         //self.allocate_descriptor_set()?;
@@ -627,6 +743,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// シーンのリソースを再生成する。<br />
+    /// Recreate resource for a scene.
     pub fn initialize_scene_resource(
         &mut self,
         scene_type: SceneType,
@@ -659,6 +777,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// スワップチェーンとスワップチェーンと関連するリソースを再構成。<br />
+    /// Recreate swapchain and associated resource.
     pub fn recreate_swapchain(
         &mut self,
         width: u32,
@@ -765,6 +885,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 主なレンダリング関数。レンダリング関数は自分を変更するべきではないので`&self`にします。<br />
+    /// Main rendering function. A "rendering" function shouldn't change itself so it takes `&self`.
     pub fn render(&self, renderables: &[LockableRenderable]) -> anyhow::Result<()> {
         if !self.is_initialized {
             return Ok(());
@@ -897,6 +1019,8 @@ impl Graphics {
         }
     }
 
+    /// 更新関数。色々なデータを更新するため、`&mut self`にする必要があります。<br />
+    /// Update function. Since it will update a number of resources, it takes `&mut self`.
     pub fn update(
         &mut self,
         delta_time: f64,
@@ -939,147 +1063,8 @@ impl Graphics {
         Ok(())
     }
 
-    /*fn allocate_descriptor_set(&mut self) -> anyhow::Result<()> {
-        let resource_manager = self
-            .resource_manager
-            .upgrade()
-            .expect("Failed to upgrade Weak of resource manager for allocating descriptor set.");
-        let resource_lock = resource_manager.read();
-        let texture_count = resource_lock.get_texture_count();
-        let mut ssbo_count = 1;
-        ssbo_count += resource_lock.get_model_count();
-        let mut pool_sizes = vec![];
-        pool_sizes.push(
-            DescriptorPoolSize::builder()
-                .descriptor_count(1)
-                .ty(DescriptorType::UNIFORM_BUFFER)
-                .build(),
-        );
-        pool_sizes.push(
-            DescriptorPoolSize::builder()
-                .descriptor_count(1)
-                .ty(DescriptorType::UNIFORM_BUFFER)
-                .build(),
-        );
-        pool_sizes.push(
-            DescriptorPoolSize::builder()
-                .descriptor_count(texture_count as u32)
-                .ty(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .build(),
-        );
-        pool_sizes.push(
-            DescriptorPoolSize::builder()
-                .descriptor_count(ssbo_count as u32)
-                .ty(DescriptorType::STORAGE_BUFFER)
-                .build(),
-        );
-
-        let image_count = self.swapchain.swapchain_images.len();
-        let pool_info = DescriptorPoolCreateInfo::builder()
-            .max_sets(u32::try_from(image_count + texture_count + ssbo_count)?)
-            .pool_sizes(pool_sizes.as_slice());
-
-        unsafe {
-            self.descriptor_pool = Arc::new(Mutex::new(
-                self.logical_device
-                    .create_descriptor_pool(&pool_info, None)?,
-            ));
-            log::info!("Descriptor pool successfully created.");
-            let set_layout = vec![self.descriptor_set_layout];
-            let allocate_info = DescriptorSetAllocateInfo::builder()
-                .descriptor_pool(*self.descriptor_pool.lock())
-                .set_layouts(set_layout.as_slice());
-            let sets = self
-                .logical_device
-                .allocate_descriptor_sets(&allocate_info)
-                .expect("Failed to allocate descriptor sets.");
-            self.descriptor_set = sets[0];
-
-            log::info!("Descriptor sets successfully allocated.");
-
-            let vp_buffer = &self.uniform_buffers.view_projection;
-            let vp_buffer_info = vec![DescriptorBufferInfo::builder()
-                .buffer(vp_buffer.buffer)
-                .offset(0)
-                .range(vp_buffer.buffer_size)
-                .build()];
-
-            let dl_buffer = &self.uniform_buffers.directional_light;
-            let dl_buffer_info = vec![DescriptorBufferInfo::builder()
-                .buffer(dl_buffer.buffer)
-                .offset(0)
-                .range(dl_buffer.buffer_size)
-                .build()];
-
-            let mut write_descriptors = vec![];
-            write_descriptors.push(
-                WriteDescriptorSet::builder()
-                    .dst_array_element(0)
-                    .buffer_info(vp_buffer_info.as_slice())
-                    .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                    .dst_binding(0)
-                    .dst_set(self.descriptor_set)
-                    .build(),
-            );
-            write_descriptors.push(
-                WriteDescriptorSet::builder()
-                    .dst_array_element(0)
-                    .buffer_info(dl_buffer_info.as_slice())
-                    .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                    .dst_binding(1)
-                    .dst_set(self.descriptor_set)
-                    .build(),
-            );
-
-            let ssbo_buffer = self
-                .uniform_buffers
-                .primary_ssbo
-                .as_ref()
-                .expect("Primary SSBO buffer doesn't exist.");
-            let ssbo_buffer_info = vec![DescriptorBufferInfo::builder()
-                .range(ssbo_buffer.buffer_size)
-                .offset(0)
-                .buffer(ssbo_buffer.buffer)
-                .build()];
-            write_descriptors.push(
-                WriteDescriptorSet::builder()
-                    .dst_array_element(0)
-                    .buffer_info(ssbo_buffer_info.as_slice())
-                    .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                    .dst_binding(2)
-                    .dst_set(self.descriptor_set)
-                    .build(),
-            );
-
-            let mut texture_info = vec![];
-            for texture in resource_lock.textures.iter() {
-                let texture_lock = texture
-                    .read()
-                    .expect("Failed to lock texture for creating the descriptor set.");
-                let image_info = DescriptorImageInfo::builder()
-                    .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(texture_lock.image_view)
-                    .sampler(texture_lock.sampler)
-                    .build();
-                texture_info.push(image_info);
-            }
-            write_descriptors.push(
-                WriteDescriptorSet::builder()
-                    .dst_array_element(0)
-                    .image_info(texture_info.as_slice())
-                    .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_binding(3)
-                    .dst_set(self.descriptor_set)
-                    .build(),
-            );
-
-            self.logical_device
-                .update_descriptor_sets(write_descriptors.as_slice(), &[]);
-            log::info!("Descriptor successfully updated.");
-            Ok(())
-        }
-    }*/
-
+    /// 描述子を配置する。<br />
+    /// Allocate descriptors.
     fn allocate_descriptors(&mut self) -> anyhow::Result<()> {
         let mut cache = self.descriptor_layout_cache.lock();
         let mut allocator = self.descriptor_allocator.lock();
@@ -1127,6 +1112,27 @@ impl Graphics {
                     .build();
                 texture_info.push(image_info);
             }
+
+            #[cfg(target_os = "macos")]
+            {
+                let current_length = texture_info.len();
+                let last_texture = resource_lock
+                    .textures
+                    .last()
+                    .expect("Failed to get last texture from resource manager.");
+                let texture_lock = last_texture
+                    .read()
+                    .expect("Failed to lock last texture for writing descriptor set.");
+                let sampler_count = dotenv::var("MACOS_SAMPLER_COUNT")?.parse::<usize>()?;
+                for _ in current_length..sampler_count {
+                    let image_info = DescriptorImageInfo::builder()
+                        .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .image_view(texture_lock.image_view)
+                        .sampler(texture_lock.sampler)
+                        .build();
+                    texture_info.push(image_info);
+                }
+            }
         }
 
         if let Some((descriptor_set, descriptor_set_layout)) =
@@ -1170,6 +1176,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 描画開始。<br />
+    /// Draw begins.
     fn begin_draw(
         &self,
         frame_buffer: Framebuffer,
@@ -1234,6 +1242,9 @@ impl Graphics {
             .clear_values(clear_values.as_slice())
             .render_area(*render_area)
             .framebuffer(self.offscreen_pass.framebuffers[0].framebuffer[frame_index]);
+
+        // この分は元々水面を描画するため書いたコードです。
+        // 水面の描画はまだ実装していませんのでコメントしました。
 
         /*let inheritance_ptr = {
             let inheritance_info = Box::new(
@@ -1347,63 +1358,8 @@ impl Graphics {
         Ok(())
     }
 
-    /*fn create_descriptor_set_layout(&mut self) -> anyhow::Result<()> {
-        let resource_manager = self.resource_manager.upgrade().expect(
-            "Failed to upgrade Weak of resource manager for creating descriptor set layout.",
-        );
-        let resource_lock = resource_manager.read();
-        let total_texture_count = resource_lock.get_texture_count();
-        drop(resource_lock);
-        drop(resource_manager);
-        let mut descriptor_set_layout_binding = vec![];
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(0)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                .stage_flags(ShaderStageFlags::VERTEX)
-                .build(),
-        );
-
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(1)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                .stage_flags(ShaderStageFlags::FRAGMENT)
-                .build(),
-        );
-
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(2)
-                .descriptor_count(1)
-                .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT)
-                .build(),
-        );
-
-        descriptor_set_layout_binding.push(
-            DescriptorSetLayoutBinding::builder()
-                .binding(3)
-                .descriptor_count(total_texture_count as u32)
-                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .stage_flags(ShaderStageFlags::FRAGMENT)
-                .build(),
-        );
-
-        let create_info = DescriptorSetLayoutCreateInfo::builder()
-            .bindings(descriptor_set_layout_binding.as_slice());
-        unsafe {
-            let descriptor_set_layout = self
-                .logical_device
-                .create_descriptor_set_layout(&create_info, None)?;
-            log::info!("Descriptor set layout successfully created.");
-            self.descriptor_set_layout = descriptor_set_layout;
-            Ok(())
-        }
-    }*/
-
+    /// フレームバッファを生成する。戻り値は`Vec<Framebuffer>`の理由はこのプログラムにはトリプルバッファリングを使うから。<br />
+    /// Create framebuffers. The reason that the return value is `Vec<Framebuffer>` is that this program utilizes triple buffering.
     fn create_frame_buffers(
         frame_width: u32,
         frame_height: u32,
@@ -1438,6 +1394,8 @@ impl Graphics {
         frame_buffers
     }
 
+    /// シェーダーのタイプに応じてグラフィックパイプラインを生成する。<br />
+    /// Create graphic pipelines according to the shader type.
     fn create_graphics_pipeline(&mut self, shader_type: ShaderType) -> anyhow::Result<()> {
         let shaders = vec![
             super::Shader::new(
@@ -1483,6 +1441,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// オフスクリーンレンダパースを生成する。<br />
+    /// Create offscreen renderpass.
     fn create_offscreen_pass(
         device: Weak<Device>,
         color_format: Format,
@@ -1642,6 +1602,8 @@ impl Graphics {
         }
     }
 
+    /// 主なSSBOを生成する。<br />
+    /// Create primary SSBO.
     fn create_primary_ssbo(&mut self, scene_type: SceneType) -> anyhow::Result<()> {
         let resource_manager = self
             .resource_manager
@@ -1652,10 +1614,17 @@ impl Graphics {
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
-        let renderables = resource_lock
-            .model_queue
-            .get(&scene_type)
-            .expect("Failed to get model queue for the current scene.");
+        let mut empty_queue = vec![];
+        let mut renderables = &empty_queue;
+        while empty_queue.is_empty() {
+            let model_queue = resource_lock.model_queue.get(&scene_type);
+            if let Some(mq) = model_queue {
+                renderables = mq;
+                break;
+            } else {
+                continue;
+            }
+        }
         self.update_primary_ssbo(renderables.as_slice());
         let buffer_size = std::mem::size_of::<PrimarySSBOData>();
         drop(resource_lock);
@@ -1681,6 +1650,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// リソースを解放する。なぜなら、それはVulkanのリソース解放は順番に従わないといけません。<br />
+    /// Dispose resources. The reason is that in Vulkan, all resources must be released in order.
     unsafe fn dispose(&mut self) -> anyhow::Result<()> {
         for buffer in self.frame_buffers.iter() {
             self.logical_device.destroy_framebuffer(*buffer, None);
@@ -1706,6 +1677,8 @@ impl Graphics {
         Ok(())
     }
 
+    /// 現在のフレームデータと番号を取得する。<br />
+    /// Get current frame data and number.
     fn get_current_frame(&self) -> (&FrameData, usize) {
         let current_frame = self.current_frame.load(Ordering::SeqCst);
         let inflight_buffer_count = self.inflight_buffer_count;
@@ -1715,6 +1688,8 @@ impl Graphics {
         )
     }
 
+    /// SSBOを更新する。<br />
+    /// Update SSBO.
     fn update_primary_ssbo(&mut self, renderables: &[LockableRenderable]) {
         let model_metadata = &mut self.primary_ssbo_data;
         for model in renderables.iter() {
@@ -1728,6 +1703,8 @@ impl Graphics {
         }
     }
 
+    /// セカンダリーコマンドバッファを描画する。そして最後に全てのコマンドバッファを返す。<br />
+    /// Render secondary command buffers and return all secondary command buffers.
     fn update_secondary_command_buffers(
         &self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,

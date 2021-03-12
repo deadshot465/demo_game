@@ -46,6 +46,7 @@ where
     pub scene_manager: SceneManager,
     pub ui_system: UISystemHandle<GraphicsType, BufferType, CommandType, TextureType>,
     pub current_scene: SceneType,
+    pub is_terminating: bool,
     resource_manager: ResourceManagerHandle<GraphicsType, BufferType, CommandType, TextureType>,
     entities: Rc<RefCell<SlotMap<DefaultKey, usize>>>,
     network_system: Arc<tokio::sync::RwLock<NetworkSystem>>,
@@ -88,6 +89,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             scenes: HashMap::new(),
             current_scene: SceneType::TITLE,
             room_state_receiver: None,
+            is_terminating: false,
         })
     }
 
@@ -108,6 +110,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             Arc::downgrade(&self.graphics),
             Rc::downgrade(&self.entities),
             Arc::downgrade(&self.network_system),
+            Rc::downgrade(&self.camera),
         );
         let title_scene_index = self.scene_manager.register_scene(title_scene);
         let game_scene_index = self.scene_manager.register_scene(game_scene);
@@ -181,6 +184,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub fn render(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if self.is_terminating {
+            return Ok(());
+        }
         self.scene_manager.render(delta_time)?;
         Ok(())
     }
@@ -193,6 +199,9 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
     }
 
     pub async fn update(&mut self, delta_time: f64) -> anyhow::Result<()> {
+        if self.is_terminating {
+            return Ok(());
+        }
         let old_scene = self.current_scene;
         let mut new_scene = self.current_scene;
         if let Some(ui_system) = self.ui_system.as_ref() {
@@ -219,7 +228,7 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             let is_owner = {
                 let ns = self.network_system.read().await;
                 if let Some(player) = ns.logged_user.as_ref() {
-                    if let Some(state) = player.state.as_ref() {
+                    if let Some(state) = player.lock().await.state.as_ref() {
                         state.is_owner
                     } else {
                         false
@@ -232,11 +241,14 @@ impl Game<Graphics, Buffer, CommandBuffer, Image> {
             {
                 let mut ns = self.network_system.write().await;
                 if is_owner {
-                    let primitive = self.scene_manager.generate_terrain(0, 0, None)?;
+                    let primitive = self.scene_manager.generate_terrain(-0.5, -0.5, None)?;
                     ns.start_game(primitive).await?;
                 } else {
-                    self.scene_manager
-                        .generate_terrain(0, 0, Some(ns.get_terrain().await?))?;
+                    self.scene_manager.generate_terrain(
+                        -0.5,
+                        -0.5,
+                        Some(ns.get_terrain().await?),
+                    )?;
                 }
                 ns.progress_game().await?;
             }
@@ -341,6 +353,7 @@ impl Game<DX12::Graphics, DX12::Resource, ComPtr<ID3D12GraphicsCommandList>, DX1
             scenes: HashMap::new(),
             current_scene: SceneType::TITLE,
             room_state_receiver: None,
+            is_terminating: false,
         }
     }
 

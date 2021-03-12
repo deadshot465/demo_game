@@ -1,5 +1,7 @@
 use glam::{Vec3A, Vec4};
 
+/// 指向性ライト<br />
+/// Directional lighting
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug)]
 pub struct Directional {

@@ -5,6 +5,10 @@ use ash::vk::{
 use glam::{Vec2, Vec3A, Vec4};
 use std::convert::TryFrom;
 
+/// SkinnedVertex > SkinnedPrimitive > SkinnedMesh > SkinnedModel<br />
+/// 骨付きの頂点（加重など）はSkinnedPrimitiveを構成します。<br />
+/// SkinnedPrimitiveは骨付きのメッシュを構成します。<br />
+/// 骨付きのメッシュはモデルを構成します。
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct SkinnedVertex {

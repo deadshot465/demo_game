@@ -10,6 +10,8 @@ use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
 use std::sync::Arc;
 
+/// 描画できるオブジェクト<br />
+/// Renderable objects.  
 pub trait Renderable<GraphicsType, BufferType, CommandType, TextureType>: Disposable
 where
     GraphicsType: 'static + GraphicsBase<BufferType, CommandType, TextureType>,
@@ -21,22 +23,42 @@ where
         &self,
     ) -> Box<dyn Renderable<GraphicsType, BufferType, CommandType, TextureType> + Send + 'static>;
 
+    /// モデルのSSBOを作成する。<br />
+    /// Create SSBO for the model.
     fn create_ssbo(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 
+    /// モデルのSSBOを解放する。<br />
+    /// Release SSBO for the model.
     fn dispose_ssbo(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 
+    /// このモデルを描画するためのコマンドバッファを取得する。<br />
+    /// Obtain command buffers for rendering this model.
     fn get_command_buffers(&self, frame_index: usize) -> Vec<CommandType>;
+
+    /// このモデルが配属されたエンティティを取得する。<br />
+    /// Get the entity this model belongs to.
     fn get_entity(&self) -> DefaultKey {
         DefaultKey::null()
     }
+
+    /// モデルのメタデータを取得する。<br />
+    /// Obtain model's metadata.
     fn get_model_metadata(&self) -> ModelMetaData;
+
+    /// モデルの位置などの情報を取得する。<br />
+    /// Get position info of the model.
     fn get_position_info(&self) -> PositionInfo;
+
+    /// 主なSSBOの中にこのモデルのインデックスを取得する。<br />
+    /// Get the index of this model inside the primary SSBO.
     fn get_ssbo_index(&self) -> usize;
 
+    /// ワールド行列を取得する。<br />
+    /// Get world matrix of this model.
     fn get_world_matrix(&self) -> Mat4 {
         let PositionInfo {
             position,
@@ -50,6 +72,8 @@ where
         world * translation * rotate * scale
     }
 
+    /// モデルを描画する。<br />
+    /// Render this model.
     fn render(
         &self,
         inheritance_info: Arc<AtomicPtr<CommandBufferInheritanceInfo>>,
@@ -63,10 +87,24 @@ where
         frame_index: usize,
     );
 
+    /// モデルのメタデータを設定する。<br />
+    /// Set this model's metadata.
     fn set_model_metadata(&mut self, model_metadata: ModelMetaData);
+
+    /// モデルの位置情報を設定する。<br />
+    /// Set position info of this model.
     fn set_position_info(&mut self, position_info: PositionInfo);
+
+    /// 主なSSBOの中にこのモデルのインデックスを設定する。<br />
+    /// Set the index of this model inside the primary SSBO.
     fn set_ssbo_index(&mut self, ssbo_index: usize);
+
+    /// モデルを更新する。<br />
+    /// Update this model.
     fn update(&mut self, delta_time: f64);
+
+    /// モデルのインデックスを更新する。<br />
+    /// Update this model's index.
     fn update_model_indices(&mut self, model_count: Arc<AtomicUsize>);
 }
 

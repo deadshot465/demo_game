@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+/// プレイヤーのJSONオブジェクト
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Player {
     #[serde(rename = "PlayerId")]
