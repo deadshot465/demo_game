@@ -89,7 +89,7 @@ where
         Model {
             position_info,
             model_metadata: ModelMetaData {
-                world_matrix: Mat4::identity(),
+                world_matrix: Mat4::IDENTITY,
                 object_color: color,
                 reflectivity: 1.0,
                 shine_damper: 10.0,
@@ -137,7 +137,7 @@ where
                 node,
                 buffers,
                 &images,
-                Mat4::identity(),
+                Mat4::IDENTITY,
                 texture_index_offset,
                 model_index.clone(),
             );
@@ -156,8 +156,11 @@ where
     ) -> Vec<Mesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
-        let transform =
-            Mat4::from_scale_rotation_translation(Vec3::from(s), Quat::from(r), Vec3::from(t));
+        let transform = Mat4::from_scale_rotation_translation(
+            Vec3::from(s),
+            Quat::from_array(r),
+            Vec3::from(t),
+        );
         let transform = local_transform * transform;
         if let Some(mesh) = node.mesh() {
             meshes.push(Self::process_mesh(

@@ -39,8 +39,7 @@ fn main() -> anyhow::Result<()> {
     log::info!("Using API: {}", &api);
 
     // Tokio非同期ランタイムをセットアップ
-    let mut rt = tokio::runtime::Builder::new()
-        .threaded_scheduler()
+    let mut rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 

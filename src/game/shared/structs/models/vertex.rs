@@ -17,9 +17,9 @@ pub struct Vertex {
 impl Default for Vertex {
     fn default() -> Self {
         Vertex {
-            position: Vec3A::zero(),
-            normal: Vec3A::zero(),
-            uv: Vec2::zero(),
+            position: Vec3A::ZERO,
+            normal: Vec3A::ZERO,
+            uv: Vec2::ZERO,
         }
     }
 }

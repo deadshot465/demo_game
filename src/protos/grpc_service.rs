@@ -1,82 +1,83 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegisterRequest {
     #[prost(string, tag = "1")]
-    pub user_name: std::string::String,
+    pub user_name: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub nickname: std::string::String,
+    pub nickname: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
-    pub email: std::string::String,
+    pub email: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
-    pub password: std::string::String,
+    pub password: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
-    pub jwt_token: std::string::String,
+    pub jwt_token: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegisterReply {
     #[prost(bool, tag = "1")]
     pub status: bool,
     #[prost(string, tag = "2")]
-    pub message: std::string::String,
+    pub message: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "3")]
-    pub player: ::std::option::Option<game_state::Player>,
+    pub player: ::core::option::Option<game_state::Player>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoginRequest {
     #[prost(string, tag = "1")]
-    pub account: std::string::String,
+    pub account: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub password: std::string::String,
+    pub password: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
-    pub jwt_token: std::string::String,
+    pub jwt_token: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoginReply {
     #[prost(bool, tag = "1")]
     pub status: bool,
     #[prost(string, tag = "2")]
-    pub message: std::string::String,
+    pub message: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "3")]
-    pub player: ::std::option::Option<game_state::Player>,
+    pub player: ::core::option::Option<game_state::Player>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MessageRecord {
     #[prost(string, tag = "1")]
-    pub player_id: std::string::String,
+    pub player_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub message: std::string::String,
+    pub message: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IncomingMessages {
     #[prost(message, repeated, tag = "1")]
-    pub messages: ::std::vec::Vec<IncomingMessage>,
+    pub messages: ::prost::alloc::vec::Vec<IncomingMessage>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IncomingMessage {
     #[prost(string, tag = "1")]
-    pub author: std::string::String,
+    pub author: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub message: std::string::String,
+    pub message: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Empty {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GameState {}
+/// Nested message and enum types in `GameState`.
 pub mod game_state {
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Player {
         #[prost(string, tag = "1")]
-        pub player_id: std::string::String,
+        pub player_id: ::prost::alloc::string::String,
         #[prost(string, tag = "2")]
-        pub user_name: std::string::String,
+        pub user_name: ::prost::alloc::string::String,
         #[prost(string, tag = "3")]
-        pub nickname: std::string::String,
+        pub nickname: ::prost::alloc::string::String,
         /// Base64-encoded password
         #[prost(string, tag = "4")]
-        pub password: std::string::String,
+        pub password: ::prost::alloc::string::String,
         #[prost(string, tag = "5")]
-        pub join_date: std::string::String,
+        pub join_date: ::prost::alloc::string::String,
         #[prost(string, tag = "6")]
-        pub last_login: std::string::String,
+        pub last_login: ::prost::alloc::string::String,
         #[prost(int32, tag = "7")]
         pub win_count: i32,
         #[prost(int32, tag = "8")]
@@ -84,18 +85,18 @@ pub mod game_state {
         #[prost(int32, tag = "9")]
         pub credits: i32,
         #[prost(string, tag = "10")]
-        pub email: std::string::String,
+        pub email: ::prost::alloc::string::String,
         #[prost(message, optional, tag = "11")]
-        pub state: ::std::option::Option<PlayerState>,
+        pub state: ::core::option::Option<PlayerState>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct WorldMatrix {
         #[prost(float, repeated, tag = "1")]
-        pub position: ::std::vec::Vec<f32>,
+        pub position: ::prost::alloc::vec::Vec<f32>,
         #[prost(float, repeated, tag = "2")]
-        pub scale: ::std::vec::Vec<f32>,
+        pub scale: ::prost::alloc::vec::Vec<f32>,
         #[prost(float, repeated, tag = "3")]
-        pub rotation: ::std::vec::Vec<f32>,
+        pub rotation: ::prost::alloc::vec::Vec<f32>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct EntityState {
@@ -110,39 +111,39 @@ pub mod game_state {
         #[prost(bool, tag = "5")]
         pub is_alive: bool,
         #[prost(message, optional, tag = "6")]
-        pub world_matrix: ::std::option::Option<WorldMatrix>,
+        pub world_matrix: ::core::option::Option<WorldMatrix>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct PlayerState {
         #[prost(bool, tag = "1")]
         pub is_in_game: bool,
         #[prost(string, tag = "2")]
-        pub room_id: std::string::String,
+        pub room_id: ::prost::alloc::string::String,
         #[prost(bool, tag = "3")]
         pub is_owner: bool,
         #[prost(message, optional, tag = "4")]
-        pub state: ::std::option::Option<EntityState>,
+        pub state: ::core::option::Option<EntityState>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Rooms {
         #[prost(message, repeated, tag = "1")]
-        pub rooms: ::std::vec::Vec<RoomState>,
+        pub rooms: ::prost::alloc::vec::Vec<RoomState>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct RegisterPlayerRequest {
         #[prost(string, tag = "1")]
-        pub room_id: std::string::String,
+        pub room_id: ::prost::alloc::string::String,
         #[prost(string, tag = "2")]
-        pub room_name: std::string::String,
+        pub room_name: ::prost::alloc::string::String,
         #[prost(message, optional, tag = "3")]
-        pub player: ::std::option::Option<Player>,
+        pub player: ::core::option::Option<Player>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct RoomState {
         #[prost(string, tag = "1")]
-        pub room_id: std::string::String,
+        pub room_id: ::prost::alloc::string::String,
         #[prost(string, tag = "2")]
-        pub room_name: std::string::String,
+        pub room_name: ::prost::alloc::string::String,
         #[prost(int32, tag = "3")]
         pub current_players: i32,
         #[prost(int32, tag = "4")]
@@ -150,33 +151,33 @@ pub mod game_state {
         #[prost(bool, tag = "5")]
         pub started: bool,
         #[prost(message, repeated, tag = "6")]
-        pub players: ::std::vec::Vec<Player>,
+        pub players: ::prost::alloc::vec::Vec<Player>,
         #[prost(string, tag = "7")]
-        pub message: std::string::String,
+        pub message: ::prost::alloc::string::String,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct StartGameRequest {
         #[prost(message, optional, tag = "1")]
-        pub room_state: ::std::option::Option<RoomState>,
-        #[prost(bytes, tag = "2")]
-        pub terrain_vertices: std::vec::Vec<u8>,
+        pub room_state: ::core::option::Option<RoomState>,
+        #[prost(bytes = "vec", tag = "2")]
+        pub terrain_vertices: ::prost::alloc::vec::Vec<u8>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct GetTerrainRequest {
         #[prost(string, tag = "1")]
-        pub room_id: std::string::String,
+        pub room_id: ::prost::alloc::string::String,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct GetTerrainReply {
-        #[prost(bytes, tag = "1")]
-        pub terrain_vertices: std::vec::Vec<u8>,
+        #[prost(bytes = "vec", tag = "1")]
+        pub terrain_vertices: ::prost::alloc::vec::Vec<u8>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct ProgressGameRequest {
         #[prost(message, optional, tag = "1")]
-        pub player: ::std::option::Option<Player>,
+        pub player: ::core::option::Option<Player>,
         #[prost(string, tag = "2")]
-        pub room_id: std::string::String,
+        pub room_id: ::prost::alloc::string::String,
     }
 }
 #[doc = r" Generated client implementations."]
@@ -403,7 +404,7 @@ pub mod grpc_service_server {
             request: tonic::Request<super::Empty>,
         ) -> Result<tonic::Response<super::IncomingMessages>, tonic::Status>;
         #[doc = "Server streaming response type for the Chat method."]
-        type ChatStream: Stream<Item = Result<super::IncomingMessage, tonic::Status>>
+        type ChatStream: futures_core::Stream<Item = Result<super::IncomingMessage, tonic::Status>>
             + Send
             + Sync
             + 'static;
@@ -418,7 +419,7 @@ pub mod grpc_service_server {
             request: tonic::Request<super::Empty>,
         ) -> Result<tonic::Response<super::game_state::Rooms>, tonic::Status>;
         #[doc = "Server streaming response type for the RegisterPlayer method."]
-        type RegisterPlayerStream: Stream<Item = Result<super::game_state::RoomState, tonic::Status>>
+        type RegisterPlayerStream: futures_core::Stream<Item = Result<super::game_state::RoomState, tonic::Status>>
             + Send
             + Sync
             + 'static;
@@ -438,7 +439,7 @@ pub mod grpc_service_server {
             request: tonic::Request<super::game_state::GetTerrainRequest>,
         ) -> Result<tonic::Response<super::game_state::GetTerrainReply>, tonic::Status>;
         #[doc = "Server streaming response type for the ProgressGame method."]
-        type ProgressGameStream: Stream<Item = Result<super::game_state::RoomState, tonic::Status>>
+        type ProgressGameStream: futures_core::Stream<Item = Result<super::game_state::RoomState, tonic::Status>>
             + Send
             + Sync
             + 'static;
@@ -779,6 +780,7 @@ pub mod grpc_service_server {
                     Ok(http::Response::builder()
                         .status(200)
                         .header("grpc-status", "12")
+                        .header("content-type", "application/grpc")
                         .body(tonic::body::BoxBody::empty())
                         .unwrap())
                 }),

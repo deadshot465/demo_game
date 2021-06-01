@@ -14,7 +14,7 @@ impl PushConstant {
         PushConstant {
             texture_index: 0,
             model_index: 0,
-            sky_color: Vec4::zero(),
+            sky_color: Vec4::ZERO,
         }
     }
 

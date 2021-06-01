@@ -18,7 +18,6 @@ use crate::game::shared::structs::{
 };
 use crate::game::shared::traits::{GraphicsBase, Scene};
 use crate::game::shared::util::HeightGenerator;
-use crate::game::structs::games::WorldMatrixUdp;
 use crate::game::traits::Disposable;
 use crate::game::{Camera, LockableRenderable, NetworkSystem, ResourceManagerWeak};
 use crate::protos::grpc_service::game_state::WorldMatrix;
@@ -108,8 +107,8 @@ impl GameScene<Graphics, Buffer, CommandBuffer, Image> {
                 x_offset = 0.0;
             }
             (*data).translation = Vec3A::new(x_offset, 0.0, z_offset);
-            (*data).rotation = Vec3A::zero();
-            (*data).scale = Vec3A::one();
+            (*data).rotation = Vec3A::ZERO;
+            (*data).scale = Vec3A::ONE;
             x_offset += 25.0;
         }
         let task = InstancedModel::new(
@@ -591,7 +590,7 @@ impl Scene for GameScene<Graphics, Buffer, CommandBuffer, Image> {
                             position,
                             scale,
                             rotation,
-                            Vec4::one(),
+                            Vec4::ONE,
                             entity,
                         )?;
                     }

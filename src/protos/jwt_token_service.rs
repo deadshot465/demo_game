@@ -1,33 +1,37 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AccessRequest {
     #[prost(string, tag = "1")]
-    pub user_name: std::string::String,
+    pub user_name: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub password: std::string::String,
+    pub password: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AccessReply {
     #[prost(string, tag = "1")]
-    pub token: std::string::String,
+    pub token: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
-    pub user_details: ::std::option::Option<access_reply::User>,
+    pub user_details: ::core::option::Option<access_reply::User>,
     #[prost(string, tag = "3")]
-    pub expiry: std::string::String,
+    pub expiry: ::prost::alloc::string::String,
 }
+/// Nested message and enum types in `AccessReply`.
 pub mod access_reply {
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct User {
         #[prost(enumeration = "user::UserType", tag = "1")]
         pub r#type: i32,
         #[prost(string, tag = "2")]
-        pub user_name: std::string::String,
+        pub user_name: ::prost::alloc::string::String,
         #[prost(string, tag = "3")]
-        pub user_role: std::string::String,
+        pub user_role: ::prost::alloc::string::String,
         #[prost(string, tag = "4")]
-        pub password: std::string::String,
+        pub password: ::prost::alloc::string::String,
     }
+    /// Nested message and enum types in `User`.
     pub mod user {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+        #[derive(
+            Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+        )]
         #[repr(i32)]
         pub enum UserType {
             Admin = 0,
@@ -178,6 +182,7 @@ pub mod jwt_token_service_server {
                     Ok(http::Response::builder()
                         .status(200)
                         .header("grpc-status", "12")
+                        .header("content-type", "application/grpc")
                         .body(tonic::body::BoxBody::empty())
                         .unwrap())
                 }),

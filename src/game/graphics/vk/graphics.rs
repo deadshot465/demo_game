@@ -242,7 +242,7 @@ impl Graphics {
         let window_ptr = window.upgrade().expect("Failed to upgrade window handle.");
         let window_handle = window_ptr.borrow();
         let debug = dotenv::var("DEBUG")?.parse::<bool>()?;
-        let entry = Entry::new()?;
+        let entry = unsafe { Entry::new()? };
         let enabled_layers = if debug {
             vec![CString::new("VK_LAYER_KHRONOS_validation")?]
         } else {
@@ -445,8 +445,8 @@ impl Graphics {
                 descriptor_layout_cache,
             ))),
             primary_ssbo_data: PrimarySSBOData {
-                world_matrices: [Mat4::identity(); SSBO_DATA_COUNT],
-                object_colors: [Vec4::zero(); SSBO_DATA_COUNT],
+                world_matrices: [Mat4::IDENTITY; SSBO_DATA_COUNT],
+                object_colors: [Vec4::ZERO; SSBO_DATA_COUNT],
                 reflectivities: [0.0; SSBO_DATA_COUNT],
                 shine_dampers: [0.0; SSBO_DATA_COUNT],
             },
@@ -1614,7 +1614,7 @@ impl Graphics {
         if is_models_empty {
             return Err(anyhow::anyhow!("There are no models in resource manager."));
         }
-        let mut empty_queue = vec![];
+        let empty_queue = vec![];
         let mut renderables = &empty_queue;
         while empty_queue.is_empty() {
             let model_queue = resource_lock.model_queue.get(&scene_type);

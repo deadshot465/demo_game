@@ -4,7 +4,7 @@ use crate::game::shared::traits::Disposable;
 use crate::game::traits::GraphicsBase;
 use ash::vk::{CommandBufferInheritanceInfo, DescriptorSet};
 use crossbeam::sync::ShardedLock;
-use glam::Mat4;
+use glam::{EulerRot, Mat4};
 use slotmap::{DefaultKey, Key};
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicPtr, AtomicUsize};
@@ -65,10 +65,10 @@ where
             scale,
             rotation,
         } = self.get_position_info();
-        let world = Mat4::identity();
+        let world = Mat4::IDENTITY;
         let scale = Mat4::from_scale(glam::Vec3::from(scale));
         let translation = Mat4::from_translation(glam::Vec3::from(position));
-        let rotate = Mat4::from_rotation_ypr(rotation.y, rotation.x, rotation.z);
+        let rotate = Mat4::from_euler(EulerRot::YXZ, rotation.y, rotation.x, rotation.z);
         world * translation * rotate * scale
     }
 

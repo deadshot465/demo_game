@@ -69,7 +69,7 @@ where
             model: Some(Model {
                 position_info,
                 model_metadata: ModelMetaData {
-                    world_matrix: Mat4::identity(),
+                    world_matrix: Mat4::IDENTITY,
                     object_color: color,
                     reflectivity: 0.0,
                     shine_damper: 0.0,

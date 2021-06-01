@@ -84,7 +84,7 @@ where
         }
         SkinnedModel {
             model_metadata: ModelMetaData {
-                world_matrix: Mat4::identity(),
+                world_matrix: Mat4::IDENTITY,
                 object_color: color,
                 reflectivity: 1.0,
                 shine_damper: 10.0,
@@ -134,7 +134,7 @@ where
                 node,
                 buffers,
                 &images,
-                Mat4::identity(),
+                Mat4::IDENTITY,
                 texture_index_offset,
                 model_index.clone(),
             );
@@ -153,8 +153,11 @@ where
     ) -> Vec<SkinnedMesh<BufferType, CommandType, TextureType>> {
         let mut meshes = Vec::with_capacity(10);
         let (t, r, s) = node.transform().decomposed();
-        let transform =
-            Mat4::from_scale_rotation_translation(Vec3::from(s), Quat::from(r), Vec3::from(t));
+        let transform = Mat4::from_scale_rotation_translation(
+            Vec3::from(s),
+            Quat::from_array(r),
+            Vec3::from(t),
+        );
         let transform = local_transform * transform;
         if let Some(mesh) = node.mesh() {
             meshes.push(Self::process_skinned_mesh(
@@ -205,7 +208,7 @@ where
                     &joints[0],
                     &node_to_joints_lookup,
                     ibm.as_slice(),
-                    Mat4::identity(),
+                    Mat4::IDENTITY,
                 ));
             }
         }
@@ -263,8 +266,8 @@ where
                                 normal: Vec3A::from(normals),
                                 uv: Vec2::from(uv),
                             },
-                            joints: Vec4::zero(),
-                            weights: Vec4::zero(),
+                            joints: Vec4::ZERO,
+                            weights: Vec4::ZERO,
                         })
                         .collect::<Vec<_>>();
                     vertices
@@ -328,8 +331,11 @@ where
         let name = node.name().unwrap_or("");
         let ibm = inverse_bind_matrices[index];
         let (t, r, s) = node.transform().decomposed();
-        let node_transform =
-            Mat4::from_scale_rotation_translation(Vec3::from(s), Quat::from(r), Vec3::from(t));
+        let node_transform = Mat4::from_scale_rotation_translation(
+            Vec3::from(s),
+            Quat::from_array(r),
+            Vec3::from(t),
+        );
         let pose_transform = local_transform * node_transform;
         for child in node.children() {
             let skeleton = Self::process_skeleton(
@@ -353,7 +359,7 @@ where
                 scale,
             } => {
                 let translation = Vec3::from(translation);
-                let quaternion = Quat::from(rotation);
+                let quaternion = Quat::from_array(rotation);
                 let scale = Vec3::from(scale);
                 (translation, quaternion, scale)
             }
@@ -394,9 +400,9 @@ where
                     ReadOutputs::Translations(translations) => {
                         ChannelOutputs::Translations(translations.map(Vec3A::from).collect())
                     }
-                    ReadOutputs::Rotations(rotations) => {
-                        ChannelOutputs::Rotations(rotations.into_f32().map(Quat::from).collect())
-                    }
+                    ReadOutputs::Rotations(rotations) => ChannelOutputs::Rotations(
+                        rotations.into_f32().map(Quat::from_array).collect(),
+                    ),
                     ReadOutputs::Scales(scales) => {
                         ChannelOutputs::Scales(scales.map(Vec3A::from).collect())
                     }
@@ -669,7 +675,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
             let graphics_clone = graphics.clone();
             let (ssbo_send, ssbo_recv) = bounded(5);
             rayon::spawn(move || {
-                let buffer = [Mat4::identity(); 500];
+                let buffer = [Mat4::IDENTITY; 500];
                 ssbo_send
                     .send(SSBO::new(graphics_clone, &buffer))
                     .expect("Failed to send SSBO result.");
@@ -867,7 +873,7 @@ impl Renderable<Graphics, Buffer, CommandBuffer, Image>
         let buffer_size = std::mem::size_of::<Mat4>() * 500;
         for mesh in self.skinned_meshes.iter() {
             let mesh_lock = mesh.lock();
-            let mut buffer = [Mat4::identity(); 500];
+            let mut buffer = [Mat4::IDENTITY; 500];
             let local_transform = mesh_lock.transform;
             match mesh_lock.root_joint.as_ref() {
                 Some(joint) => generate_joint_transforms(

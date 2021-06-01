@@ -33,7 +33,7 @@ impl Camera {
             width,
             height,
             current_type: CameraType::Watch(Vec3A::new(0.0, 0.0, 0.0)),
-            projection: Mat4::identity(),
+            projection: Mat4::IDENTITY,
             default_position: Vec3A::new(0.0, 10.0, -15.0),
         };
         camera.set_perspective(70.0_f32.to_radians(), (width / height) as f32, 0.1, 1000.0);

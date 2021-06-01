@@ -192,12 +192,12 @@ where
         Model {
             position_info: PositionInfo {
                 position,
-                scale: Vec3A::one(),
-                rotation: Vec3A::zero(),
+                scale: Vec3A::ONE,
+                rotation: Vec3A::ZERO,
             },
             model_metadata: ModelMetaData {
-                world_matrix: Mat4::identity(),
-                object_color: Vec4::one(),
+                world_matrix: Mat4::IDENTITY,
+                object_color: Vec4::ONE,
                 reflectivity: 0.0,
                 shine_damper: 0.0,
             },

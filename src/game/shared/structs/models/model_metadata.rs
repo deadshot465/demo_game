@@ -27,8 +27,8 @@ impl ModelMetaData {
 
     pub fn identity() -> Self {
         ModelMetaData {
-            world_matrix: Mat4::identity(),
-            object_color: Vec4::one(),
+            world_matrix: Mat4::IDENTITY,
+            object_color: Vec4::ONE,
             reflectivity: 1.0,
             shine_damper: 1.0,
         }

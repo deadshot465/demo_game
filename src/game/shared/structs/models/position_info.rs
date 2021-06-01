@@ -16,9 +16,9 @@ impl Default for PositionInfo {
 impl PositionInfo {
     pub fn new() -> Self {
         PositionInfo {
-            position: Vec3A::zero(),
-            scale: Vec3A::zero(),
-            rotation: Vec3A::zero(),
+            position: Vec3A::ZERO,
+            scale: Vec3A::ZERO,
+            rotation: Vec3A::ZERO,
         }
     }
 }
